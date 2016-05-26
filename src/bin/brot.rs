@@ -5,7 +5,8 @@ extern crate core;
 
 #[macro_use]
 extern crate alloc_no_stdlib;
-
+mod heap_alloc;
+use heap_alloc::HeapAllocator;
 use core::ops;
 use alloc_no_stdlib::{Allocator, SliceWrapperMut, SliceWrapper,
             StackAllocator, AllocatedStackMemory, bzero};
@@ -77,19 +78,18 @@ pub fn decompress<InputType, OutputType> (r : &mut InputType, mut w : &mut Outpu
 where InputType: Read, OutputType: Write {
     return decompress_internal(r, w, 4096 * 1024, 4096 * 1024);
 }
+static mut ibuffer : [u8;4096 * 1024] = [0; 4096 * 1024];
+static mut obuffer : [u8;4096 * 1024] = [0; 4096 * 1024];
 pub fn decompress_internal<InputType, OutputType> (r : &mut InputType, mut w : &mut OutputType, input_buffer_limit : usize, output_buffer_limit : usize) -> Result<(), io::Error>
 where InputType: Read, OutputType: Write {
-  define_allocator_memory_pool!(calloc_u8_buffer, 4096, u8, [0; 32 * 1024 * 1024], calloc);
-  define_allocator_memory_pool!(calloc_u32_buffer, 4096, u32, [0; 1024 * 1024], calloc);
-  define_allocator_memory_pool!(calloc_hc_buffer, 4096, HuffmanCode, [0; 4 * 1024 * 1024], calloc);
-  let calloc_u8_allocator = MemPool::<u8>::new_allocator(calloc_u8_buffer, bzero);
-  let calloc_u32_allocator = MemPool::<u32>::new_allocator(calloc_u32_buffer, bzero);
-  let calloc_hc_allocator = MemPool::<HuffmanCode>::new_allocator(calloc_hc_buffer, bzero);
+  let mut u8_alloc = HeapAllocator::<u8>{default_value : 0};
+  let mut u32_alloc = HeapAllocator::<u32>{default_value : 0};
+  let mut hc_alloc = HeapAllocator::<HuffmanCode>{default_value : HuffmanCode::default()};
   //test(calloc_u8_allocator);
-  let mut brotli_state = BrotliState::new(calloc_u8_allocator, calloc_u32_allocator, calloc_hc_allocator);
-  let mut input = brotli_state.alloc_u8.alloc_cell(input_buffer_limit);
-  let mut output = brotli_state.alloc_u8.alloc_cell(output_buffer_limit);
-  let mut available_out : usize = output.slice().len();
+  let mut brotli_state = BrotliState::new(u8_alloc, u32_alloc, hc_alloc);
+  let mut input = unsafe{&mut ibuffer[0..input_buffer_limit]};
+  let mut output = unsafe{&mut obuffer[0..output_buffer_limit]};
+  let mut available_out : usize = output.len();
 
   //let amount = try!(r.read(&mut buf));
   let mut available_in : usize = 0;
@@ -102,7 +102,7 @@ where InputType: Read, OutputType: Write {
       match result {
           BrotliResult::NeedsMoreInput => {
               input_offset = 0;
-              match r.read(input.slice_mut()) {
+              match r.read(&mut input) {
                   Err(e) => {
                       match e.kind() {
                           ErrorKind::Interrupted => continue,
@@ -118,7 +118,7 @@ where InputType: Read, OutputType: Write {
               }
           },
           BrotliResult::NeedsMoreOutput => {
-              try!(_write_all(&mut w, &output.slice()[..output_offset]));
+              try!(_write_all(&mut w, &output[..output_offset]));
               output_offset = 0;
           },
           BrotliResult::ResultSuccess => break,
@@ -126,8 +126,8 @@ where InputType: Read, OutputType: Write {
       }
       let mut written :usize = 0;
       let start = now();
-      result = BrotliDecompressStream(&mut available_in, &mut input_offset, &input.slice(),
-                                      &mut available_out, &mut output_offset, &mut output.slice_mut(),
+      result = BrotliDecompressStream(&mut available_in, &mut input_offset, &input,
+                                      &mut available_out, &mut output_offset, &mut output,
                                       &mut written, &mut brotli_state);
 
       let (delta, err) = elapsed(start);
@@ -136,9 +136,9 @@ where InputType: Read, OutputType: Write {
       }
       total = total + delta;
       if output_offset != 0 {
-          try!(_write_all(&mut w, &output.slice()[..output_offset]));
+          try!(_write_all(&mut w, &output[..output_offset]));
           output_offset = 0;
-          available_out = output.slice().len()
+          available_out = output.len()
       }
   }
   if timing_error {
