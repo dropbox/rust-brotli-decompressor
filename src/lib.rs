@@ -986,23 +986,23 @@ fn HuffmanTreeGroupDecode<
                                                                      AllocHC>,
                                             input : &[u8]) -> BrotliResult {
   let mut hcodes : AllocHC::AllocatedMemory;
-  let mut htrees : AllocU32::AllocatedMemory;
+  let mut htrees;
   let alphabet_size : u16;
   let group_num_htrees : u16;
   if group_index == 0 {
     hcodes = mem::replace(&mut s.literal_hgroup.codes, AllocHC::AllocatedMemory::default());
-    htrees = mem::replace(&mut s.literal_hgroup.htrees, AllocU32::AllocatedMemory::default());
+    htrees = mem::replace(&mut s.literal_hgroup.htrees, static_array![AllocHC::AllocatedMemory::default(); 256]);
     group_num_htrees = s.literal_hgroup.num_htrees;
     alphabet_size = s.literal_hgroup.alphabet_size;
   } else if group_index == 1 {
     hcodes = mem::replace(&mut s.insert_copy_hgroup.codes, AllocHC::AllocatedMemory::default());
-    htrees = mem::replace(&mut s.insert_copy_hgroup.htrees, AllocU32::AllocatedMemory::default());
+    htrees = mem::replace(&mut s.insert_copy_hgroup.htrees, static_array![AllocHC::AllocatedMemory::default(); 256]);
     group_num_htrees = s.insert_copy_hgroup.num_htrees;
     alphabet_size = s.insert_copy_hgroup.alphabet_size;
   } else {
     assert_eq!(group_index, 2);
     hcodes = mem::replace(&mut s.distance_hgroup.codes, AllocHC::AllocatedMemory::default());
-    htrees = mem::replace(&mut s.distance_hgroup.htrees, AllocU32::AllocatedMemory::default());
+    htrees = mem::replace(&mut s.distance_hgroup.htrees, static_array![AllocHC::AllocatedMemory::default(); 256]);
     group_num_htrees = s.distance_hgroup.num_htrees;
     alphabet_size = s.distance_hgroup.alphabet_size;
   }
@@ -1015,7 +1015,7 @@ fn HuffmanTreeGroupDecode<
     BrotliRunningTreeGroupState::BROTLI_STATE_TREE_GROUP_LOOP => {},
   }
   let mut result : BrotliResult = BrotliResult::ResultSuccess;
-  for mut htree_iter in htrees.slice_mut()[s.htree_index as usize .. (group_num_htrees as usize)].iter_mut() {
+  for mut htree_iter in htrees[s.htree_index as usize .. (group_num_htrees as usize)].iter_mut() {
     let mut table_size : u32 = 0;
     result = ReadHuffmanCode(alphabet_size as u32,
                              hcodes.slice_mut(),
@@ -1027,7 +1027,9 @@ fn HuffmanTreeGroupDecode<
        BrotliResult::ResultSuccess => {},
        _ => break, // break and return the result code
     }
-    *htree_iter = s.htree_next_offset;
+    
+    *htree_iter = s.alloc_hc.alloc_cell(table_size as usize);
+    (*htree_iter).slice_mut()[..(table_size as usize)].clone_from_slice(&hcodes.slice()[s.htree_next_offset as usize ..( s.htree_next_offset as usize + table_size as usize)]);
     s.htree_next_offset += table_size;
     s.htree_index += 1;
   }
@@ -1037,21 +1039,21 @@ fn HuffmanTreeGroupDecode<
                               AllocHC::AllocatedMemory::default()));
     mem::replace(&mut s.literal_hgroup.htrees,
                  mem::replace(&mut htrees,
-                              AllocU32::AllocatedMemory::default()));
+                              static_array![AllocHC::AllocatedMemory::default(); 256]));
   } else if group_index == 1 {
     mem::replace(&mut s.insert_copy_hgroup.codes,
                  mem::replace(&mut hcodes,
                               AllocHC::AllocatedMemory::default()));
     mem::replace(&mut s.insert_copy_hgroup.htrees,
                  mem::replace(&mut htrees,
-                              AllocU32::AllocatedMemory::default()));
+                              static_array![AllocHC::AllocatedMemory::default(); 256]));
   } else {
     mem::replace(&mut s.distance_hgroup.codes,
                  mem::replace(&mut hcodes,
                               AllocHC::AllocatedMemory::default()));
     mem::replace(&mut s.distance_hgroup.htrees,
                  mem::replace(&mut htrees,
-                              AllocU32::AllocatedMemory::default()));
+                              static_array![AllocHC::AllocatedMemory::default(); 256]));
   }
   match result {
     BrotliResult::ResultSuccess => s.substate_tree_group = BrotliRunningTreeGroupState::BROTLI_STATE_TREE_GROUP_NONE,
@@ -1656,13 +1658,13 @@ pub fn ReadDistanceInternal<'a, AllocU8 : alloc::Allocator<u8>,
   let mut memento = bit_reader::BrotliBitReaderState::default();
   if (!safe) {
     s.distance_code
-        = ReadSymbol(&s.distance_hgroup.codes.slice()[s.distance_hgroup.htrees.slice()[s.dist_htree_index as usize] as usize ..],
+        = ReadSymbol(&s.distance_hgroup.htrees[s.dist_htree_index as usize].slice(),
                      &mut s.br,
                      input) as i32;
   } else {
     let mut code : u32 = 0;
     memento = bit_reader::BrotliBitReaderSaveState(&s.br);
-    if !SafeReadSymbol(&s.distance_hgroup.codes.slice()[s.distance_hgroup.htrees.slice()[s.dist_htree_index as usize] as usize ..], &mut s.br, &mut code, input) {
+    if !SafeReadSymbol(&s.distance_hgroup.htrees[s.dist_htree_index as usize].slice(), &mut s.br, &mut code, input) {
       return false;
     }
     s.distance_code = code as i32;
@@ -1734,13 +1736,12 @@ pub fn ReadCommandInternal<'a, AllocU8 : alloc::Allocator<u8>,
   let mut copy_length : u32 = 0;
   let v : prefix::CmdLutElement;
   let mut memento = bit_reader::BrotliBitReaderState::default();
-  let command_code_offset = s.insert_copy_hgroup.htrees.slice()[s.htree_command_index as usize] as usize;
   if (!safe) {
-    cmd_code = ReadSymbol(&s.insert_copy_hgroup.codes.slice()[command_code_offset..], &mut s.br, input);
+    cmd_code = ReadSymbol(&s.insert_copy_hgroup.htrees[s.htree_command_index as usize].slice(), &mut s.br, input);
   } else {
     memento = bit_reader::BrotliBitReaderSaveState(&s.br);
     if (!SafeReadSymbol(
-         &s.insert_copy_hgroup.codes.slice()[command_code_offset..],
+         &s.insert_copy_hgroup.htrees[s.htree_command_index as usize].slice(),
          &mut s.br, &mut cmd_code, input)) {
       return false;
     }
@@ -1846,12 +1847,7 @@ fn memcpy_within_slice(data : &mut [u8],
      dst[off_dst..off_dst + size].clone_from_slice(&src[..size]);
   }
 }
-fn dereference_hgroup<'a,
-    AllocU32 : alloc::Allocator<u32>,
-    AllocHC : alloc::Allocator<HuffmanCode> >(hgroup : &'a huffman::HuffmanTreeGroup<AllocU32, AllocHC>) -> [&'a [HuffmanCode]; 256] {
-    let ret : [&'a [HuffmanCode]; 256] = [&[]; 256];
-    return ret;
-}
+
 fn ProcessCommandsInternal<
     AllocU8 : alloc::Allocator<u8>,
     AllocU32 : alloc::Allocator<u32>,
@@ -1865,14 +1861,7 @@ fn ProcessCommandsInternal<
   let mut pos = s.pos;
   let mut i : i32 = s.loop_counter; // important that this is signed
   let mut result : BrotliResult = BrotliResult::ResultSuccess;
-  let mut saved_literal_hgroup = core::mem::replace(&mut s.literal_hgroup,
-                HuffmanTreeGroup::<AllocU32, AllocHC>::default());
   {
-  core::mem::replace(&mut s.literal_hgroup,
-                core::mem::replace(&mut saved_literal_hgroup,
-                  HuffmanTreeGroup::<AllocU32, AllocHC>::default()));
-
-    let literal_hgroup = dereference_hgroup(&saved_literal_hgroup);
 
     loop {
       match s.state {
@@ -1909,8 +1898,8 @@ fn ProcessCommandsInternal<
           if (s.trivial_literal_context != 0) {
             let mut bits : u32 = 0;
             let mut value : u32 = 0;
-            PreloadSymbol(safe, &s.literal_hgroup.codes.slice()[s.literal_hgroup.htrees.slice()[s.literal_htree_index as usize] as usize..], &mut s.br, &mut bits, &mut value, input);
-            let mut literal_hgroup = &s.literal_hgroup.codes.slice()[s.literal_hgroup.htrees.slice()[s.literal_htree_index as usize] as usize..];
+            PreloadSymbol(safe, &s.literal_hgroup.htrees[s.literal_htree_index as usize].slice(), &mut s.br, &mut bits, &mut value, input);
+            let mut literal_hgroup = &s.literal_hgroup.htrees[s.literal_htree_index as usize];
             let mut inner_return : bool = false;
             loop {
               if (!CheckInputAmount(safe, &s.br, 28)) { /* 162 bits + 7 bytes */
@@ -1934,15 +1923,15 @@ fn ProcessCommandsInternal<
                   inner_return = true;
                   break;
                 }
-                literal_hgroup = &s.literal_hgroup.codes.slice()[s.literal_hgroup.htrees.slice()[s.literal_htree_index as usize] as usize..];
-                PreloadSymbol(safe, literal_hgroup, &mut s.br, &mut bits, &mut value, input);
+                literal_hgroup = &s.literal_hgroup.htrees[s.literal_htree_index as usize];
+                PreloadSymbol(safe, literal_hgroup.slice(), &mut s.br, &mut bits, &mut value, input);
               }
               if (!safe) {
                 s.ringbuffer.slice_mut()[pos as usize] = ReadPreloadedSymbol(
-                    literal_hgroup, &mut s.br, &mut bits, &mut value, input) as u8;
+                    literal_hgroup.slice(), &mut s.br, &mut bits, &mut value, input) as u8;
               } else {
                 let mut literal : u32 = 0;
-                if (!SafeReadSymbol(literal_hgroup, &mut s.br, &mut literal, input)) {
+                if (!SafeReadSymbol(literal_hgroup.slice(), &mut s.br, &mut literal, input)) {
                   result = BrotliResult::NeedsMoreInput;
                   inner_return = true;
                   break;
@@ -1998,7 +1987,7 @@ fn ProcessCommandsInternal<
               }
               let context = s.context_lookup1[p1 as usize] | s.context_lookup2[p2 as usize];
               BROTLI_LOG_UINT!(context);
-              let hc = &s.literal_hgroup.codes.slice()[s.literal_hgroup.htrees.slice()[s.context_map.slice()[s.context_map_slice_index + context as usize]as usize ] as usize..];
+              let hc = &s.literal_hgroup.htrees[s.context_map.slice()[s.context_map_slice_index + context as usize]as usize ].slice();
               p2 = p1;
               if (!safe) {
                 p1 = ReadSymbol(hc, &mut s.br, input) as u8;
@@ -2574,14 +2563,11 @@ pub fn BrotliDecompressStream<'a, AllocU8 : alloc::Allocator<u8>,
               BrotliResult::ResultSuccess => {},
               _ => break,
             }
-            s.literal_hgroup.init(&mut s.alloc_u32,
-                                  &mut s.alloc_hc,
+            s.literal_hgroup.init(&mut s.alloc_hc,
                                   kNumLiteralCodes, s.num_literal_htrees as u16);
-            s.insert_copy_hgroup.init(&mut s.alloc_u32,
-                                      &mut s.alloc_hc,
+            s.insert_copy_hgroup.init(&mut s.alloc_hc,
                                       kNumInsertAndCopyCodes, s.block_type_length_state.num_block_types[1] as u16);
-            s.distance_hgroup.init(&mut s.alloc_u32,
-                                   &mut s.alloc_hc,
+            s.distance_hgroup.init(&mut s.alloc_hc,
                                    num_distance_codes as u16, s.num_dist_htrees as u16);
             if (s.literal_hgroup.codes.slice().len() == 0 ||
                 s.insert_copy_hgroup.codes.slice().len() == 0 ||

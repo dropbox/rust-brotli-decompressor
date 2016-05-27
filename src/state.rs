@@ -138,9 +138,9 @@ pub struct BrotliState<AllocU8 : alloc::Allocator<u8>,
 
   /* This ring buffer holds a few past copy distances that will be used by */
   /* some special distance codes. */
-  pub literal_hgroup : HuffmanTreeGroup<AllocU32, AllocHC>,
-  pub insert_copy_hgroup : HuffmanTreeGroup<AllocU32, AllocHC>,
-  pub distance_hgroup : HuffmanTreeGroup<AllocU32, AllocHC>,
+  pub literal_hgroup : HuffmanTreeGroup<AllocHC>,
+  pub insert_copy_hgroup : HuffmanTreeGroup<AllocHC>,
+  pub distance_hgroup : HuffmanTreeGroup<AllocHC>,
   /* This is true if the literal context map histogram type always matches the
   block type. It is then not needed to keep the context (faster decoding). */
   pub trivial_literal_context : i32,
@@ -254,9 +254,9 @@ impl <'brotli_state,
             dist_context_map_slice_index : 0,
             sub_loop_counter : 0,
 
-            literal_hgroup : HuffmanTreeGroup::<AllocU32, AllocHC>::default(),
-            insert_copy_hgroup : HuffmanTreeGroup::<AllocU32, AllocHC>::default(),
-            distance_hgroup : HuffmanTreeGroup::<AllocU32, AllocHC>::default(),
+            literal_hgroup : HuffmanTreeGroup::<AllocHC>::default(),
+            insert_copy_hgroup : HuffmanTreeGroup::<AllocHC>::default(),
+            distance_hgroup : HuffmanTreeGroup::<AllocHC>::default(),
             trivial_literal_context : 0,
             distance_context : 0,
             meta_block_remaining_len : 0,
@@ -360,9 +360,9 @@ impl <'brotli_state,
         self.dist_htree_index = 0;
         self.context_lookup1 = &[];
         self.context_lookup2 = &[];
-        self.literal_hgroup.reset(&mut self.alloc_u32, &mut self.alloc_hc);
-        self.insert_copy_hgroup.reset(&mut self.alloc_u32, &mut self.alloc_hc);
-        self.distance_hgroup.reset(&mut self.alloc_u32, &mut self.alloc_hc);
+        self.literal_hgroup.reset(&mut self.alloc_hc);
+        self.insert_copy_hgroup.reset(&mut self.alloc_hc);
+        self.distance_hgroup.reset(&mut self.alloc_hc);
     }
     pub fn BrotliStateCleanupAfterMetablock(self : &mut Self) {
         self.alloc_u8.free_cell(core::mem::replace(&mut self.context_map,
@@ -373,9 +373,9 @@ impl <'brotli_state,
                                              AllocU8::AllocatedMemory::default()));
 
 
-        self.literal_hgroup.reset(&mut self.alloc_u32, &mut self.alloc_hc);
-        self.insert_copy_hgroup.reset(&mut self.alloc_u32, &mut self.alloc_hc);
-        self.distance_hgroup.reset(&mut self.alloc_u32, &mut self.alloc_hc);
+        self.literal_hgroup.reset(&mut self.alloc_hc);
+        self.insert_copy_hgroup.reset(&mut self.alloc_hc);
+        self.distance_hgroup.reset(&mut self.alloc_hc);
     }
 
    pub fn BrotliStateCleanup(self : &mut Self) {
@@ -410,25 +410,19 @@ impl <'brotli_state,
     pub fn BrotliHuffmanTreeGroupInit(self :&mut Self, group : WhichTreeGroup,
                                       alphabet_size : u16, ntrees : u16) {
         match group {
-            WhichTreeGroup::LITERAL => self.literal_hgroup.init(&mut self.alloc_u32,
-                                                                &mut self.alloc_hc,
+            WhichTreeGroup::LITERAL => self.literal_hgroup.init(&mut self.alloc_hc,
                                                                 alphabet_size, ntrees),
-            WhichTreeGroup::INSERT_COPY => self.insert_copy_hgroup.init(&mut self.alloc_u32,
-                                                                        &mut self.alloc_hc,
+            WhichTreeGroup::INSERT_COPY => self.insert_copy_hgroup.init(&mut self.alloc_hc,
                                                                         alphabet_size, ntrees),
-            WhichTreeGroup::DISTANCE => self.distance_hgroup.init(&mut self.alloc_u32,
-                                                                  &mut self.alloc_hc,
+            WhichTreeGroup::DISTANCE => self.distance_hgroup.init(&mut self.alloc_hc,
                                                                   alphabet_size, ntrees),
         }
     }
     pub fn BrotliHuffmanTreeGroupRelease(self :&mut Self, group : WhichTreeGroup) {
         match group {
-            WhichTreeGroup::LITERAL => self.literal_hgroup.reset(&mut self.alloc_u32,
-                                                                 &mut self.alloc_hc),
-            WhichTreeGroup::INSERT_COPY => self.insert_copy_hgroup.reset(&mut self.alloc_u32,
-                                                                         &mut self.alloc_hc),
-            WhichTreeGroup::DISTANCE => self.distance_hgroup.reset(&mut self.alloc_u32,
-                                                                   &mut self.alloc_hc),
+            WhichTreeGroup::LITERAL => self.literal_hgroup.reset(&mut self.alloc_hc),
+            WhichTreeGroup::INSERT_COPY => self.insert_copy_hgroup.reset(&mut self.alloc_hc),
+            WhichTreeGroup::DISTANCE => self.distance_hgroup.reset(&mut self.alloc_hc),
         }
     }
 }

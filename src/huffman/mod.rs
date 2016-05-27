@@ -4,6 +4,7 @@ mod tests;
 use ::core;
 use alloc;
 use alloc::SliceWrapper;
+#[allow(unused_imports)]
 use alloc::SliceWrapperMut;
 use core::default::Default;
 pub const BROTLI_HUFFMAN_MAX_CODE_LENGTH : usize = 15;
@@ -42,22 +43,18 @@ impl Default for HuffmanCode {
 }
 
 /* Contains a collection of Huffman trees with the same alphabet size. */
-pub struct HuffmanTreeGroup<Alloc32 : alloc::Allocator<u32>,
-                            AllocHC : alloc::Allocator<HuffmanCode>> {
-  pub htrees : Alloc32::AllocatedMemory,
+pub struct HuffmanTreeGroup<AllocHC : alloc::Allocator<HuffmanCode>> {
+  pub htrees : [AllocHC::AllocatedMemory; 256],
   pub codes : AllocHC::AllocatedMemory,
   pub alphabet_size : u16,
   pub num_htrees : u16,
 }
-impl<AllocU32 : alloc::Allocator<u32>,
-     AllocHC : alloc::Allocator<HuffmanCode> > HuffmanTreeGroup<AllocU32, AllocHC> {
-    pub fn init(self : &mut Self, mut alloc_u32 : &mut AllocU32, mut alloc_hc : &mut AllocHC,
+impl<AllocHC : alloc::Allocator<HuffmanCode> > HuffmanTreeGroup<AllocHC> {
+    pub fn init(self : &mut Self, mut alloc_hc : &mut AllocHC,
                 alphabet_size : u16, ntrees : u16) {
-        self.reset(&mut alloc_u32, &mut alloc_hc);
+        self.reset(&mut alloc_hc);
         self.alphabet_size = alphabet_size;
         self.num_htrees = ntrees;
-        core::mem::replace(&mut self.htrees,
-                           alloc_u32.alloc_cell(ntrees as usize));
         core::mem::replace(&mut self.codes,
                            alloc_hc.alloc_cell(ntrees as usize * BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize));
     }
@@ -70,36 +67,23 @@ impl<AllocU32 : alloc::Allocator<u32>,
 //        let start : usize = self.htrees[index as usize] as usize;
 //        core::mem::replace(&mut tree_out, & self.codes.slice()[start..]);
 //    }
-    #[allow(dead_code)]
-    pub fn get_tree_mut<'a>(self :&'a mut Self, index : u32) -> &'a mut [HuffmanCode] {
-        let start : usize = self.htrees.slice()[index as usize] as usize;
-        return &mut self.codes.slice_mut()[start..];
-    }
-    #[allow(dead_code)]
-    pub fn get_tree<'a>(self :&'a Self, index : u32) -> &'a [HuffmanCode] {
-        let start : usize = self.htrees.slice()[index as usize] as usize;
-        return & self.codes.slice()[start..];
-    }
-    pub fn reset(self : &mut Self, alloc_u32 : &mut AllocU32, alloc_hc : &mut AllocHC) {
-        alloc_u32.free_cell(core::mem::replace(&mut self.htrees,
-                                               AllocU32::AllocatedMemory::default()));
+    pub fn reset(self : &mut Self, alloc_hc : &mut AllocHC) {
         alloc_hc.free_cell(core::mem::replace(&mut self.codes,
                                               AllocHC::AllocatedMemory::default()));
 
-        //for mut iter in self.htrees[0..self.num_htrees as usize].iter_mut() {
-        //    if iter.slice().len() > 0 {
-        //        alloc_hc.free_cell(core::mem::replace(&mut iter,
-        //                                              AllocHC::AllocatedMemory::default()));
-        //    }
-        //}
+        for mut iter in self.htrees[0..self.num_htrees as usize].iter_mut() {
+            if iter.slice().len() > 0 {
+                alloc_hc.free_cell(core::mem::replace(&mut iter,
+                                                      AllocHC::AllocatedMemory::default()));
+            }
+        }
 
     }
 }
-impl<AllocU32 : alloc::Allocator<u32>,
-     AllocHC : alloc::Allocator<HuffmanCode> > Default for HuffmanTreeGroup<AllocU32, AllocHC> {
+impl<AllocHC : alloc::Allocator<HuffmanCode> > Default for HuffmanTreeGroup<AllocHC> {
     fn default() -> Self {
-        return HuffmanTreeGroup::<AllocU32, AllocHC> {
-            htrees : AllocU32::AllocatedMemory::default(),
+        return HuffmanTreeGroup::<AllocHC> {
+            htrees : static_array![AllocHC::AllocatedMemory::default(); 256],
             codes : AllocHC::AllocatedMemory::default(),
             alphabet_size : 0,
             num_htrees : 0,
