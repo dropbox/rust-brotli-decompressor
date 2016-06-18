@@ -8,7 +8,7 @@ extern crate alloc_no_stdlib;
 
 use core::ops;
 use alloc_no_stdlib::{Allocator, SliceWrapperMut, SliceWrapper,
-            StackAllocator, AllocatedStackMemory, bzero};
+            StackAllocator, AllocatedStackMemory, bzero, uninitialized};
 
 //use alloc::{SliceWrapper,SliceWrapperMut, StackAllocator, AllocatedStackMemory, Allocator};
 use brotli::{BrotliDecompressStream, BrotliState, BrotliResult, HuffmanCode};
@@ -46,7 +46,7 @@ fn elapsed(_start : Duration) -> (Duration, bool) {
     return (Duration::new(0, 0), true);
 }
 
-declare_stack_allocator_struct!(MemPool, 4096, calloc);
+declare_stack_allocator_struct!(MemPool, 4096, global);
 
 
 fn _write_all<OutputType> (w : &mut OutputType, buf : &[u8]) -> Result<(), io::Error>
@@ -72,7 +72,11 @@ where OutputType: Write {
 }
 
 //trace_macros!(true);
-
+declare_stack_allocator_struct!(GlobalAllocatedFreelist, 4096, global);
+define_allocator_memory_pool!(global_u8_buffer, 4096, u8, [0; 1024 * 1024 * 100], global);
+define_allocator_memory_pool!(global_u32_buffer, 4096, u32, [0; 1024 * 1024 * 100], global);
+define_allocator_memory_pool!(global_hc_buffer, 4096, ::brotli::HuffmanCode, [::brotli::HuffmanCode{value : 0, bits :0}; 1024 * 1024 * 100], global);
+    
 pub fn decompress<InputType, OutputType> (r : &mut InputType, mut w : &mut OutputType) -> Result<(), io::Error>
 where InputType: Read, OutputType: Write {
     return decompress_internal(r, w, 4096 * 1024, 4096 * 1024);
@@ -88,14 +92,18 @@ where InputType: Read, OutputType: Write {
     range = 1;
   }
   for _i in 0..range {
-    define_allocator_memory_pool!(calloc_u8_buffer, 4096, u8, [0; 32 * 1024 * 1024], calloc);
-    define_allocator_memory_pool!(calloc_u32_buffer, 4096, u32, [0; 4 * 1024 * 1024], calloc);
-    define_allocator_memory_pool!(calloc_hc_buffer, 4096, HuffmanCode, [0; 8 * 1024 * 1024], calloc);
-    let calloc_u8_allocator = MemPool::<u8>::new_allocator(calloc_u8_buffer, bzero);
-    let calloc_u32_allocator = MemPool::<u32>::new_allocator(calloc_u32_buffer, bzero);
-    let calloc_hc_allocator = MemPool::<HuffmanCode>::new_allocator(calloc_hc_buffer, bzero);
+
+    //define_allocator_memory_pool!(calloc_u8_buffer, 4096, u8, [0; 450 * 1024], stack);
+    //define_allocator_memory_pool!(calloc_u32_buffer, 4096, u32, [0; 1024], stack);
+    //define_allocator_memory_pool!(calloc_hc_buffer, 4096, HuffmanCode, [HuffmanCode::default(); 96 * 1024], stack);
+    let mut global_u8_allocator = MemPool::<u8>::new_allocator(uninitialized);
+    let mut global_u32_allocator = MemPool::<u32>::new_allocator(uninitialized);
+    let mut global_hc_allocator = MemPool::<HuffmanCode>::new_allocator(uninitialized);
+    bind_global_buffers_to_allocator!(global_u8_allocator, global_u8_buffer, u8);
+    bind_global_buffers_to_allocator!(global_u32_allocator, global_u32_buffer, u32);
+    bind_global_buffers_to_allocator!(global_hc_allocator, global_hc_buffer, HuffmanCode);
     //test(calloc_u8_allocator);
-    let mut brotli_state = BrotliState::new(calloc_u8_allocator, calloc_u32_allocator, calloc_hc_allocator);
+    let mut brotli_state = BrotliState::new(global_u8_allocator, global_u32_allocator, global_hc_allocator);
     let mut input = brotli_state.alloc_u8.alloc_cell(input_buffer_limit);
     let mut output = brotli_state.alloc_u8.alloc_cell(output_buffer_limit);
     let mut available_out : usize = output.slice().len();
