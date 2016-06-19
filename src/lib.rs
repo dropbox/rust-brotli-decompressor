@@ -297,6 +297,7 @@ fn DecodeMetaBlockLength<
    This method doesn't read data from the bit reader, BUT drops the amount of
    bits that correspond to the decoded symbol.
    bits MUST contain at least 15 (BROTLI_HUFFMAN_MAX_CODE_LENGTH) valid bits. */
+#[inline(always)]
 fn DecodeSymbol(bits : u32,
                 table : &[HuffmanCode],
                 br : &mut bit_reader::BrotliBitReader) -> u32 {
@@ -315,6 +316,7 @@ fn DecodeSymbol(bits : u32,
 
 /* Reads and decodes the next Huffman code from bit-stream.
    This method peeks 16 bits of input and drops 0 - 15 of them. */
+#[inline(always)]
 fn ReadSymbol(table : &[HuffmanCode],
               br : &mut bit_reader::BrotliBitReader,
               input : &[u8]) -> u32{
@@ -1773,7 +1775,7 @@ fn CheckInputAmount(safe : bool,
   return bit_reader::BrotliCheckInputAmount(br, num);
 }
 
-
+#[inline(always)]
 fn memmove16(data : &mut [u8], u32off_dst : u32, u32off_src :u32) {
     let off_dst = u32off_dst as usize;
     let off_src = u32off_src as usize;
