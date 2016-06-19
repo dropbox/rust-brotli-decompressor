@@ -31,7 +31,7 @@ c) in a loop, call BrotliDecompressStream
 
 in Detail
 
-```
+```rust
 // at global scope declare a MemPool type -- in this case we'll choose the heap to
 // avoid unsafe code, and avoid restrictions of the stack size
 
