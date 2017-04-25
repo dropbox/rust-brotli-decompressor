@@ -1,7 +1,7 @@
-# rust-brotli
+# rust-brotli-decompressor
 
-[![crates.io](http://meritbadge.herokuapp.com/brotli)](https://crates.io/crates/brotli)
-[![Build Status](https://travis-ci.org/dropbox/rust-brotli.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli)
+[![crates.io](http://meritbadge.herokuapp.com/brotli-decompressor)](https://crates.io/crates/brotli)
+[![Build Status](https://travis-ci.org/dropbox/rust-brotli-decompressor.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli-decompressor)
 
 ## Project Requirements
 

@@ -2,10 +2,10 @@
 extern crate core;
 use std::io;
 use core::cmp;
-use super::brotli::BrotliResult;
-use super::brotli::BrotliDecompressStream;
-use super::brotli::BrotliState;
-use super::brotli::HuffmanCode;
+use super::brotli_decompressor::BrotliResult;
+use super::brotli_decompressor::BrotliDecompressStream;
+use super::brotli_decompressor::BrotliState;
+use super::brotli_decompressor::HuffmanCode;
 use super::HeapAllocator;
 
 #[allow(unused_imports)]
