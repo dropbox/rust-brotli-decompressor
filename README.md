@@ -29,14 +29,14 @@ other mechanisms can be used to secure the application, if desired
 ### With the io::Read abstraction
 
 ```rust
-let mut input = brotli::Decompressor::new(&mut io::stdin(), 4096 /* buffer size */);
+let mut input = brotli_decompressor::Decompressor::new(&mut io::stdin(), 4096 /* buffer size */);
 ```
 then you can simply read input as you would any other io::Read class
 
 ### With the Stream Copy abstraction
 
 ```rust
-match brotli::BrotliDecompress(&mut io::stdin(), &mut io::stdout(), 65536 /* buffer size */) {
+match brotli_decompressor::BrotliDecompress(&mut io::stdin(), &mut io::stdout(), 65536 /* buffer size */) {
     Ok(_) => {},
     Err(e) => panic!("Error {:?}", e),
 }
