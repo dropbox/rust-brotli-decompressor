@@ -1,9 +1,11 @@
 #![cfg(test)]
 extern crate core;
 use std::io;
+use std::io::{Read,Write};
 use core::cmp;
 use super::brotli_decompressor::BrotliResult;
 use super::brotli_decompressor::BrotliDecompressStream;
+use super::brotli_decompressor::{Decompressor, DecompressorWriter};
 use super::brotli_decompressor::BrotliState;
 use super::brotli_decompressor::HuffmanCode;
 use super::HeapAllocator;
@@ -17,6 +19,43 @@ use std::time::SystemTime;
 struct Buffer {
   data: Vec<u8>,
   read_offset: usize,
+}
+struct UnlimitedBuffer {
+  data: Vec<u8>,
+  read_offset: usize,
+}
+
+
+impl UnlimitedBuffer {
+  pub fn new(buf: &[u8]) -> Self {
+    let mut ret = UnlimitedBuffer {
+      data: Vec::<u8>::new(),
+      read_offset: 0,
+    };
+    ret.data.extend(buf);
+    return ret;
+  }
+}
+impl io::Read for UnlimitedBuffer {
+  fn read(self: &mut Self, buf: &mut [u8]) -> io::Result<usize> {
+    let bytes_to_read = cmp::min(buf.len(), self.data.len() - self.read_offset);
+    if bytes_to_read > 0 {
+      buf[0..bytes_to_read].clone_from_slice(&self.data[self.read_offset..
+                                              self.read_offset + bytes_to_read]);
+    }
+    self.read_offset += bytes_to_read;
+    return Ok(bytes_to_read);
+  }
+}
+
+impl io::Write for UnlimitedBuffer {
+  fn write(self: &mut Self, buf: &[u8]) -> io::Result<usize> {
+    self.data.extend(buf);
+    return Ok(buf.len());
+  }
+  fn flush(self: &mut Self) -> io::Result<()> {
+    return Ok(());
+  }
 }
 
 
@@ -241,6 +280,80 @@ fn test_10x_10y_one_out_byte() {
   }
   assert_eq!(output.data.len(), 20);
   assert_eq!(input.read_offset, in_buf.len());
+}
+#[cfg(not(feature="no-stdlib"))]
+fn reader_helper(in_buf: &[u8], mut desired_buf: &[u8], bufsize : usize) {
+  let mut cmp = [0u8; 178];
+  let mut input = UnlimitedBuffer::new(&in_buf);
+  {
+  let mut rdec = Decompressor::new(&mut input, bufsize);
+  loop {
+    match rdec.read(&mut cmp[..]) {
+      Ok(size) => {
+        if size == 0 {
+          break;
+        }
+        assert_eq!(cmp[..size], desired_buf[..size]);
+        desired_buf = &desired_buf[size..];
+      }
+      Err(e) => panic!("Error {:?}", e),
+    }
+  }
+  }
+  assert_eq!(desired_buf.len(), 0);
+}
+
+#[test]
+fn test_reader_64x() {
+  reader_helper(include_bytes!("testdata/64x.compressed"),
+                                           include_bytes!("testdata/64x"), 181)
+
+}
+#[test]
+fn test_reader_uni() {
+  reader_helper(include_bytes!("testdata/random_then_unicode.compressed"),
+                                           include_bytes!("testdata/random_then_unicode"), 121)
+
+}
+
+
+#[cfg(not(feature="no-stdlib"))]
+fn writer_helper(mut in_buf: &[u8], desired_out_buf: &[u8], buf_size: usize) {
+  let mut output = UnlimitedBuffer::new(&[]);
+
+  {let mut wdec = DecompressorWriter::new(&mut output, 517);
+  while in_buf.len() > 0 {
+    match wdec.write(&in_buf[..cmp::min(in_buf.len(), buf_size)]) {
+      Ok(size) => {
+        if size == 0 {
+          break;
+        }
+        in_buf = &in_buf[size..];
+      }
+      Err(e) => panic!("Error {:?}", e),
+    }
+  }
+  }
+  assert_eq!(output.data.len(), desired_out_buf.len());
+  for i in 0..cmp::min(desired_out_buf.len(), output.data.len()) {
+    assert_eq!(output.data[i], desired_out_buf[i]);
+  }
+}
+
+#[test]
+fn test_writer_64x() {
+  writer_helper(include_bytes!("testdata/64x.compressed"),
+                                           include_bytes!("testdata/64x"), 1)
+
+}
+
+
+
+#[test]
+fn test_writer_mapsdatazrh() {
+  writer_helper(include_bytes!("testdata/mapsdatazrh.compressed"),
+                                           include_bytes!("testdata/mapsdatazrh"), 717)
+
 }
 
 #[test]

@@ -44,6 +44,8 @@ pub use reader::{DecompressorCustomIo};
 pub use reader::{Decompressor};
 
 pub use writer::{DecompressorWriterCustomIo};
+#[cfg(not(feature="no-stdlib"))]
+pub use writer::{DecompressorWriter};
 
 // use io_wrappers::write_all;
 pub use io_wrappers::{CustomRead, CustomWrite};
