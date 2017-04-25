@@ -22,7 +22,7 @@ pub use alloc::HeapAlloc;
 pub use alloc::HeapAllocUninitialized;
 #[macro_use]
 mod memory;
-mod dictionary;
+pub mod dictionary;
 #[macro_use]
 mod bit_reader;
 mod huffman;
@@ -32,7 +32,7 @@ mod context;
 mod transform;
 mod test;
 mod decode;
-mod io_wrappers;
+pub mod io_wrappers;
 pub mod reader;
 pub mod writer;
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
@@ -50,7 +50,7 @@ pub use writer::{DecompressorWriter};
 // use io_wrappers::write_all;
 pub use io_wrappers::{CustomRead, CustomWrite};
 #[cfg(not(feature="no-stdlib"))]
-pub use io_wrappers::{IntoIoReader, IoReaderWrapper, IoWriterWrapper};
+pub use io_wrappers::{IntoIoReader, IoReaderWrapper, IntoIoWriter, IoWriterWrapper};
 
 // interface
 // pub fn BrotliDecompressStream(mut available_in: &mut usize,
