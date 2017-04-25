@@ -1,10 +1,12 @@
 #![cfg(test)]
 extern crate core;
 use std::io;
+#[cfg(not(feature="no-stdlib"))]
 use std::io::{Read,Write};
 use core::cmp;
 use super::brotli_decompressor::BrotliResult;
 use super::brotli_decompressor::BrotliDecompressStream;
+#[cfg(not(feature="no-stdlib"))]
 use super::brotli_decompressor::{Decompressor, DecompressorWriter};
 use super::brotli_decompressor::BrotliState;
 use super::brotli_decompressor::HuffmanCode;
@@ -20,12 +22,13 @@ struct Buffer {
   data: Vec<u8>,
   read_offset: usize,
 }
+#[cfg(not(feature="no-stdlib"))]
 struct UnlimitedBuffer {
   data: Vec<u8>,
   read_offset: usize,
 }
 
-
+#[cfg(not(feature="no-stdlib"))]
 impl UnlimitedBuffer {
   pub fn new(buf: &[u8]) -> Self {
     let mut ret = UnlimitedBuffer {
@@ -36,6 +39,8 @@ impl UnlimitedBuffer {
     return ret;
   }
 }
+
+#[cfg(not(feature="no-stdlib"))]
 impl io::Read for UnlimitedBuffer {
   fn read(self: &mut Self, buf: &mut [u8]) -> io::Result<usize> {
     let bytes_to_read = cmp::min(buf.len(), self.data.len() - self.read_offset);
@@ -48,6 +53,7 @@ impl io::Read for UnlimitedBuffer {
   }
 }
 
+#[cfg(not(feature="no-stdlib"))]
 impl io::Write for UnlimitedBuffer {
   fn write(self: &mut Self, buf: &[u8]) -> io::Result<usize> {
     self.data.extend(buf);
@@ -304,12 +310,14 @@ fn reader_helper(in_buf: &[u8], mut desired_buf: &[u8], bufsize : usize) {
 }
 
 #[test]
+#[cfg(not(feature="no-stdlib"))]
 fn test_reader_64x() {
   reader_helper(include_bytes!("testdata/64x.compressed"),
                                            include_bytes!("testdata/64x"), 181)
 
 }
 #[test]
+#[cfg(not(feature="no-stdlib"))]
 fn test_reader_uni() {
   reader_helper(include_bytes!("testdata/random_then_unicode.compressed"),
                                            include_bytes!("testdata/random_then_unicode"), 121)
@@ -341,6 +349,7 @@ fn writer_helper(mut in_buf: &[u8], desired_out_buf: &[u8], buf_size: usize) {
 }
 
 #[test]
+#[cfg(not(feature="no-stdlib"))]
 fn test_writer_64x() {
   writer_helper(include_bytes!("testdata/64x.compressed"),
                                            include_bytes!("testdata/64x"), 1)
@@ -350,6 +359,7 @@ fn test_writer_64x() {
 
 
 #[test]
+#[cfg(not(feature="no-stdlib"))]
 fn test_writer_mapsdatazrh() {
   writer_helper(include_bytes!("testdata/mapsdatazrh.compressed"),
                                            include_bytes!("testdata/mapsdatazrh"), 717)
