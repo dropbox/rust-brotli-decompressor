@@ -30,7 +30,7 @@ mod huffman;
 mod state;
 mod prefix;
 mod context;
-mod transform;
+pub mod transform;
 mod test;
 mod decode;
 pub mod io_wrappers;

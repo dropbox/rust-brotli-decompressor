@@ -1,3 +1,4 @@
+#![allow(unused_macros)]
 // use core::slice;
 
 #[cfg(not(feature="unsafe"))]
