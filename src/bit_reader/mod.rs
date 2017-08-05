@@ -304,7 +304,7 @@ pub fn BrotliSafeGetBits(br: &mut BrotliBitReader,
 #[inline(always)]
 pub fn BrotliDropBits(br: &mut BrotliBitReader, n_bits: u32) {
   br.bit_pos_ += n_bits;
-  bill!(br, *bits);
+  br.attribution.tally(n_bits as u64);
 }
 
 pub fn BrotliBitReaderUnload(br: &mut BrotliBitReader) {
@@ -433,6 +433,7 @@ pub fn BrotliCopyBytes(dest: &mut [u8], br: &mut BrotliBitReader, mut num: u32, 
   }
   br.avail_in -= num;
   br.next_in += num;
+  br.attribution.tally(num as u64 * 8);
 }
 
 pub fn BrotliInitBitReader(br: &mut BrotliBitReader) {

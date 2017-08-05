@@ -1,4 +1,4 @@
-#![allow(unused_macros)]
+#![allow(unknown_lints,unused_macros)]
 // use core::slice;
 
 #[cfg(not(feature="unsafe"))]

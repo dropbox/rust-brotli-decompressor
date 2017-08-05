@@ -1,10 +1,13 @@
 use core::clone::Clone;
-#[cfg(features="billing")]
+#[cfg(feature="billing")]
 mod bill {
-    use std::collections::HashMap;
+    pub use std::collections::HashMap;
 }
+#[cfg(feature="billing")]
+use std;
+
 #[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Ord, Eq, PartialEq, PartialOrd, Hash)]
 pub enum Categories {
     LiteralHuffmanTable,
     DistanceHuffmanTable,
@@ -15,42 +18,56 @@ pub enum Categories {
     Misc
 }
 
-#[cfg(features="billing")]
-#[derive(Clone)]
-pub struct Billing {
-    category: Categories,
-    bill:HashMap<Categories,uint64>,
-}
-
-#[cfg(not(features="billing"))]
-#[derive(Default,Clone)]
+#[cfg(not(feature="billing"))]
+#[derive(Clone,Default)]
 pub struct Billing();
 
-#[cfg(features="billing")]
+
+#[cfg(feature="billing")]
+#[derive(Clone)]
+pub struct Billing {
+    categories: std::vec::Vec<Categories>,
+    bill:bill::HashMap<Categories,u64>,
+}
+
+
+#[cfg(feature="billing")]
 impl Default for Billing {
     fn default() ->Self {
         Billing{
-            categories:Categories::Misc,
-            bill:HashMap::<Categories, uint64>::default(),
+            categories:vec![Categories::Misc],
+            bill:bill::HashMap::<Categories, u64>::new(),
         }
     }
 }
-#[cfg(features="billing")]
+#[cfg(feature="billing")]
 impl Billing {
-    fn tally(&mut self, count:u64) {
-        self.bill.insert(category, count)
+    pub fn tally(&mut self, count:u64) {
+        let counter = self.bill.entry(self.categories[self.categories.len() - 1].clone()).or_insert(0);
+        *counter += count;
     }
+    pub fn push_attrib(&mut self, categories:Categories) {
+        self.categories.push(categories);
+    }
+    pub fn pop_attrib(&mut self) {
+        assert!(self.categories.len() > 1);
+        self.categories.pop();
+    }
+    pub fn print_stderr(&self) {
+        self.print(&mut std::io::stderr());
+    }
+    pub fn print<W:std::io::Write> (&self, writer: &mut W) {
+        writeln!(writer, "BILL").unwrap();
+        for (k, v) in self.bill.iter() {
+            writeln!(writer, "{:?}: {} {}", *k, *v, (*v as f64) / 8.0).unwrap();
+        }
+    }
+}
+#[cfg(not(feature="billing"))]
+impl Billing {
+    pub fn tally(&mut self, _count:u64) {}
+    pub fn push_attrib(&mut self, _categories:Categories){}
+    pub fn pop_attrib(&mut self){}
+    pub fn print_stderr(&self) {}
 }
 
-#[cfg(features="billing")]
-macro_rules! bill{
-    ($billing: expr, $count: expr) => {
-        billing.tally(count as u64)
-    }
-}
-
-#[cfg(not(features="billing"))]
-macro_rules! bill{
-    ($billing: expr, $count: expr) => {
-    }
-}

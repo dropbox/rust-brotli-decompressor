@@ -3,7 +3,6 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(non_upper_case_globals)]
-#![allow(unused_macros)]
 
 // #[macro_use] //<- for debugging, remove xprintln from bit_reader and replace with println
 // extern crate std;
@@ -412,7 +411,6 @@ fn ReadPreloadedSymbol(table: &[HuffmanCode],
     ext_index += (val >> HUFFMAN_TABLE_BITS) & mask;
     let ext = fast!((table)[ext_index as usize]);
     bit_reader::BrotliDropBits(br, ext.bits as u32);
-    bill!(br, ext.bits);
     ext.value as u32
   } else {
     bit_reader::BrotliDropBits(br, *bits);
@@ -2902,9 +2900,13 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                                      &mut total_out,
                                      &mut s);
             match result {
-              BrotliResult::ResultSuccess => {}
+              BrotliResult::ResultSuccess => {},
               _ => break,
             }
+          }
+          match result {
+            BrotliResult::ResultSuccess => s.br.attribution.print_stderr(),
+            _ => {},
           }
           return result;
         }
