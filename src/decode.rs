@@ -9,7 +9,7 @@
 use core;
 use super::alloc;
 pub use alloc::{AllocatedStackMemory, Allocator, SliceWrapper, SliceWrapperMut, StackAllocator};
-
+use bit_reader::billing::Categories;
 use core::mem;
 
 use super::bit_reader;
@@ -1848,15 +1848,17 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
 }
 
 
-pub fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
-                           AllocU32: alloc::Allocator<u32>,
-                           AllocHC: alloc::Allocator<HuffmanCode>>
-  (safe: bool,
+fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
+                       AllocU32: alloc::Allocator<u32>,
+                       AllocHC: alloc::Allocator<HuffmanCode>,
+                       HowSafe: IsSafe>
+  (are_enough_bytes_avail: HowSafe,
    s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    insert_length: &mut i32,
    input: &[u8],
    insert_copy_hgroup: &[&[HuffmanCode]; 256])
    -> bool {
+  let safe = are_enough_bytes_avail.need_check_for_bytes();
   let mut cmd_code: u32 = 0;
   let mut insert_len_extra: u32 = 0;
   let mut copy_length: u32 = 0;
@@ -1905,11 +1907,12 @@ pub fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
   true
 }
 
-
+#[inline(always)]
 fn WarmupBitReader(safe: bool, br: &mut bit_reader::BrotliBitReader, input: &[u8]) -> bool {
   safe || bit_reader::BrotliWarmupBitReader(br, input)
 }
 
+#[inline(always)]
 fn CheckInputAmount(safe: bool, br: &bit_reader::BrotliBitReader, num: u32) -> bool {
   safe || bit_reader::BrotliCheckInputAmount(br, num)
 }
@@ -1968,13 +1971,35 @@ fn memcpy_within_slice(data: &mut [u8], off_dst: usize, off_src: usize, size: us
   }
 }
 
+trait IsSafe {
+    fn need_check_for_bytes(&self) -> bool;
+}
+
+#[derive(Copy,Clone)]
+struct EnoughBytesAvail;
+
+#[derive(Copy,Clone)]
+struct InsufficientBytesAvail;
+impl IsSafe for EnoughBytesAvail {
+    fn need_check_for_bytes(&self) -> bool {
+        false
+    }
+}
+impl IsSafe for InsufficientBytesAvail {
+    fn need_check_for_bytes(&self) -> bool {
+        true
+    }
+}
+
 fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                            AllocU32: alloc::Allocator<u32>,
-                           AllocHC: alloc::Allocator<HuffmanCode>>
-  (safe: bool,
+                           AllocHC: alloc::Allocator<HuffmanCode>,
+                           HowSafe: IsSafe+Copy>
+  (are_enough_bytes_avail: HowSafe,
    s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    input: &[u8])
    -> BrotliResult {
+  let safe = are_enough_bytes_avail.need_check_for_bytes();
   if (!CheckInputAmount(safe, &s.br, 28)) || (!WarmupBitReader(safe, &mut s.br, input)) {
     mark_unlikely();
     return BrotliResult::NeedsMoreInput;
@@ -2016,7 +2041,8 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
             continue; // goto CommandBegin;
           }
           // Read the insert/copy length in the command
-          if (!ReadCommandInternal(safe, s, &mut i, input, &insert_copy_hgroup)) && safe {
+          if (!ReadCommandInternal(are_enough_bytes_avail,
+                                   s, &mut i, input, &insert_copy_hgroup)) && safe {
             result = BrotliResult::NeedsMoreInput;
             break; // return
           }
@@ -2361,7 +2387,7 @@ fn ProcessCommands<AllocU8: alloc::Allocator<u8>,
   (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    input: &[u8])
    -> BrotliResult {
-  ProcessCommandsInternal(false, s, input)
+  ProcessCommandsInternal(EnoughBytesAvail{}, s, input)
 }
 
 fn SafeProcessCommands<AllocU8: alloc::Allocator<u8>,
@@ -2370,7 +2396,7 @@ fn SafeProcessCommands<AllocU8: alloc::Allocator<u8>,
   (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    input: &[u8])
    -> BrotliResult {
-  ProcessCommandsInternal(true, s, input)
+  ProcessCommandsInternal(InsufficientBytesAvail{}, s, input)
 }
 
 
@@ -2541,7 +2567,9 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           // No break, continue to next state
         }
         BrotliRunningState::BROTLI_STATE_METABLOCK_HEADER => {
+          s.br.attribution.push_attrib(Categories::MetablockHeader);
           result = DecodeMetaBlockLength(&mut s, local_input); // Reads 2 - 31 bits.
+          s.br.attribution.pop_attrib();
           match result {
             BrotliResult::ResultSuccess => {}
             _ => break,
@@ -2577,12 +2605,14 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
         }
         BrotliRunningState::BROTLI_STATE_UNCOMPRESSED => {
           let mut _bytes_copied = s.meta_block_remaining_len;
+          s.br.attribution.push_attrib(Categories::Uncompressed);
           result = CopyUncompressedBlockToOutput(&mut available_out,
                                                  &mut output,
                                                  &mut output_offset,
                                                  &mut total_out,
                                                  &mut s,
                                                  local_input);
+          s.br.attribution.pop_attrib();
           _bytes_copied -= s.meta_block_remaining_len;
           match result {
             BrotliResult::ResultSuccess => {}
@@ -2613,12 +2643,14 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           }
           // Reads 1..11 bits.
           {
+            s.br.attribution.push_attrib(Categories::BlockTypeMetadata);
             let index = s.loop_counter as usize;
             result =
               DecodeVarLenUint8(&mut s.substate_decode_uint8,
                                 &mut s.br,
                                 &mut fast_mut!((s.block_type_length_state.num_block_types)[index]),
                                 local_input);
+            s.br.attribution.pop_attrib();
           }
           match result {
             BrotliResult::ResultSuccess => {}
@@ -2638,6 +2670,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           let mut new_huffman_table = mem::replace(&mut s.block_type_length_state.block_type_trees,
                                                    AllocHC::AllocatedMemory::default());
           let loop_counter = s.loop_counter as usize;
+          s.br.attribution.push_attrib(Categories::BlockTypeMetadata);
           result =
             ReadHuffmanCode(fast!((s.block_type_length_state.num_block_types)[loop_counter]) + 2,
                             new_huffman_table.slice_mut(),
@@ -2645,6 +2678,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                             None,
                             &mut s,
                             local_input);
+          s.br.attribution.pop_attrib();
           mem::replace(&mut s.block_type_length_state.block_type_trees,
                        new_huffman_table);
           match result {
@@ -2658,12 +2692,14 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           let tree_offset = s.loop_counter * huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as i32;
           let mut new_huffman_table = mem::replace(&mut s.block_type_length_state.block_len_trees,
                                                    AllocHC::AllocatedMemory::default());
+          s.br.attribution.push_attrib(Categories::BlockTypeMetadata);
           result = ReadHuffmanCode(kNumBlockLengthCodes,
                                    new_huffman_table.slice_mut(),
                                    tree_offset as usize,
                                    None,
                                    &mut s,
                                    local_input);
+          s.br.attribution.pop_attrib();
           mem::replace(&mut s.block_type_length_state.block_len_trees,
                        new_huffman_table);
           match result {
@@ -2678,7 +2714,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
 
           let mut block_length_out: u32 = 0;
           let ind_ret: (bool, u32);
-          
+          s.br.attribution.push_attrib(Categories::BlockTypeMetadata);
           ind_ret = SafeReadBlockLengthIndex(&s.block_type_length_state.substate_read_block_length,
                                              s.block_type_length_state.block_length_index,
                                              fast_slice!((s.block_type_length_state.block_len_trees)
@@ -2690,9 +2726,11 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                                            &mut block_length_out,
                                            ind_ret,
                                            local_input) {
+            s.br.attribution.pop_attrib();
             result = BrotliResult::NeedsMoreInput;
             break;
           }
+          s.br.attribution.pop_attrib();
           fast_mut!((s.block_type_length_state.block_length)[s.loop_counter as usize]) =
             block_length_out;
           BROTLI_LOG_UINT!(s.block_type_length_state.block_length[s.loop_counter as usize]);
@@ -2701,11 +2739,14 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           break;
         }
         BrotliRunningState::BROTLI_STATE_METABLOCK_HEADER_2 => {
+          s.br.attribution.push_attrib(Categories::DistanceHuffmanTable);
           let mut bits: u32 = 0;
           if (!bit_reader::BrotliSafeReadBits(&mut s.br, 6, &mut bits, local_input)) {
+            s.br.attribution.pop_attrib();
             result = BrotliResult::NeedsMoreInput;
             break;
           }
+          s.br.attribution.pop_attrib();
           s.distance_postfix_bits = bits & bit_reader::BitMask(2);
           bits >>= 2;
           s.num_direct_distance_codes = NUM_DISTANCE_SHORT_CODES +
@@ -2724,7 +2765,9 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           // No break, continue to next state
         }
         BrotliRunningState::BROTLI_STATE_CONTEXT_MODES => {
+          s.br.attribution.push_attrib(Categories::LiteralContextMode);
           result = ReadContextModes(&mut s, local_input);
+          s.br.attribution.pop_attrib();
           match result {
             BrotliResult::ResultSuccess => {}
             _ => break,
@@ -2733,12 +2776,14 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           // No break, continue to next state
         }
         BrotliRunningState::BROTLI_STATE_CONTEXT_MAP_1 => {
+          s.br.attribution.push_attrib(Categories::LiteralContextMode);
           result =
             DecodeContextMap((fast!((s.block_type_length_state.num_block_types)[0]) as usize) <<
                              kLiteralContextBits as usize,
                              false,
                              &mut s,
                              local_input);
+          s.br.attribution.pop_attrib();
           match result {
             BrotliResult::ResultSuccess => {}
             _ => break,
@@ -2749,6 +2794,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
         }
         BrotliRunningState::BROTLI_STATE_CONTEXT_MAP_2 => {
           {
+            s.br.attribution.push_attrib(Categories::DistanceContextMode);
             let num_distance_codes: u32 = s.num_direct_distance_codes +
                                           (48u32 << s.distance_postfix_bits);
             result =
@@ -2757,6 +2803,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                                true,
                                s,
                                local_input);
+            s.br.attribution.pop_attrib();
             match result {
               BrotliResult::ResultSuccess => {}
               _ => break,
@@ -2784,7 +2831,13 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           // No break, continue to next state
         }
         BrotliRunningState::BROTLI_STATE_TREE_GROUP => {
+          s.br.attribution.push_attrib(match s.loop_counter {
+              0 => Categories::LiteralHuffmanTable,
+              1 => Categories::InsertCopyHuffmanTable,
+              _ => Categories::DistanceHuffmanTable,
+          });
           result = HuffmanTreeGroupDecode(s.loop_counter, &mut s, local_input);
+          s.br.attribution.pop_attrib();
           match result {
             BrotliResult::ResultSuccess => {}
             _ => break,
