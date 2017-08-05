@@ -19,6 +19,7 @@ pub enum Categories {
     InsertCopyHuffmanTable,
     DistanceHuffmanTable,
     Literals,
+    ComplexLiterals,
     CopyLength,
     CopyDistance,
     DictLength,

@@ -1864,6 +1864,7 @@ fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
   let mut copy_length: u32 = 0;
   let v: prefix::CmdLutElement;
   let mut memento = bit_reader::BrotliBitReaderState::default();
+  s.br.attribution.push_attrib(Categories::CopyLength);
   if (!safe) {
     cmd_code = ReadSymbol(fast!((insert_copy_hgroup)[s.htree_command_index as usize]),
                           &mut s.br,
@@ -1874,6 +1875,7 @@ fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
                         &mut s.br,
                         &mut cmd_code,
                         input)) {
+      s.br.attribution.pop_attrib();
       return false;
     }
   }
@@ -1883,6 +1885,7 @@ fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
   s.dist_htree_index = fast_slice!((s.dist_context_map)[s.dist_context_map_slice_index
                                                   + s.distance_context as usize]);
   *insert_length = v.insert_len_offset as i32;
+  s.br.attribution.push_attrib(Categories::CopyDistance);
   if (!safe) {
     if v.insert_len_extra_bits != 0 {
       mark_unlikely();
@@ -1899,8 +1902,10 @@ fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
                     &mut copy_length,
                     input)) {
     bit_reader::BrotliBitReaderRestoreState(&mut s.br, &memento);
+    s.br.attribution.pop_attrib();
     return false;
   }
+  s.br.attribution.pop_attrib();      
   s.copy_length = copy_length as i32 + v.copy_len_offset as i32;
   fast_mut!((s.block_type_length_state.block_length)[1]) -= 1;
   *insert_length += insert_len_extra as i32;
@@ -2058,6 +2063,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
         BrotliRunningState::BROTLI_STATE_COMMAND_INNER => {
           // Read the literals in the command
           if (s.trivial_literal_context != 0) {
+            s.br.attribution.push_attrib(Categories::Literals);
             let mut bits: u32 = 0;
             let mut value: u32 = 0;
             let mut literal_htree = &fast!((literal_hgroup)[s.literal_htree_index as usize]);
@@ -2114,6 +2120,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                 break;
               }
             }
+            s.br.attribution.pop_attrib();
             if inner_return {
               break; // return
             }
@@ -2122,6 +2129,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               continue;
             }
           } else {
+            s.br.attribution.push_attrib(Categories::ComplexLiterals);
             let mut p1 = fast_slice!((s.ringbuffer)[((pos - 1) & s.ringbuffer_mask) as usize]);
             let mut p2 = fast_slice!((s.ringbuffer)[((pos - 2) & s.ringbuffer_mask) as usize]);
             let mut inner_return: bool = false;
@@ -2185,6 +2193,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                 break;
               }
             }
+            s.br.attribution.pop_attrib();
             if inner_return {
               break; // return
             }
@@ -2233,6 +2242,9 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
           // Apply copy of LZ77 back-reference, or static dictionary reference if
           // the distance is larger than the max LZ77 distance
           if (s.distance_code > s.max_distance) {
+            s.br.attribution.remap(Categories::CopyDistance, Categories::DictIndex);
+            s.br.attribution.remap(Categories::CopyLength, Categories::DictLength);
+            s.br.attribution.commit();
             if (i >= kBrotliMinDictionaryWordLength as i32 &&
                 i <= kBrotliMaxDictionaryWordLength as i32) {
               let mut offset = fast!((kBrotliDictionaryOffsetsByLength)[i as usize]) as i32;
@@ -2277,6 +2289,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               break; // return
             }
           } else {
+            s.br.attribution.commit();
             // update the recent distances cache
             fast_mut!((s.dist_rb)[(s.dist_rb_idx & 3) as usize]) = s.distance_code;
             s.dist_rb_idx += 1;
