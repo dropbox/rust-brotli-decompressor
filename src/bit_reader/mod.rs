@@ -1,5 +1,10 @@
 #![allow(non_snake_case)]
+
 use core::default::Default;
+use core::clone::Clone;
+#[macro_use]
+pub mod billing;
+
 macro_rules! xprintln (
   ($a : expr) => ();
   ($a : expr, $b : expr) => ();
@@ -38,6 +43,7 @@ pub struct BrotliBitReader {
   pub bit_pos_: u32, // current bit-reading position in val_
   pub next_in: u32, // the byte we're reading from
   pub avail_in: u32,
+  pub attribution: billing::Billing,
 }
 
 impl Default for BrotliBitReader {
@@ -47,6 +53,7 @@ impl Default for BrotliBitReader {
       bit_pos_: 0,
       next_in: 0,
       avail_in: 0,
+      attribution: billing::Billing::default(),
     }
   }
 }
@@ -56,6 +63,7 @@ pub struct BrotliBitReaderState {
   pub bit_pos_: u32, // current bit-reading position in val_
   pub next_in: u32, // the byte we're reading from
   pub avail_in: u32,
+  bill:billing::Billing,
 }
 impl Default for BrotliBitReaderState {
   #[inline]
@@ -65,6 +73,7 @@ impl Default for BrotliBitReaderState {
       bit_pos_: 0,
       next_in: 0,
       avail_in: 0,
+      bill:billing::Billing::default(),
     }
   }
 }
@@ -75,6 +84,7 @@ pub fn BrotliBitReaderSaveState(from: &BrotliBitReader) -> BrotliBitReaderState 
     bit_pos_: from.bit_pos_,
     next_in: from.next_in,
     avail_in: from.avail_in,
+    bill: from.attribution.clone(),
   }
 }
 
@@ -83,6 +93,7 @@ pub fn BrotliBitReaderRestoreState(to: &mut BrotliBitReader, from: &BrotliBitRea
   to.bit_pos_ = from.bit_pos_;
   to.next_in = from.next_in;
   to.avail_in = from.avail_in;
+  to.attribution = from.bill.clone();
 }
 
 pub fn BrotliGetAvailableBits(br: &BrotliBitReader) -> u32 {
@@ -293,6 +304,7 @@ pub fn BrotliSafeGetBits(br: &mut BrotliBitReader,
 #[inline(always)]
 pub fn BrotliDropBits(br: &mut BrotliBitReader, n_bits: u32) {
   br.bit_pos_ += n_bits;
+  bill!(br, *bits);
 }
 
 pub fn BrotliBitReaderUnload(br: &mut BrotliBitReader) {
@@ -464,6 +476,7 @@ mod tests {
       bit_pos_: 64,
       avail_in: 33,
       next_in: 4,
+      attribution: billing::Billing::default(),
     };
     let ret = BrotliWarmupBitReader(&mut bit_reader, &data[..]);
     assert_eq!(ret, true);
@@ -480,6 +493,7 @@ mod tests {
       bit_pos_: 64,
       avail_in: 0,
       next_in: 3,
+      attribution: billing::Billing::default(),
     };
     let ret = BrotliWarmupBitReader(&mut bit_reader, &data[..]);
     assert_eq!(ret, false);
@@ -497,6 +511,7 @@ mod tests {
         bit_pos_: 6,
         avail_in: 12,
         next_in: 0,
+        attribution: billing::Billing::default(),
       };
       let mut val: u32 = 0;
       let ret = BrotliSafeReadBits(&mut bit_reader, 7, &mut val, &data[..]);
@@ -513,6 +528,7 @@ mod tests {
         bit_pos_: 57,
         avail_in: 3,
         next_in: 4,
+        attribution: billing::Billing::default(),
       };
       let mut val: u32 = 0;
       let ret = BrotliSafeReadBits(&mut bit_reader, 15, &mut val, &data[..]);
@@ -529,6 +545,7 @@ mod tests {
         bit_pos_: 53,
         avail_in: 2,
         next_in: 2,
+        attribution: billing::Billing::default(),
       };
       let mut val: u32 = 0;
       let ret = BrotliSafeReadBits(&mut bit_reader, 14, &mut val, &data[..]);
@@ -546,6 +563,7 @@ mod tests {
         bit_pos_: 57,
         avail_in: 0,
         next_in: 4,
+        attribution: billing::Billing::default(),
       };
       let mut val: u32 = 0x74eca3f0;
       let ret = BrotliSafeReadBits(&mut bit_reader, 14, &mut val, &data[..]);
@@ -568,6 +586,7 @@ mod tests {
         bit_pos_: 33,
         avail_in: 29,
         next_in: 3,
+        attribution: billing::Billing::default(),
       };
       let ret = BrotliReadBits(&mut bit_reader, 8, &data[..]);
       assert_eq!(ret, 0x83);
@@ -591,6 +610,7 @@ mod tests {
         bit_pos_: 18,
         avail_in: 24,
         next_in: 4,
+        attribution: billing::Billing::default(),
       };
       let ret = BrotliReadBits(&mut bit_reader, 15, &data[..]);
       assert_eq!(ret, 0x1034);
@@ -611,6 +631,7 @@ mod tests {
         bit_pos_: 59,
         avail_in: 33,
         next_in: 1,
+        attribution: billing::Billing::default(),
       };
       let ret = BrotliReadConstantNBits(&mut bit_reader, 4, &data[..]);
       assert_eq!(ret, 0x1);
@@ -630,6 +651,7 @@ mod tests {
         bit_pos_: 63,
         avail_in: 65,
         next_in: 2,
+        attribution: billing::Billing::default(),
       };
       let ret = BrotliGet16BitsUnmasked(&mut bit_reader, &data[..]);
       assert_eq!(ret, 0x38e030fc);

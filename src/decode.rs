@@ -412,6 +412,7 @@ fn ReadPreloadedSymbol(table: &[HuffmanCode],
     ext_index += (val >> HUFFMAN_TABLE_BITS) & mask;
     let ext = fast!((table)[ext_index as usize]);
     bit_reader::BrotliDropBits(br, ext.bits as u32);
+    bill!(br, ext.bits);
     ext.value as u32
   } else {
     bit_reader::BrotliDropBits(br, *bits);
