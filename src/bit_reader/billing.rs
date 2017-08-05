@@ -20,7 +20,7 @@ pub enum Categories {
 
 #[cfg(not(feature="billing"))]
 #[derive(Clone,Default)]
-pub struct Billing();
+pub struct Billing;
 
 
 #[cfg(feature="billing")]
