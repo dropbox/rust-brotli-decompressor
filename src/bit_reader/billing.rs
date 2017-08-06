@@ -35,7 +35,7 @@ pub struct Billing;
 #[cfg(feature="billing")]
 #[derive(Clone)]
 pub struct Billing {
-    categories: std::vec::Vec<Categories>,
+    category: Categories,
     pending_bill:bill::HashMap<Categories,u64>,
     bill:bill::HashMap<Categories,u64>,
 }
@@ -45,7 +45,7 @@ pub struct Billing {
 impl Default for Billing {
     fn default() ->Self {
         Billing{
-            categories:vec![Categories::Misc],
+            category:Categories::Misc,
             pending_bill:bill::HashMap::<Categories, u64>::new(),
             bill:bill::HashMap::<Categories, u64>::new(),
         }
@@ -54,7 +54,7 @@ impl Default for Billing {
 #[cfg(feature="billing")]
 impl Billing {
     pub fn tally(&mut self, count:u64) {
-        let counter = self.bill.entry(self.categories[self.categories.len() - 1].clone()).or_insert(0);
+        let counter = self.bill.entry(self.category.clone()).or_insert(0);
         *counter += count;
     }
     pub fn remap(&mut self, old:Categories, fixed:Categories) {
@@ -80,11 +80,11 @@ impl Billing {
         }
     }
     pub fn push_attrib(&mut self, categories:Categories) {
-        self.categories.push(categories);
+        assert_eq!(self.category, Categories::Misc);
+        self.category = categories;
     }
     pub fn pop_attrib(&mut self) {
-        assert!(self.categories.len() > 1);
-        self.categories.pop();
+        self.category = Categories::Misc;
     }
     pub fn print_stderr(&mut self) {
         self.print(&mut std::io::stderr());

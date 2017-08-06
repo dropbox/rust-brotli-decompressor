@@ -1864,13 +1864,14 @@ fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
   let mut copy_length: u32 = 0;
   let v: prefix::CmdLutElement;
   let mut memento = bit_reader::BrotliBitReaderState::default();
-  s.br.attribution.push_attrib(Categories::CopyLength);
   if (!safe) {
+    s.br.attribution.push_attrib(Categories::CopyLength);
     cmd_code = ReadSymbol(fast!((insert_copy_hgroup)[s.htree_command_index as usize]),
                           &mut s.br,
                           input);
   } else {
     memento = bit_reader::BrotliBitReaderSaveState(&s.br);
+    s.br.attribution.push_attrib(Categories::CopyLength);
     if (!SafeReadSymbol(fast!((insert_copy_hgroup)[s.htree_command_index as usize]),
                         &mut s.br,
                         &mut cmd_code,
@@ -1901,8 +1902,8 @@ fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
                     v.copy_len_extra_bits as u32,
                     &mut copy_length,
                     input)) {
-    bit_reader::BrotliBitReaderRestoreState(&mut s.br, &memento);
     s.br.attribution.pop_attrib();
+    bit_reader::BrotliBitReaderRestoreState(&mut s.br, &memento);
     return false;
   }
   s.br.attribution.pop_attrib();      
