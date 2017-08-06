@@ -24,7 +24,7 @@ pub enum Categories {
     CopyDistance,
     DictLength,
     DictIndex,
-    Misc
+    Misc // must be last item: never explicitly pushed
 }
 
 #[cfg(not(feature="billing"))]

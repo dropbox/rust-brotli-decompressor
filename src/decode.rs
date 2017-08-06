@@ -989,15 +989,6 @@ fn SafeReadBlockLengthFromIndex<
     state::BrotliRunningReadBlockLengthState::BROTLI_STATE_READ_BLOCK_LENGTH_NONE;
   true
 }
-macro_rules! SafeReadBlockLength (
-   ($state : expr, $result : expr , $table : expr) => {
-       SafeReadBlockLengthFromIndex(&mut $state, &mut $result,
-                                    SafeReadBlockLengthIndex($state.substate_read_block_length,
-                                                             $state.block_length_index,
-                                                             $table,
-                                                             &mut $state.br))
-   };
-);
 
 // Transform:
 // 1) initialize list L with values 0, 1,... 255
@@ -1886,6 +1877,7 @@ fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
   s.dist_htree_index = fast_slice!((s.dist_context_map)[s.dist_context_map_slice_index
                                                   + s.distance_context as usize]);
   *insert_length = v.insert_len_offset as i32;
+  s.br.attribution.pop_attrib();
   s.br.attribution.push_attrib(Categories::CopyDistance);
   if (!safe) {
     if v.insert_len_extra_bits != 0 {
