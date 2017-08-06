@@ -1340,7 +1340,12 @@ fn DecodeBlockTypeAndLength<
   let tree_offset = tree_type as usize * huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize;
 
   let mut block_type: u32 = 0;
-
+  let prev_attrib = br.attribution.get_attrib();
+  match prev_attrib {
+      Categories::Misc => {},
+      _ => br.attribution.pop_attrib(),
+  }
+  br.attribution.push_attrib(Categories::BlockTypeMetadata);
   // Read 0..15 + 3..39 bits
   if (!safe) {
     block_type = ReadSymbol(fast_slice!((s.block_type_trees)[tree_offset;]), br, input);
@@ -1352,6 +1357,7 @@ fn DecodeBlockTypeAndLength<
                         br,
                         &mut block_type,
                         input)) {
+      br.attribution.restore_attrib(prev_attrib);
       return false;
     }
     let mut block_length_out: u32 = 0;
@@ -1365,6 +1371,7 @@ fn DecodeBlockTypeAndLength<
       s.substate_read_block_length =
         BrotliRunningReadBlockLengthState::BROTLI_STATE_READ_BLOCK_LENGTH_NONE;
       bit_reader::BrotliBitReaderRestoreState(br, &memento);
+      br.attribution.restore_attrib(prev_attrib);
       return false;
     }
     fast_mut!((s.block_length)[tree_type as usize]) = block_length_out;
@@ -1382,6 +1389,7 @@ fn DecodeBlockTypeAndLength<
   }
   fast_mut!((ringbuffer)[0]) = fast!((ringbuffer)[1]);
   fast_mut!((ringbuffer)[1]) = block_type;
+  br.attribution.restore_attrib(prev_attrib);
   true
 }
 fn DetectTrivialLiteralBlockTypes<AllocU8: alloc::Allocator<u8>,
@@ -2203,6 +2211,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
           s.state = BrotliRunningState::BROTLI_STATE_COMMAND_POST_DECODE_LITERALS;
         }
         BrotliRunningState::BROTLI_STATE_COMMAND_POST_DECODE_LITERALS => {
+          s.br.attribution.push_attrib(Categories::CopyDistance);
           if s.distance_code >= 0 {
             s.dist_rb_idx -= 1;
             s.distance_code = fast!((s.dist_rb)[(s.dist_rb_idx & 3) as usize]);
@@ -2212,11 +2221,13 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               mark_unlikely();
               if (!DecodeDistanceBlockSwitchInternal(safe, s, input)) && safe {
                 result = BrotliResult::NeedsMoreInput;
+                s.br.attribution.pop_attrib();
                 break; // return
               }
             }
             if (!ReadDistanceInternal(safe, s, input, &distance_hgroup)) && safe {
               result = BrotliResult::NeedsMoreInput;
+              s.br.attribution.pop_attrib();
               break; // return
             }
           }
@@ -2231,6 +2242,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               s.max_distance = s.max_backward_distance;
             }
           }
+          s.br.attribution.pop_attrib();
           i = s.copy_length;
           // Apply copy of LZ77 back-reference, or static dictionary reference if
           // the distance is larger than the max LZ77 distance
@@ -2541,8 +2553,10 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
             result = BrotliResult::NeedsMoreInput;
             break;
           }
+          s.br.attribution.push_attrib(Categories::MetablockHeader);
           // Decode window size.
           s.window_bits = DecodeWindowBits(&mut s.br); /* Reads 1..7 bits. */
+          s.br.attribution.pop_attrib();
           BROTLI_LOG_UINT!(s.window_bits);
           if (s.window_bits == 9) {
             // Value 9 is reserved for future use.
