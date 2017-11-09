@@ -153,7 +153,8 @@ pub fn BrotliDecompressCustomIo<ErrType,
         OutputType: CustomWrite<ErrType>
 {
   let mut brotli_state = BrotliState::new(alloc_u8, alloc_u32, alloc_hc);
-
+  assert!(input_buffer.len() != 0);
+  assert!(output_buffer.len() != 0);
   let mut available_out: usize = output_buffer.len();
 
   let mut available_in: usize = 0;

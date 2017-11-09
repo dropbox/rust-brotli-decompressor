@@ -78,7 +78,7 @@ pub struct DecompressorWriter<W: Write>(DecompressorWriterCustomAlloc<W,
 impl<W: Write> DecompressorWriter<W> {
   pub fn new(w: W, buffer_size: usize) -> Self {
     let mut alloc_u8 = HeapAlloc::<u8> { default_value: 0 };
-    let buffer = alloc_u8.alloc_cell(buffer_size);
+    let buffer = alloc_u8.alloc_cell(if buffer_size == 0 {4096} else {buffer_size});
     let alloc_u32 = HeapAlloc::<u32> { default_value: 0 };
     let alloc_hc = HeapAlloc::<HuffmanCode> { default_value: HuffmanCode::default() };
     DecompressorWriter::<W>(DecompressorWriterCustomAlloc::<W,

@@ -75,7 +75,7 @@ pub struct Decompressor<R: Read>(DecompressorCustomAlloc<R,
 impl<R: Read> Decompressor<R> {
   pub fn new(r: R, buffer_size: usize) -> Self {
     let mut alloc_u8 = HeapAlloc::<u8> { default_value: 0 };
-    let buffer = alloc_u8.alloc_cell(buffer_size);
+    let buffer = alloc_u8.alloc_cell(if buffer_size == 0 {4096} else {buffer_size});
     let alloc_u32 = HeapAlloc::<u32> { default_value: 0 };
     let alloc_hc = HeapAlloc::<HuffmanCode> { default_value: HuffmanCode::default() };
     Decompressor::<R>(DecompressorCustomAlloc::<R,
@@ -105,7 +105,7 @@ pub struct Decompressor<R: Read>(DecompressorCustomAlloc<R,
 impl<R: Read> Decompressor<R> {
   pub fn new(r: R, buffer_size: usize) -> Self {
     let mut alloc_u8 = unsafe { HeapAllocUninitialized::<u8>::new() };
-    let buffer = alloc_u8.alloc_cell(buffer_size);
+    let buffer = alloc_u8.alloc_cell(if buffer_size == 0 {4096} else {buffer_size});
     let alloc_u32 = unsafe { HeapAllocUninitialized::<u32>::new() };
     let alloc_hc = unsafe { HeapAllocUninitialized::<HuffmanCode>::new() };
     Decompressor::<R>(DecompressorCustomAlloc::<R,
