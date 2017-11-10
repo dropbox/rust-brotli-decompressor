@@ -116,7 +116,7 @@ fn mark_unlikely() {}
 
 fn DecodeVarLenUint8(substate_decode_uint8: &mut state::BrotliRunningDecodeUint8State,
                      mut br: &mut bit_reader::BrotliBitReader,
-                     mut value: &mut u32,
+                     value: &mut u32,
                      input: &[u8])
                      -> BrotliResult {
   let mut bits: u32 = 0;
@@ -1342,8 +1342,8 @@ fn DecodeContextMap<AllocU8: alloc::Allocator<u8>,
 // Reads 3..54 bits.
 fn DecodeBlockTypeAndLength<
   AllocHC : alloc::Allocator<HuffmanCode>> (safe : bool,
-                                            mut s : &mut BlockTypeAndLengthState<AllocHC>,
-                                            mut br : &mut bit_reader::BrotliBitReader,
+                                            s : &mut BlockTypeAndLengthState<AllocHC>,
+                                            br : &mut bit_reader::BrotliBitReader,
                                             tree_type : i32,
                                             input : &[u8]) -> bool {
   let max_block_type = fast!((s.num_block_types)[tree_type as usize]);
@@ -1397,7 +1397,7 @@ fn DecodeBlockTypeAndLength<
 fn DetectTrivialLiteralBlockTypes<AllocU8: alloc::Allocator<u8>,
                                   AllocU32: alloc::Allocator<u32>,
                                   AllocHC: alloc::Allocator<HuffmanCode>>
-  (mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>) {
+  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>) {
   for iter in s.trivial_literal_contexts.iter_mut() {
     *iter = 0;
   }
@@ -1426,7 +1426,7 @@ fn DetectTrivialLiteralBlockTypes<AllocU8: alloc::Allocator<u8>,
 fn PrepareLiteralDecoding<AllocU8: alloc::Allocator<u8>,
                           AllocU32: alloc::Allocator<u32>,
                           AllocHC: alloc::Allocator<HuffmanCode>>
-  (mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>) {
+  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>) {
 
   let context_mode: u8;
   let context_offset: u32;
@@ -1453,7 +1453,7 @@ fn DecodeLiteralBlockSwitchInternal<AllocU8: alloc::Allocator<u8>,
                                     AllocU32: alloc::Allocator<u32>,
                                     AllocHC: alloc::Allocator<HuffmanCode>>
   (safe: bool,
-   mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    input: &[u8])
    -> bool {
 
@@ -1487,7 +1487,7 @@ fn DecodeCommandBlockSwitchInternal<AllocU8: alloc::Allocator<u8>,
                                     AllocU32: alloc::Allocator<u32>,
                                     AllocHC: alloc::Allocator<HuffmanCode>>
   (safe: bool,
-   mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    input: &[u8])
    -> bool {
   if (!DecodeBlockTypeAndLength(safe, &mut s.block_type_length_state, &mut s.br, 1, input)) {
@@ -1501,7 +1501,7 @@ fn DecodeCommandBlockSwitchInternal<AllocU8: alloc::Allocator<u8>,
 fn DecodeCommandBlockSwitch<AllocU8: alloc::Allocator<u8>,
                             AllocU32: alloc::Allocator<u32>,
                             AllocHC: alloc::Allocator<HuffmanCode>>
-  (mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    input: &[u8]) {
   DecodeCommandBlockSwitchInternal(false, s, input);
 }
@@ -1509,7 +1509,7 @@ fn DecodeCommandBlockSwitch<AllocU8: alloc::Allocator<u8>,
 fn SafeDecodeCommandBlockSwitch<AllocU8: alloc::Allocator<u8>,
                                 AllocU32: alloc::Allocator<u32>,
                                 AllocHC: alloc::Allocator<HuffmanCode>>
-  (mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    input: &[u8])
    -> bool {
   DecodeCommandBlockSwitchInternal(true, s, input)
@@ -1521,7 +1521,7 @@ fn DecodeDistanceBlockSwitchInternal<AllocU8: alloc::Allocator<u8>,
                                      AllocU32: alloc::Allocator<u32>,
                                      AllocHC: alloc::Allocator<HuffmanCode>>
   (safe: bool,
-   mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    input: &[u8])
    -> bool {
   if (!DecodeBlockTypeAndLength(safe, &mut s.block_type_length_state, &mut s.br, 2, input)) {
@@ -1538,7 +1538,7 @@ fn DecodeDistanceBlockSwitchInternal<AllocU8: alloc::Allocator<u8>,
 fn DecodeDistanceBlockSwitch<AllocU8: alloc::Allocator<u8>,
                              AllocU32: alloc::Allocator<u32>,
                              AllocHC: alloc::Allocator<HuffmanCode>>
-  (mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    input: &[u8]) {
   DecodeDistanceBlockSwitchInternal(false, s, input);
 }
@@ -1547,7 +1547,7 @@ fn DecodeDistanceBlockSwitch<AllocU8: alloc::Allocator<u8>,
 fn SafeDecodeDistanceBlockSwitch<AllocU8: alloc::Allocator<u8>,
                                  AllocU32: alloc::Allocator<u32>,
                                  AllocHC: alloc::Allocator<HuffmanCode>>
-  (mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    input: &[u8])
    -> bool {
   DecodeDistanceBlockSwitchInternal(true, s, input)
@@ -1557,9 +1557,9 @@ fn WriteRingBuffer<AllocU8: alloc::Allocator<u8>,
                    AllocU32: alloc::Allocator<u32>,
                    AllocHC: alloc::Allocator<HuffmanCode>>
   (available_out: &mut usize,
-   mut output: &mut [u8],
-   mut output_offset: &mut usize,
-   mut total_out: &mut usize,
+   output: &mut [u8],
+   output_offset: &mut usize,
+   total_out: &mut usize,
    s: &mut BrotliState<AllocU8, AllocU32, AllocHC>)
    -> BrotliResult {
   let pos = if s.pos > s.ringbuffer_size {
@@ -2380,7 +2380,7 @@ fn SafeProcessCommands<AllocU8: alloc::Allocator<u8>,
 pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                               AllocU32: alloc::Allocator<u32>,
                               AllocHC: alloc::Allocator<HuffmanCode>>
-  (mut available_in: &mut usize,
+  (available_in: &mut usize,
    input_offset: &mut usize,
    xinput: &[u8],
    mut available_out: &mut usize,

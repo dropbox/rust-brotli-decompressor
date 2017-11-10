@@ -769,7 +769,7 @@ pub fn TransformDictionaryWord(dst: &mut [u8],
       idx += 1;
       i += 1;
     }
-    let mut uppercase = &mut fast_mut!((dst)[(idx - len) as usize ;]);
+    let uppercase = &mut fast_mut!((dst)[(idx - len) as usize ;]);
     if (t == kUppercaseFirst) {
       ToUpperCase(uppercase);
     } else if (t == kUppercaseAll) {

@@ -147,7 +147,7 @@ pub struct DecompressorWriterCustomIo<ErrType,
 }
 
 
-pub fn write_all<ErrType, W: CustomWrite<ErrType>>(mut writer: &mut W, mut buf : &[u8]) -> Result<(), ErrType> {
+pub fn write_all<ErrType, W: CustomWrite<ErrType>>(writer: &mut W, mut buf : &[u8]) -> Result<(), ErrType> {
     while buf.len() != 0 {
           match writer.write(buf) {
                 Ok(bytes_written) => buf = &buf[bytes_written..],
