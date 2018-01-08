@@ -45,6 +45,10 @@ impl<R: Read,
                                                                   Error::new(ErrorKind::InvalidData,
                                                                              "Invalid Data")))
     }
+
+    pub fn get_ref(&self) -> &R {
+      &self.0.get_ref().0
+    }
 }
 #[cfg(not(feature="no-stdlib"))]
 impl<R: Read,
@@ -89,6 +93,10 @@ impl<R: Read> Decompressor<R> {
                                                                               alloc_u32,
                                                                               alloc_hc))
   }
+
+  pub fn get_ref(&self) -> &R {
+    self.0.get_ref()
+  }
 }
 
 
@@ -115,6 +123,10 @@ impl<R: Read> Decompressor<R> {
                                                 HeapAllocUninitialized<u32>,
                                                 HeapAllocUninitialized<HuffmanCode> >
       ::new(r, buffer, alloc_u8, alloc_u32, alloc_hc))
+  }
+
+  fn get_ref(&self) -> &R {
+    &self.0.get_ref()
   }
 }
 
@@ -169,6 +181,10 @@ impl<ErrType,
             error_if_invalid_data : Some(invalid_data_error_type),
             read_error : None,
         }
+    }
+
+    pub fn get_ref(&self) -> &R {
+      &self.input
     }
 
     pub fn copy_to_front(&mut self) {

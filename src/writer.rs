@@ -45,6 +45,10 @@ impl<W: Write,
                                                                   Error::new(ErrorKind::InvalidData,
                                                                              "Invalid Data")))
     }
+
+    pub fn get_ref(&self) -> &W {
+        &self.0.get_ref().0
+    }
 }
 #[cfg(not(feature="no-stdlib"))]
 impl<W: Write,
@@ -92,6 +96,10 @@ impl<W: Write> DecompressorWriter<W> {
                                                                               alloc_u32,
                                                                               alloc_hc))
   }
+
+  pub fn get_ref(&self) -> &W {
+      self.0.get_ref()
+  }
 }
 
 
@@ -118,6 +126,10 @@ impl<W: Write> DecompressorWriter<W> {
                                                 HeapAllocUninitialized<u32>,
                                                 HeapAllocUninitialized<HuffmanCode> >
       ::new(w, buffer, alloc_u8, alloc_u32, alloc_hc))
+  }
+
+  fn get_ref(&self) -> &W {
+      self.0.get_ref()
   }
 }
 
@@ -206,6 +218,10 @@ impl<ErrType,
            BrotliResult::ResultFailure => return Err(self.error_if_invalid_data.take().unwrap()),
            }
         }
+    }
+
+    pub fn get_ref(&self) -> &W {
+        &self.output
     }
 }
 impl<ErrType,
