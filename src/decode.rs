@@ -51,6 +51,11 @@ const kCodeLengthPrefixLength: [u8; 16] = [2, 2, 2, 3, 2, 2, 2, 4, 2, 2, 2, 3, 2
 
 const kCodeLengthPrefixValue: [u8; 16] = [0, 4, 3, 2, 0, 4, 3, 1, 0, 4, 3, 2, 0, 4, 3, 5];
 
+macro_rules! prior_log (
+    ($huff_index : expr, $prev_byte : expr, $cur_byte : expr) => {
+        xprintln!("h,{},{}\ns,{},{}", $huff_index, $cur_byte, $prev_byte, $cur_byte)
+    };
+);
 
 macro_rules! BROTLI_LOG_UINT (
     ($num : expr) => {
@@ -2160,9 +2165,10 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                             fast!((s.context_lookup2)[p2 as usize]);
               BROTLI_LOG_UINT!(context);
               let hc: &[HuffmanCode];
+              let huffman_table_index;
               {
-                let i = fast_slice!((s.context_map)[s.context_map_slice_index + context as usize]);
-                hc = fast!((literal_hgroup)[i as usize]);
+                huffman_table_index = fast_slice!((s.context_map)[s.context_map_slice_index + context as usize]);
+                hc = fast!((literal_hgroup)[huffman_table_index as usize]);
               }
               p2 = p1;
               if (!safe) {
@@ -2176,6 +2182,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                 }
                 p1 = literal as u8;
               }
+              prior_log!(huffman_table_index, p2, p1);
               fast_slice_mut!((s.ringbuffer)[pos as usize]) = p1;
               fast_mut!((s.block_type_length_state.block_length)[0]) -= 1;
               BROTLI_LOG_UINT!(s.context_map.slice()[s.context_map_slice_index as usize +
