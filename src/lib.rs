@@ -24,6 +24,7 @@ pub use alloc::HeapAllocUninitialized;
 #[macro_use]
 mod memory;
 pub mod dictionary;
+mod brotli_alloc;
 #[macro_use]
 mod bit_reader;
 mod huffman;
@@ -88,6 +89,43 @@ pub fn BrotliDecompress<InputType, OutputType>(r: &mut InputType,
                               })
 }
 
+#[cfg(not(feature="no-stdlib"))]
+pub fn BrotliDecompressCustomDict<InputType, OutputType>(r: &mut InputType,
+                                                         w: &mut OutputType,
+                                                         input_buffer:&mut [u8],
+                                                         output_buffer:&mut [u8],
+                                                         custom_dictionary:std::vec::Vec<u8>)
+                                                          -> Result<(), io::Error>
+  where InputType: Read,
+        OutputType: Write
+{
+  let mut alloc_u8 = brotli_alloc::BrotliAlloc::<u8>::new();
+  let mut input_buffer_backing;
+  let mut output_buffer_backing;
+  {
+  let mut borrowed_input_buffer = input_buffer;
+  let mut borrowed_output_buffer = output_buffer;
+  if borrowed_input_buffer.len() == 0 {
+     input_buffer_backing = alloc_u8.alloc_cell(4096);
+     borrowed_input_buffer = input_buffer_backing.slice_mut();
+  }
+  if borrowed_output_buffer.len() == 0 {
+     output_buffer_backing = alloc_u8.alloc_cell(4096);
+     borrowed_output_buffer = output_buffer_backing.slice_mut();
+  }
+  let dict = alloc_u8.take_ownership(custom_dictionary);
+  BrotliDecompressCustomIoCustomDict(&mut IoReaderWrapper::<InputType>(r),
+                              &mut IoWriterWrapper::<OutputType>(w),
+                              borrowed_input_buffer,
+                              borrowed_output_buffer,
+                              alloc_u8,
+                              brotli_alloc::BrotliAlloc::<u32>::new(),
+                              brotli_alloc::BrotliAlloc::<HuffmanCode>::new(),
+                              dict,
+                              Error::new(ErrorKind::UnexpectedEof, "Unexpected EOF"))
+  }
+}
+
 #[cfg(all(feature="unsafe",not(feature="no-stdlib")))]
 pub fn BrotliDecompress<InputType, OutputType>(r: &mut InputType,
                                                w: &mut OutputType)
@@ -133,7 +171,6 @@ pub fn BrotliDecompressCustomAlloc<InputType,
                            alloc_hc,
                            Error::new(ErrorKind::UnexpectedEof, "Unexpected EOF"))
 }
-
 pub fn BrotliDecompressCustomIo<ErrType,
                                 InputType,
                                 OutputType,
@@ -152,7 +189,28 @@ pub fn BrotliDecompressCustomIo<ErrType,
   where InputType: CustomRead<ErrType>,
         OutputType: CustomWrite<ErrType>
 {
-  let mut brotli_state = BrotliState::new(alloc_u8, alloc_u32, alloc_hc);
+  BrotliDecompressCustomIoCustomDict(r, w, input_buffer, output_buffer, alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default(), unexpected_eof_error_constant)
+}
+pub fn BrotliDecompressCustomIoCustomDict<ErrType,
+                                InputType,
+                                OutputType,
+                                AllocU8: Allocator<u8>,
+                                AllocU32: Allocator<u32>,
+                                AllocHC: Allocator<HuffmanCode>>
+  (r: &mut InputType,
+   w: &mut OutputType,
+   input_buffer: &mut [u8],
+   output_buffer: &mut [u8],
+   alloc_u8: AllocU8,
+   alloc_u32: AllocU32,
+   alloc_hc: AllocHC,
+   custom_dictionary: AllocU8::AllocatedMemory,
+   unexpected_eof_error_constant: ErrType)
+   -> Result<(), ErrType>
+  where InputType: CustomRead<ErrType>,
+        OutputType: CustomWrite<ErrType>
+{
+  let mut brotli_state = BrotliState::new_with_custom_dictionary(alloc_u8, alloc_u32, alloc_hc, custom_dictionary);
   assert!(input_buffer.len() != 0);
   assert!(output_buffer.len() != 0);
   let mut available_out: usize = output_buffer.len();

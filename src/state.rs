@@ -8,6 +8,7 @@ use core;
 use bit_reader::{BrotliBitReader, BrotliGetAvailableBits, BrotliInitBitReader};
 use huffman::{BROTLI_HUFFMAN_MAX_CODE_LENGTH, BROTLI_HUFFMAN_MAX_CODE_LENGTHS_SIZE,
               BROTLI_HUFFMAN_MAX_TABLE_SIZE, HuffmanCode, HuffmanTreeGroup};
+use alloc::SliceWrapper;
 
 #[allow(dead_code)]
 pub enum WhichTreeGroup {
@@ -227,7 +228,14 @@ impl <'brotli_state,
     pub fn new(alloc_u8 : AllocU8,
            alloc_u32 : AllocU32,
            alloc_hc : AllocHC) -> Self{
+       Self::new_with_custom_dictionary(alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default())
+    }
+    pub fn new_with_custom_dictionary(alloc_u8 : AllocU8,
+           alloc_u32 : AllocU32,
+           alloc_hc : AllocHC,
+           custom_dict: AllocU8::AllocatedMemory) -> Self{
         let MB_HEADER_NONE = BrotliRunningMetablockHeaderState::BROTLI_STATE_METABLOCK_HEADER_NONE;
+        let custom_dict_len = custom_dict.slice().len();
         let READ_BLOCK_LENGTH_NONE =
           BrotliRunningReadBlockLengthState::BROTLI_STATE_READ_BLOCK_LENGTH_NONE;
         let mut retval = BrotliState::<AllocU8, AllocU32, AllocHC>{
@@ -309,8 +317,8 @@ impl <'brotli_state,
            mtf : [0; 256],
 
            /* For custom dictionaries */
-           custom_dict : AllocU8::AllocatedMemory::default(),
-           custom_dict_size : 0,
+           custom_dict : custom_dict,
+           custom_dict_size : custom_dict_len as i32,
 
            /* less used attributes are in the end of this struct */
            /* States inside function calls */

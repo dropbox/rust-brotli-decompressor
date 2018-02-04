@@ -46,6 +46,21 @@ impl<R: Read,
                                                                              "Invalid Data")))
     }
 
+    pub fn new_with_custom_dictionary(r: R, buffer : BufferType,
+               alloc_u8 : AllocU8, alloc_u32 : AllocU32, alloc_hc : AllocHC,
+               dict: AllocU8::AllocatedMemory) -> Self {
+        DecompressorCustomAlloc::<R, BufferType, AllocU8, AllocU32, AllocHC>(
+          DecompressorCustomIo::<Error,
+                                 IntoIoReader<R>,
+                                 BufferType,
+                                 AllocU8, AllocU32, AllocHC>::new_with_custom_dictionary(IntoIoReader::<R>(r),
+                                                                                   buffer,
+                                                                                   alloc_u8, alloc_u32, alloc_hc,
+                                                                                   dict,
+                                                                                   Error::new(ErrorKind::InvalidData,
+                                                                                              "Invalid Data")))
+    }
+
     pub fn get_ref(&self) -> &R {
       &self.0.get_ref().0
     }
@@ -78,6 +93,10 @@ pub struct Decompressor<R: Read>(DecompressorCustomAlloc<R,
 #[cfg(not(any(feature="unsafe", feature="no-stdlib")))]
 impl<R: Read> Decompressor<R> {
   pub fn new(r: R, buffer_size: usize) -> Self {
+     let dict = <HeapAlloc<u8> as Allocator<u8>>::AllocatedMemory::default();
+     Self::new_with_custom_dict(r, buffer_size, dict)
+  }
+  pub fn new_with_custom_dict(r: R, buffer_size: usize, dict: <HeapAlloc<u8> as Allocator<u8>>::AllocatedMemory) -> Self {
     let mut alloc_u8 = HeapAlloc::<u8> { default_value: 0 };
     let buffer = alloc_u8.alloc_cell(if buffer_size == 0 {4096} else {buffer_size});
     let alloc_u32 = HeapAlloc::<u32> { default_value: 0 };
@@ -87,11 +106,12 @@ impl<R: Read> Decompressor<R> {
                                                  as Allocator<u8>>::AllocatedMemory,
                                                 HeapAlloc<u8>,
                                                 HeapAlloc<u32>,
-                                                HeapAlloc<HuffmanCode> >::new(r,
+                                                HeapAlloc<HuffmanCode> >::new_with_custom_dictionary(r,
                                                                               buffer,
                                                                               alloc_u8,
                                                                               alloc_u32,
-                                                                              alloc_hc))
+                                                                              alloc_hc,
+                                                                              dict))
   }
 
   pub fn get_ref(&self) -> &R {
@@ -112,6 +132,11 @@ pub struct Decompressor<R: Read>(DecompressorCustomAlloc<R,
 #[cfg(all(feature="unsafe", not(feature="no-stdlib")))]
 impl<R: Read> Decompressor<R> {
   pub fn new(r: R, buffer_size: usize) -> Self {
+     let dict = <HeapAllocUninitialized<u8> as Allocator<u8>>::AllocatedMemory::default();
+     Self::new_with_custom_dictionary(r, buffer_size, dict)
+  }
+  pub fn new_with_custom_dictionary(r: R, buffer_size: usize, dict: <HeapAllocUninitialized<u8>
+                                                 as Allocator<u8>>::AllocatedMemory) -> Self {
     let mut alloc_u8 = unsafe { HeapAllocUninitialized::<u8>::new() };
     let buffer = alloc_u8.alloc_cell(if buffer_size == 0 {4096} else {buffer_size});
     let alloc_u32 = unsafe { HeapAllocUninitialized::<u32>::new() };
@@ -168,6 +193,13 @@ impl<ErrType,
     pub fn new(r: R, buffer : BufferType,
                alloc_u8 : AllocU8, alloc_u32 : AllocU32, alloc_hc : AllocHC,
                invalid_data_error_type : ErrType) -> Self {
+     let dict = AllocU8::AllocatedMemory::default();
+     Self::new_with_custom_dictionary(r, buffer, alloc_u8, alloc_u32, alloc_hc, dict, invalid_data_error_type)
+    }
+    pub fn new_with_custom_dictionary(r: R, buffer : BufferType,
+               alloc_u8 : AllocU8, alloc_u32 : AllocU32, alloc_hc : AllocHC,
+               dict: AllocU8::AllocatedMemory,
+               invalid_data_error_type : ErrType) -> Self {
         DecompressorCustomIo::<ErrType, R, BufferType, AllocU8, AllocU32, AllocHC>{
             input_buffer : buffer,
             total_out : 0,
@@ -175,9 +207,10 @@ impl<ErrType,
             input_len : 0,
             input_eof : false,
             input: r,
-            state : BrotliState::new(alloc_u8,
+            state : BrotliState::new_with_custom_dictionary(alloc_u8,
                                      alloc_u32,
-                                     alloc_hc),
+                                     alloc_hc,
+                                     dict),
             error_if_invalid_data : Some(invalid_data_error_type),
             read_error : None,
         }
