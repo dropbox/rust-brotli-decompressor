@@ -47,7 +47,7 @@ fn oneshot(input: &mut [u8], mut output: &mut [u8]) -> (BrotliResult, usize, usi
 
 #[test]
 fn test_10x10y() {
-  const BUFFER_SIZE: usize = 16384;
+  const BUFFER_SIZE: usize = 2048;
   let mut input: [u8; 12] = [0x1b, 0x13, 0x00, 0x00, 0xa4, 0xb0, 0xb2, 0xea, 0x81, 0x47, 0x02,
                              0x8a];
   let mut output = [0u8; BUFFER_SIZE];
@@ -70,7 +70,7 @@ fn test_10x10y() {
 
 #[test]
 fn test_x() {
-  const BUFFER_SIZE: usize = 16384;
+  const BUFFER_SIZE: usize = 2048;
   let mut input: [u8; 5] = [0x0b, 0x00, 0x80, 0x58, 0x03];
   let mut output = [0u8; BUFFER_SIZE];
   let (result, input_offset, output_offset) = oneshot(&mut input[..], &mut output[..]);
@@ -85,7 +85,7 @@ fn test_x() {
 
 #[test]
 fn test_empty() {
-  const BUFFER_SIZE: usize = 16384;
+  const BUFFER_SIZE: usize = 4096;
   let mut input: [u8; 1] = [0x06];
   let mut output = [0u8; BUFFER_SIZE];
   let (result, input_offset, output_offset) = oneshot(&mut input[..], &mut output[..]);

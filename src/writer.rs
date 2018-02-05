@@ -55,6 +55,9 @@ impl<W: Write,
     pub fn get_ref(&self) -> &W {
         &self.0.get_ref().0
     }
+    pub fn get_mut(&mut self) -> &mut W {
+        &mut self.0.get_mut().0
+    }
 }
 #[cfg(not(feature="no-stdlib"))]
 impl<W: Write,
@@ -110,6 +113,9 @@ impl<W: Write> DecompressorWriter<W> {
   pub fn get_ref(&self) -> &W {
       self.0.get_ref()
   }
+  pub fn get_mut(&mut self) -> &mut W {
+      self.0.get_mut()
+  }
 }
 
 
@@ -144,6 +150,9 @@ impl<W: Write> DecompressorWriter<W> {
 
   fn get_ref(&self) -> &W {
       self.0.get_ref()
+  }
+  fn get_mut(&self) -> &mut W {
+      self.0.get_mut()
   }
 }
 
@@ -244,6 +253,9 @@ impl<ErrType,
 
     pub fn get_ref(&self) -> &W {
         &self.output
+    }
+    pub fn get_mut(&mut self) -> &mut W {
+        &mut self.output
     }
 }
 impl<ErrType,

@@ -64,6 +64,9 @@ impl<R: Read,
     pub fn get_ref(&self) -> &R {
       &self.0.get_ref().0
     }
+    pub fn get_mut(&mut self) -> &mut R {
+      &mut self.0.get_mut().0
+    }
 }
 #[cfg(not(feature="no-stdlib"))]
 impl<R: Read,
@@ -117,6 +120,9 @@ impl<R: Read> Decompressor<R> {
   pub fn get_ref(&self) -> &R {
     self.0.get_ref()
   }
+  pub fn get_mut(&mut self) -> &mut R {
+    self.0.get_mut()
+  }
 }
 
 
@@ -150,8 +156,11 @@ impl<R: Read> Decompressor<R> {
       ::new(r, buffer, alloc_u8, alloc_u32, alloc_hc))
   }
 
-  fn get_ref(&self) -> &R {
+  pub fn get_ref(&self) -> &R {
     &self.0.get_ref()
+  }
+  pub fn get_mut(&mut self) -> &mut R {
+    &self.0.get_mut()
   }
 }
 
@@ -218,6 +227,9 @@ impl<ErrType,
 
     pub fn get_ref(&self) -> &R {
       &self.input
+    }
+    pub fn get_mut(&mut self) -> &mut R {
+      &mut self.input
     }
 
     pub fn copy_to_front(&mut self) {
