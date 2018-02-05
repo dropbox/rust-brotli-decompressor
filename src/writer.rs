@@ -148,11 +148,11 @@ impl<W: Write> DecompressorWriter<W> {
       ::new_with_custom_dictionary(w, buffer, alloc_u8, alloc_u32, alloc_hc, dict))
   }
 
-  fn get_ref(&self) -> &W {
+  pub fn get_ref(&self) -> &W {
       self.0.get_ref()
   }
-  fn get_mut(&self) -> &mut W {
-      self.0.get_mut()
+  pub fn get_mut(&mut self) -> &mut W {
+    &mut (self.0).0.get_mut().0
   }
 }
 

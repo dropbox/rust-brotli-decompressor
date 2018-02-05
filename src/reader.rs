@@ -153,14 +153,14 @@ impl<R: Read> Decompressor<R> {
                                                 HeapAllocUninitialized<u8>,
                                                 HeapAllocUninitialized<u32>,
                                                 HeapAllocUninitialized<HuffmanCode> >
-      ::new(r, buffer, alloc_u8, alloc_u32, alloc_hc))
+      ::new_with_custom_dictionary(r, buffer, alloc_u8, alloc_u32, alloc_hc, dict))
   }
 
   pub fn get_ref(&self) -> &R {
     self.0.get_ref()
   }
   pub fn get_mut(&mut self) -> &mut R {
-    self.0.get_mut()
+    &mut (self.0).0.get_mut().0
   }
 }
 
