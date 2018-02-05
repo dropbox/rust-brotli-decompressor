@@ -11,7 +11,11 @@ use brotli_decompressor::CustomRead;
 pub struct Rebox<T> {
   b: Box<[T]>,
 }
-
+impl<T> From<Vec<T>> for Rebox<T> {
+  fn from(val: Vec<T>) -> Self {
+    Rebox::<T>{b:val.into_boxed_slice()}
+  }
+}
 impl<T> core::default::Default for Rebox<T> {
   fn default() -> Self {
     let v: Vec<T> = Vec::new();
@@ -164,7 +168,8 @@ impl<InputType: Read> brotli_decompressor::CustomRead<io::Error> for IntoIoReade
 #[cfg(not(feature="seccomp"))]
 pub fn decompress<InputType, OutputType>(r: &mut InputType,
                                          w: &mut OutputType,
-                                         buffer_size: usize)
+                                         buffer_size: usize,
+                                         dict: Vec<u8>)
                                          -> Result<(), io::Error>
   where InputType: Read,
         OutputType: Write
@@ -172,7 +177,7 @@ pub fn decompress<InputType, OutputType>(r: &mut InputType,
   let mut alloc_u8 = HeapAllocator::<u8> { default_value: 0 };
   let mut input_buffer = alloc_u8.alloc_cell(buffer_size);
   let mut output_buffer = alloc_u8.alloc_cell(buffer_size);
-  brotli_decompressor::BrotliDecompressCustomIo(&mut IoReaderWrapper::<InputType>(r),
+  brotli_decompressor::BrotliDecompressCustomIoCustomDict(&mut IoReaderWrapper::<InputType>(r),
                                           &mut IoWriterWrapper::<OutputType>(w),
                                           input_buffer.slice_mut(),
                                           output_buffer.slice_mut(),
@@ -181,6 +186,7 @@ pub fn decompress<InputType, OutputType>(r: &mut InputType,
                                           HeapAllocator::<HuffmanCode> {
                                             default_value: HuffmanCode::default(),
                                           },
+                                          Rebox::<u8>::from(dict),
                                           Error::new(ErrorKind::UnexpectedEof, "Unexpected EOF"))
 }
 #[cfg(feature="seccomp")]
@@ -290,33 +296,35 @@ fn writeln_time<OutputType: Write>(strm: &mut OutputType,
 }
 
 fn main() {
-  if env::args_os().len() > 1 {
-    let mut first = true;
-    for argument in env::args() {
-      if first {
-        first = false;
-        continue;
-      }
-      let mut input = match File::open(&Path::new(&argument)) {
-        Err(why) => panic!("couldn't open {}: {:?}", argument, why),
-        Ok(file) => file,
-      };
-      let oa = argument + ".original";
-      let mut output = match File::create(&Path::new(&oa)) {
-        Err(why) => panic!("couldn't open file for writing: {:} {:?}", oa, why),
-        Ok(file) => file,
-      };
-      match decompress(&mut input, &mut output, 65536) {
-        Ok(_) => {}
-        Err(e) => panic!("Error {:?}", e),
-      }
-      drop(output);
-      drop(input);
+  let mut dictionary = Vec::<u8>::new();
+  let mut double_dash = false;
+  let mut input: Option<File> = None;
+  let mut output: Option<File> = None;
+  for argument in env::args().skip(1) {
+    if argument == "--" {
+      double_dash = true;
+      continue;
     }
+    if argument.starts_with("-dict=") && !double_dash {
+      let mut dict_file = File::open(&Path::new(&argument[6..])).unwrap();
+      dict_file.read_to_end(&mut dictionary).unwrap();
+      continue;
+    }
+    if input.is_none() {
+       input = Some(File::open(&Path::new(&argument)).unwrap());
+    } else if output.is_none() {
+       output = Some(File::create(&Path::new(&argument)).unwrap());
+    } else {
+       panic!("Cannot specify more than 2 filename args (input, output)")
+    }
+  }
+  if input.is_none() {
+    decompress(&mut io::stdin(), &mut io::stdout(), 65536, dictionary).unwrap();
   } else {
-    match decompress(&mut io::stdin(), &mut io::stdout(), 65536) {
-      Ok(_) => return,
-      Err(e) => panic!("Error {:?}", e),
+    if output.is_none() {
+      decompress(&mut input.unwrap(), &mut io::stdout(), 65536, dictionary).unwrap();
+    } else {
+      decompress(&mut input.unwrap(), &mut output.unwrap(), 65536, dictionary).unwrap();
     }
   }
 }

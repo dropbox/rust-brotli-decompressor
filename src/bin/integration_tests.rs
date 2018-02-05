@@ -254,7 +254,7 @@ fn test_10x_10y() {
   let mut input = Buffer::new(&in_buf);
   let mut output = Buffer::new(&[]);
   output.read_offset = 20;
-  match super::decompress(&mut input, &mut output, 65536) {
+  match super::decompress(&mut input, &mut output, 65536, Vec::new()) {
     Ok(_) => {}
     Err(e) => panic!("Error {:?}", e),
   }
@@ -395,7 +395,7 @@ fn assert_decompressed_input_matches_output(input_slice: &[u8],
   let mut output = Buffer::new(&[]);
   output.read_offset = output_slice.len();
   if input_buffer_size == output_buffer_size {
-    match super::decompress(&mut input, &mut output, input_buffer_size) {
+    match super::decompress(&mut input, &mut output, input_buffer_size, Vec::new()) {
       Ok(_) => {}
       Err(e) => panic!("Error {:?}", e),
     }
