@@ -118,10 +118,10 @@ impl<R: Read> Decompressor<R> {
   }
 
   pub fn get_ref(&self) -> &R {
-    self.0.get_ref()
+    &self.0.get_ref()
   }
   pub fn get_mut(&mut self) -> &mut R {
-    self.0.get_mut()
+    &mut ((self.0).0).get_mut().0
   }
 }
 
@@ -157,10 +157,10 @@ impl<R: Read> Decompressor<R> {
   }
 
   pub fn get_ref(&self) -> &R {
-    &self.0.get_ref()
+    self.0.get_ref()
   }
   pub fn get_mut(&mut self) -> &mut R {
-    &self.0.get_mut()
+    self.0.get_mut()
   }
 }
 
