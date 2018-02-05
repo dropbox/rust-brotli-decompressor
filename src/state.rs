@@ -220,31 +220,14 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub context_modes: AllocU8::AllocatedMemory,
   pub trivial_literal_contexts: [u32; 8],
 }
-
-impl <'brotli_state,
-      AllocU8 : alloc::Allocator<u8>,
-      AllocU32 : alloc::Allocator<u32>,
-      AllocHC : alloc::Allocator<HuffmanCode> > BrotliState<AllocU8, AllocU32, AllocHC> {
-    pub fn new(alloc_u8 : AllocU8,
-           alloc_u32 : AllocU32,
-           alloc_hc : AllocHC) -> Self{
-       Self::new_with_custom_dictionary(alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default())
-    }
-    pub fn new_with_custom_dictionary(alloc_u8 : AllocU8,
-           alloc_u32 : AllocU32,
-           alloc_hc : AllocHC,
-           custom_dict: AllocU8::AllocatedMemory) -> Self{
-        let MB_HEADER_NONE = BrotliRunningMetablockHeaderState::BROTLI_STATE_METABLOCK_HEADER_NONE;
-        let custom_dict_len = custom_dict.slice().len();
-        let READ_BLOCK_LENGTH_NONE =
-          BrotliRunningReadBlockLengthState::BROTLI_STATE_READ_BLOCK_LENGTH_NONE;
-        let mut retval = BrotliState::<AllocU8, AllocU32, AllocHC>{
+macro_rules! make_brotli_state {
+ ($alloc_u8 : expr, $alloc_u32 : expr, $alloc_hc : expr, $custom_dict : expr, $custom_dict_len: expr) => (BrotliState::<AllocU8, AllocU32, AllocHC>{
             state : BrotliRunningState::BROTLI_STATE_UNINITED,
             loop_counter : 0,
             br : BrotliBitReader::default(),
-            alloc_u8 : alloc_u8,
-            alloc_u32 : alloc_u32,
-            alloc_hc : alloc_hc,
+            alloc_u8 : $alloc_u8,
+            alloc_u32 : $alloc_u32,
+            alloc_hc : $alloc_hc,
             buffer : [0u8; 8],
             buffer_length : 0,
             pos : 0,
@@ -274,7 +257,7 @@ impl <'brotli_state,
               block_length : [0; 3],
               num_block_types : [0;3],
               block_type_rb: [0;6],
-              substate_read_block_length : READ_BLOCK_LENGTH_NONE,
+              substate_read_block_length : BrotliRunningReadBlockLengthState::BROTLI_STATE_READ_BLOCK_LENGTH_NONE,
               block_type_trees : AllocHC::AllocatedMemory::default(),
               block_len_trees : AllocHC::AllocatedMemory::default(),
             },
@@ -317,12 +300,12 @@ impl <'brotli_state,
            mtf : [0; 256],
 
            /* For custom dictionaries */
-           custom_dict : custom_dict,
-           custom_dict_size : custom_dict_len as i32,
+           custom_dict : $custom_dict,
+           custom_dict_size : $custom_dict_len as i32,
 
            /* less used attributes are in the end of this struct */
            /* States inside function calls */
-           substate_metablock_header : MB_HEADER_NONE,
+           substate_metablock_header : BrotliRunningMetablockHeaderState::BROTLI_STATE_METABLOCK_HEADER_NONE,
            substate_tree_group : BrotliRunningTreeGroupState::BROTLI_STATE_TREE_GROUP_NONE,
            substate_context_map : BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_NONE,
            substate_uncompressed : BrotliRunningUncompressedState::BROTLI_STATE_UNCOMPRESSED_NONE,
@@ -339,7 +322,28 @@ impl <'brotli_state,
            context_map : AllocU8::AllocatedMemory::default(),
            context_modes : AllocU8::AllocatedMemory::default(),
            trivial_literal_contexts : [0u32; 8],
-        };
+        }
+    );
+}
+impl <'brotli_state,
+      AllocU8 : alloc::Allocator<u8>,
+      AllocU32 : alloc::Allocator<u32>,
+      AllocHC : alloc::Allocator<HuffmanCode> > BrotliState<AllocU8, AllocU32, AllocHC> {
+    pub fn new(alloc_u8 : AllocU8,
+           alloc_u32 : AllocU32,
+           alloc_hc : AllocHC) -> Self{
+        let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default(), 0);
+        retval.context_map_table = retval.alloc_hc.alloc_cell(
+          BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
+        BrotliInitBitReader(&mut retval.br);
+        retval
+    }
+    pub fn new_with_custom_dictionary(alloc_u8 : AllocU8,
+           alloc_u32 : AllocU32,
+           alloc_hc : AllocHC,
+           custom_dict: AllocU8::AllocatedMemory) -> Self{
+        let custom_dict_len = custom_dict.slice().len();
+        let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, custom_dict, custom_dict_len);
         retval.context_map_table = retval.alloc_hc.alloc_cell(
           BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
         BrotliInitBitReader(&mut retval.br);

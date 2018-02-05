@@ -70,7 +70,7 @@ fn test_10x10y() {
 
 #[test]
 fn test_x() {
-  const BUFFER_SIZE: usize = 2048;
+  const BUFFER_SIZE: usize = 128;
   let mut input: [u8; 5] = [0x0b, 0x00, 0x80, 0x58, 0x03];
   let mut output = [0u8; BUFFER_SIZE];
   let (result, input_offset, output_offset) = oneshot(&mut input[..], &mut output[..]);
@@ -85,7 +85,7 @@ fn test_x() {
 
 #[test]
 fn test_empty() {
-  const BUFFER_SIZE: usize = 4096;
+  const BUFFER_SIZE: usize = 128;
   let mut input: [u8; 1] = [0x06];
   let mut output = [0u8; BUFFER_SIZE];
   let (result, input_offset, output_offset) = oneshot(&mut input[..], &mut output[..]);
