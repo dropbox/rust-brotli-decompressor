@@ -122,7 +122,6 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub max_backward_distance: i32,
   pub max_backward_distance_minus_custom_dict_size: i32,
   pub max_distance: i32,
-  pub new_ringbuffer_size: i32,
   pub ringbuffer_size: i32,
   pub ringbuffer_mask: i32,
   pub dist_rb_idx: i32,
@@ -235,7 +234,6 @@ macro_rules! make_brotli_state {
             max_backward_distance : 0,
             max_backward_distance_minus_custom_dict_size : 0,
             max_distance : 0,
-            new_ringbuffer_size : 0,
             ringbuffer_size : 0,
             ringbuffer_mask: 0,
             dist_rb_idx : 0,
@@ -405,6 +403,8 @@ impl <'brotli_state,
                               AllocHC::AllocatedMemory::default()));
       self.alloc_hc.free_cell(core::mem::replace(&mut self.context_map_table,
                               AllocHC::AllocatedMemory::default()));
+      self.alloc_u8.free_cell(core::mem::replace(&mut self.custom_dict,
+                              AllocU8::AllocatedMemory::default()));
 
       //FIXME??  BROTLI_FREE(s, s->legacy_input_buffer);
       //FIXME??  BROTLI_FREE(s, s->legacy_output_buffer);
