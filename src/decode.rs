@@ -1603,6 +1603,9 @@ fn CopyUncompressedBlockToOutput<AllocU8: alloc::Allocator<u8>,
    input: &[u8])
    -> BrotliResult {
   // State machine
+  if !BrotliEnsureRingBuffer(s) {
+    return BrotliResult::ResultFailure;
+  }
   loop {
     match s.substate_uncompressed {
       BrotliRunningUncompressedState::BROTLI_STATE_UNCOMPRESSED_NONE => {
@@ -1648,60 +1651,76 @@ fn CopyUncompressedBlockToOutput<AllocU8: alloc::Allocator<u8>,
     }
   }
 }
-
-fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
+const CANNY_RINGBUFFER_ALLOCATION: bool = true;
+fn BrotliCalculateRingBufferSize<AllocU8: alloc::Allocator<u8>,
                             AllocU32: alloc::Allocator<u32>,
-                            AllocHC: alloc::Allocator<HuffmanCode>>
-  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
-   input: &[u8])
-   -> bool {
-  // We need the slack region for the following reasons:
-  // - doing up to two 16-byte copies for fast backward copying
-  // - inserting transformed dictionary word (5 prefix + 24 base + 8 suffix)
-  const kRingBufferWriteAheadSlack: i32 = 42;
-  let mut is_last = s.is_last_metablock;
-  s.ringbuffer_size = 1 << s.window_bits;
-
-  if (s.is_uncompressed != 0) {
-    let next_block_header =
-      bit_reader::BrotliPeekByte(&mut s.br, s.meta_block_remaining_len as u32, input);
-    if (next_block_header != -1) &&
-        // Peek succeeded
-        ((next_block_header & 3) == 3) {
-      // ISLAST and ISEMPTY
-      is_last = 1;
-    }
-  }
-
+                                 AllocHC: alloc::Allocator<HuffmanCode>>
+    (s: &BrotliState<AllocU8, AllocU32, AllocHC>) -> i32 {
+  let window_size = 1i32 << s.window_bits;
+  let mut new_ringbuffer_size = window_size;
   // We need at least 2 bytes of ring buffer size to get the last two
-  // bytes for context from there
-  if (is_last != 0) {
-    while (s.ringbuffer_size >= s.meta_block_remaining_len * 2 && s.ringbuffer_size > 32) {
-      s.ringbuffer_size >>= 1;
+  //   bytes for context from there.
+  let mut min_size = if s.ringbuffer_size != 0 { s.ringbuffer_size} else {1024};
+  let mut output_size;
+
+  // If maximum is already reached, no further extension is retired.
+  if (s.ringbuffer_size == window_size) {
+    return s.new_ringbuffer_size;
+  }
+
+  // Metadata blocks does not touch ring buffer.
+  if s.is_metadata != 0 {
+    return s.new_ringbuffer_size;
+  }
+
+  if s.ringbuffer.slice().len() == 0 {
+    // Custom dictionary counts as a "virtual" output.
+    output_size = s.custom_dict_size;
+  } else {
+    output_size = s.pos;
+  }
+  output_size += s.meta_block_remaining_len;
+  min_size = core::cmp::max(output_size, min_size);
+
+  if (CANNY_RINGBUFFER_ALLOCATION) {
+    /* Reduce ring buffer size to save memory when server is unscrupulous.
+       In worst case memory usage might be 1.5x bigger for a short period of
+       ring buffer reallocation.*/
+    while ((new_ringbuffer_size >> 1) >= min_size) {
+      new_ringbuffer_size >>= 1;
     }
   }
-
-  // But make it fit the custom dictionary if there is one.
-  while (s.ringbuffer_size < s.custom_dict_size) {
-    s.ringbuffer_size <<= 1;
+  new_ringbuffer_size
+}
+const kRingBufferWriteAheadSlack: i32 = 42;
+fn BrotliEnsureRingBuffer<AllocU8: alloc::Allocator<u8>,
+                            AllocU32: alloc::Allocator<u32>,
+                            AllocHC: alloc::Allocator<HuffmanCode>> (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>) -> bool {
+  if s.ringbuffer_size == s.new_ringbuffer_size {
+    return true;
   }
-
-  s.ringbuffer_mask = s.ringbuffer_size - 1;
-  s.ringbuffer = s.alloc_u8
-    .alloc_cell((s.ringbuffer_size as usize + kRingBufferWriteAheadSlack as usize +
-                 kBrotliMaxDictionaryWordLength as usize));
-  if (s.ringbuffer.slice().len() == 0) {
-    return false;
+  let old_ringbuffer = core::mem::replace(&mut s.ringbuffer,
+                                          s.alloc_u8.alloc_cell(s.new_ringbuffer_size as usize + kRingBufferWriteAheadSlack as usize));
+  if s.ringbuffer.slice().len() == 0 {
+      s.ringbuffer = old_ringbuffer;
+      return false;
   }
-  fast_mut!((s.ringbuffer.slice_mut())[s.ringbuffer_size as usize - 1]) = 0;
-  fast_mut!((s.ringbuffer.slice_mut())[s.ringbuffer_size as usize - 2]) = 0;
-  if (s.custom_dict.slice().len() > 0) {
-    let offset = ((-s.custom_dict_size) & s.ringbuffer_mask) as usize;
-    let cds = s.custom_dict_size as usize;
-    fast_mut!((s.ringbuffer.slice_mut())[offset ; offset + cds])
-      .clone_from_slice(fast_slice!((s.custom_dict)[0;cds]));
-  }
+  s.ringbuffer.slice_mut()[s.new_ringbuffer_size as usize - 2] = 0;
+  s.ringbuffer.slice_mut()[s.new_ringbuffer_size as usize - 1] = 0;
 
+  s.ringbuffer_size = s.new_ringbuffer_size;
+  s.ringbuffer_mask = s.new_ringbuffer_size - 1;
+  if old_ringbuffer.slice().len() == 0 {
+    if s.custom_dict.slice().len() != 0 && s.custom_dict_size != 0 {
+      let offset = ((-s.custom_dict_size) & s.ringbuffer_mask) as usize;
+      let cds = s.custom_dict_size as usize;
+      fast_mut!((s.ringbuffer.slice_mut())[offset ; offset + cds])
+        .clone_from_slice(fast_slice!((s.custom_dict)[0;cds]));
+      }
+  } else {
+      s.ringbuffer.slice_mut().split_at_mut(s.pos as usize).0.clone_from_slice(old_ringbuffer.slice().split_at(s.pos as usize).0);
+      s.alloc_u8.free_cell(old_ringbuffer);
+  }
   true
 }
 
@@ -2564,10 +2583,8 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
             s.state = BrotliRunningState::BROTLI_STATE_METABLOCK_DONE;
             break;
           }
-          if s.ringbuffer.slice().len() == 0 && !BrotliAllocateRingBuffer(&mut s, local_input) {
-            result = BROTLI_FAILURE();
-            break;
-          }
+          let new_rbs = BrotliCalculateRingBufferSize(&s);
+          s.new_ringbuffer_size = new_rbs;
           if s.is_uncompressed != 0 {
             s.state = BrotliRunningState::BROTLI_STATE_UNCOMPRESSED;
             break;
@@ -2802,6 +2819,9 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
             let index2 = fast!((kContextLookupOffsets)[context_mode as usize + 1]) as usize;
             s.context_lookup2 = fast!((kContextLookup)[index2;]);
             s.htree_command_index = 0;
+            if !BrotliEnsureRingBuffer(s) {
+              return BrotliResult::ResultFailure;
+            }
             // look it up each time s.literal_htree=s.literal_hgroup.htrees[s.literal_htree_index];
             s.state = BrotliRunningState::BROTLI_STATE_COMMAND_BEGIN;
           }
