@@ -1712,10 +1712,16 @@ fn BrotliEnsureRingBuffer<AllocU8: alloc::Allocator<u8>,
   s.ringbuffer_mask = s.new_ringbuffer_size - 1;
   if old_ringbuffer.slice().len() == 0 {
     if s.custom_dict.slice().len() != 0 && s.custom_dict_size != 0 {
-      let offset = ((-s.custom_dict_size) & s.ringbuffer_mask) as usize;
+      let cd = if s.custom_dict_size + 16 > s.ringbuffer_size {
+        let r = fast_slice!((s.custom_dict)[(s.custom_dict_size as usize - (s.ringbuffer_size as usize - 16)); s.custom_dict_size as usize]);
+        s.custom_dict_size = s.ringbuffer_size - 16;
+        r
+      } else {
+          fast_slice!((s.custom_dict)[0;s.custom_dict_size as usize])
+      };
       let cds = s.custom_dict_size as usize;
-      fast_mut!((s.ringbuffer.slice_mut())[offset ; offset + cds])
-        .clone_from_slice(fast_slice!((s.custom_dict)[0;cds]));
+      let offset = ((-s.custom_dict_size) & s.ringbuffer_mask) as usize;
+      fast_mut!((s.ringbuffer.slice_mut())[offset ; offset + cds]).clone_from_slice(cd);
       }
   } else {
       s.ringbuffer.slice_mut().split_at_mut(s.pos as usize).0.clone_from_slice(old_ringbuffer.slice().split_at(s.pos as usize).0);
