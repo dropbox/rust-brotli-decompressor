@@ -53,7 +53,7 @@ const kCodeLengthPrefixValue: [u8; 16] = [0, 4, 3, 2, 0, 4, 3, 1, 0, 4, 3, 2, 0,
 
 macro_rules! prior_log (
     ($huff_index : expr, $prev_byte : expr, $cur_byte : expr) => {
-        xprintln!("h,{},{}\ns,{},{}", $huff_index, $cur_byte, $prev_byte, $cur_byte)
+        println!("h,{},{}\ns,{},{}", $huff_index, $cur_byte, $prev_byte, $cur_byte)
     };
 );
 
@@ -1813,6 +1813,7 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
   if ((s.distance_code as u64 & 0xfffffffffffffff0) == 0) {
     TakeDistanceFromRingBuffer(s);
     fast_mut!((s.block_type_length_state.block_length)[2]) -= 1;
+    eprintln!("dcode: {} prior_a: {} prior_b: {} lookup: {}", s.distance_code, s.dist_context_map_slice_index, s.distance_context, s.dist_htree_index);
     return true;
   }
   distval = s.distance_code - s.num_direct_distance_codes as i32;
@@ -1848,6 +1849,7 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
   }
   s.distance_code = s.distance_code - NUM_DISTANCE_SHORT_CODES as i32 + 1;
   fast_mut!((s.block_type_length_state.block_length)[2]) -= 1;
+  eprintln!("dcode: {} prior_a: {} prior_b: {} lookup: {}", s.distance_code, s.dist_context_map_slice_index, s.distance_context, s.dist_htree_index);
   true
 }
 
@@ -1915,6 +1917,7 @@ fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
   s.copy_length = copy_length as i32 + v.copy_len_offset as i32;
   fast_mut!((s.block_type_length_state.block_length)[1]) -= 1;
   *insert_length += insert_len_extra as i32;
+  eprintln!("copy_len: {} cmd_index: {}", s.copy_length, s.htree_command_index);
   true
 }
 
