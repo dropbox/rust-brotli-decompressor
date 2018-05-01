@@ -249,7 +249,7 @@ pub fn BrotliDecompressCustomIoCustomDict<ErrType,
         output_offset = 0;
       }
       BrotliResult::ResultSuccess => break,
-      BrotliResult::ResultFailure => panic!("FAILURE"),
+      BrotliResult::ResultFailure => return Err(unexpected_eof_error_constant),
     }
     let mut written: usize = 0;
     result = BrotliDecompressStream(&mut available_in,
