@@ -413,6 +413,50 @@ fn assert_decompressed_input_matches_output(input_slice: &[u8],
   assert_eq!(output.data, output_slice)
 }
 
+fn assert_huge_file_input_matches_output(input_slice: &[u8],
+                                         output_prefix: &[u8],
+                                         output_postfix: &[u8],
+                                         size: usize,
+                                         rep_gap: usize,
+                                         input_buffer_size: usize,
+                                         output_buffer_size: usize) {
+  let mut input = Buffer::new(input_slice);
+  let mut output = Buffer::new(&[]);
+  output.read_offset = size;
+  if input_buffer_size == output_buffer_size {
+    match super::decompress(&mut input, &mut output, input_buffer_size, Vec::new()) {
+      Ok(_) => {}
+      Err(e) => panic!("Error {:?}", e),
+    }
+  } else {
+    match decompress_internal(&mut input,
+                              &mut output,
+                              input_buffer_size,
+                              output_buffer_size,
+                              false) {
+      Ok(_) => {}
+      Err(e) => panic!("Error {:?}", e),
+    }
+  }
+  assert_eq!(output.data.len(), size);
+  assert_eq!(output.data.split_at(output_prefix.len()).0, output_prefix);
+  assert_eq!(output.data.split_at(output.data.len() - output_postfix.len()).1, output_postfix);
+  assert_eq!(output.data.split_at(output_prefix.len() + rep_gap).1.split_at(output_prefix.len()).0, output_prefix);
+  let mut zero_count: usize = 0;
+  for item in output.data {
+      if item == 0 {
+          zero_count += 1;
+      }
+  }
+  let mut nulls_in_input: usize = 0;
+  for item in output_prefix.iter().chain(output_prefix.iter().chain(output_postfix.iter())) {
+      if *item == 0 {
+          nulls_in_input += 1;
+      }
+  }
+  assert_eq!(zero_count - nulls_in_input, size - output_prefix.len() * 2 - output_postfix.len());
+}
+
 fn benchmark_decompressed_input(input_slice: &[u8],
                                 output_slice: &[u8],
                                 input_buffer_size: usize,
@@ -840,4 +884,14 @@ fn test_random_then_unicode() {
                                            include_bytes!("testdata/random_then_unicode"),
                                            65536,
                                            65536);
+}
+#[test]
+fn test_large_window() {
+  assert_huge_file_input_matches_output(include_bytes!("testdata/rnd_chunk.br"),
+                                        include_bytes!("testdata/rnd_prefix"),
+                                        include_bytes!("testdata/rnd_postfix"),
+                                        100011280,
+                                        100000000,
+                                        1,
+                                        16384);
 }

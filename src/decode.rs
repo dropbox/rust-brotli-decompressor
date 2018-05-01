@@ -2833,7 +2833,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
             let num_direct_codes =
               s.num_direct_distance_codes - NUM_DISTANCE_SHORT_CODES;
             let num_distance_codes = BROTLI_DISTANCE_ALPHABET_SIZE(
-              num_direct_codes, s.distance_postfix_bits,
+              s.distance_postfix_bits, num_direct_codes,
                 (if s.large_window { BROTLI_LARGE_MAX_DISTANCE_BITS } else {
                     BROTLI_MAX_DISTANCE_BITS}));
             let max_distance_symbol = if s.large_window {

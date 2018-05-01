@@ -335,6 +335,7 @@ impl <'brotli_state,
            alloc_u32 : AllocU32,
            alloc_hc : AllocHC) -> Self{
         let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default(), 0);
+        retval.large_window = true;
         retval.context_map_table = retval.alloc_hc.alloc_cell(
           BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
         BrotliInitBitReader(&mut retval.br);
@@ -348,6 +349,17 @@ impl <'brotli_state,
         let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, custom_dict, custom_dict_len);
         retval.context_map_table = retval.alloc_hc.alloc_cell(
           BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
+        retval.large_window =  true;
+        BrotliInitBitReader(&mut retval.br);
+        retval
+    }
+    pub fn new_strict(alloc_u8 : AllocU8,
+           alloc_u32 : AllocU32,
+           alloc_hc : AllocHC) -> Self{
+        let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default(), 0);
+        retval.context_map_table = retval.alloc_hc.alloc_cell(
+          BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
+        retval.large_window =  false;
         BrotliInitBitReader(&mut retval.br);
         retval
     }
