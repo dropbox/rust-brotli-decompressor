@@ -16,7 +16,8 @@ pub const BROTLI_HUFFMAN_MAX_CODE_LENGTHS_SIZE: usize = 704;
 // max code length 15 and root table bits 8.
 // pub const kMaxHuffmanTableSize : [u16;23] = [
 // 256, 402, 436, 468, 500, 534, 566, 598, 630, 662, 694, 726, 758, 790, 822,
-// 854, 886, 920, 952, 984, 1016, 1048, 1080];
+// 854, 886, 920, 952, 984, 1016, 1048, 1080, 1112, 1144,1176,1208,1240,272,
+// 1304, 1336, 1368, 1400, 1432, 1464, 1496, 1528];
 // pub const BROTLI_HUFFMAN_MAX_SIZE_26 : u32 = 396;
 // pub const BROTLI_HUFFMAN_MAX_SIZE_258 : u32 = 632;
 // pub const BROTLI_HUFFMAN_MAX_SIZE_272 : u32 = 646;
@@ -49,14 +50,17 @@ pub struct HuffmanTreeGroup<Alloc32: Allocator<u32>, AllocHC: Allocator<HuffmanC
   pub htrees: Alloc32::AllocatedMemory,
   pub codes: AllocHC::AllocatedMemory,
   pub alphabet_size: u16,
+  pub max_symbol: u16,
   pub num_htrees: u16,
 }
+
 impl<AllocU32 : alloc::Allocator<u32>,
      AllocHC : alloc::Allocator<HuffmanCode> > HuffmanTreeGroup<AllocU32, AllocHC> {
     pub fn init(self : &mut Self, mut alloc_u32 : &mut AllocU32, mut alloc_hc : &mut AllocHC,
-                alphabet_size : u16, ntrees : u16) {
+                alphabet_size : u16, max_symbol: u16, ntrees : u16) {
         self.reset(&mut alloc_u32, &mut alloc_hc);
         self.alphabet_size = alphabet_size;
+        self.max_symbol = max_symbol;
         self.num_htrees = ntrees;
         let nt = ntrees as usize;
         core::mem::replace(&mut self.htrees,
@@ -114,6 +118,7 @@ impl<AllocU32 : alloc::Allocator<u32>,
         HuffmanTreeGroup::<AllocU32, AllocHC> {
           htrees : AllocU32::AllocatedMemory::default(),
           codes : AllocHC::AllocatedMemory::default(),
+          max_symbol: 0,
           alphabet_size : 0,
           num_htrees : 0,
         }

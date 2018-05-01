@@ -5,6 +5,7 @@
 
 use alloc;
 use core;
+use context::kContextLookup;
 use bit_reader::{BrotliBitReader, BrotliGetAvailableBits, BrotliInitBitReader};
 use huffman::{BROTLI_HUFFMAN_MAX_CODE_LENGTH, BROTLI_HUFFMAN_MAX_CODE_LENGTHS_SIZE,
               BROTLI_HUFFMAN_MAX_TABLE_SIZE, HuffmanCode, HuffmanTreeGroup};
@@ -19,6 +20,8 @@ pub enum WhichTreeGroup {
 
 pub enum BrotliRunningState {
   BROTLI_STATE_UNINITED,
+  BROTLI_STATE_LARGE_WINDOW_BITS,
+  BROTLI_STATE_INITIALIZE,
   BROTLI_STATE_METABLOCK_BEGIN,
   BROTLI_STATE_METABLOCK_HEADER,
   BROTLI_STATE_METABLOCK_HEADER_2,
@@ -129,8 +132,7 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub ringbuffer: AllocU8::AllocatedMemory,
   // pub ringbuffer_end : usize,
   pub htree_command_index: u16,
-  pub context_lookup1: &'static [u8],
-  pub context_lookup2: &'static [u8],
+  pub context_lookup: &'static [u8;512],
   pub context_map_slice_index: usize,
   pub dist_context_map_slice_index: usize,
 
@@ -155,6 +157,7 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   // NOT NEEDED? the index below seems to supersede it pub literal_htree : AllocHC::AllocatedMemory,
   pub literal_htree_index: u8,
   pub dist_htree_index: u8,
+  pub large_window: bool,
   pub repeat_code_len: u32,
   pub prev_code_len: u32,
 
@@ -240,8 +243,7 @@ macro_rules! make_brotli_state {
             dist_rb : [16, 15, 11, 4],
             ringbuffer : AllocU8::AllocatedMemory::default(),
             htree_command_index : 0,
-            context_lookup1 : &[],
-            context_lookup2 : &[],
+            context_lookup : &kContextLookup[0],
             context_map_slice_index : 0,
             dist_context_map_slice_index : 0,
             sub_loop_counter : 0,
@@ -317,7 +319,7 @@ macro_rules! make_brotli_state {
            is_metadata : 0,
            size_nibbles : 0,
            window_bits : 0,
-
+           large_window: false,
            num_literal_htrees : 0,
            context_map : AllocU8::AllocatedMemory::default(),
            context_modes : AllocU8::AllocatedMemory::default(),
@@ -351,9 +353,9 @@ impl <'brotli_state,
     }
     pub fn BrotliStateMetablockBegin(self : &mut Self) {
         self.meta_block_remaining_len = 0;
-        self.block_type_length_state.block_length[0] = 1u32 << 28;
-        self.block_type_length_state.block_length[1] = 1u32 << 28;
-        self.block_type_length_state.block_length[2] = 1u32 << 28;
+        self.block_type_length_state.block_length[0] = 1u32 << 24;
+        self.block_type_length_state.block_length[1] = 1u32 << 24;
+        self.block_type_length_state.block_length[2] = 1u32 << 24;
         self.block_type_length_state.num_block_types[0] = 1;
         self.block_type_length_state.num_block_types[1] = 1;
         self.block_type_length_state.num_block_types[2] = 1;
@@ -373,8 +375,7 @@ impl <'brotli_state,
         self.literal_htree_index = 0;
         self.dist_context_map_slice_index = 0;
         self.dist_htree_index = 0;
-        self.context_lookup1 = &[];
-        self.context_lookup2 = &[];
+        self.context_lookup = &kContextLookup[0];
         self.literal_hgroup.reset(&mut self.alloc_u32, &mut self.alloc_hc);
         self.insert_copy_hgroup.reset(&mut self.alloc_u32, &mut self.alloc_hc);
         self.distance_hgroup.reset(&mut self.alloc_u32, &mut self.alloc_hc);
@@ -425,17 +426,17 @@ impl <'brotli_state,
         }
     }
     pub fn BrotliHuffmanTreeGroupInit(self :&mut Self, group : WhichTreeGroup,
-                                      alphabet_size : u16, ntrees : u16) {
+                                      alphabet_size : u16, max_symbol: u16, ntrees : u16) {
         match group {
             WhichTreeGroup::LITERAL => self.literal_hgroup.init(&mut self.alloc_u32,
                                                                 &mut self.alloc_hc,
-                                                                alphabet_size, ntrees),
+                                                                alphabet_size, max_symbol, ntrees),
             WhichTreeGroup::INSERT_COPY => self.insert_copy_hgroup.init(&mut self.alloc_u32,
                                                                         &mut self.alloc_hc,
-                                                                        alphabet_size, ntrees),
+                                                                        alphabet_size, max_symbol, ntrees),
             WhichTreeGroup::DISTANCE => self.distance_hgroup.init(&mut self.alloc_u32,
                                                                   &mut self.alloc_hc,
-                                                                  alphabet_size, ntrees),
+                                                                  alphabet_size, max_symbol, ntrees),
         }
     }
     pub fn BrotliHuffmanTreeGroupRelease(self :&mut Self, group : WhichTreeGroup) {
