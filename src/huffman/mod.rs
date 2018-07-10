@@ -2,6 +2,7 @@
 #![allow(non_upper_case_globals)]
 mod tests;
 use ::core;
+mod histogram;
 use alloc;
 use alloc::Allocator;
 use alloc::SliceWrapper;
