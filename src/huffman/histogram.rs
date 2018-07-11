@@ -1,5 +1,5 @@
 use core::ops::AddAssign;
-use core::cmp::Ord;
+use core::cmp::{Ord, min, max};
 use core::convert::From;
 use alloc;
 use alloc::Allocator;
@@ -35,22 +35,100 @@ impl<AllocU32:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocU32, Spec> {
             spec:Spec::default(),
         };
         for cur_htree in 0..group.num_htrees {
+            let mut total_count = 0u32;
             // lets collect samples from each htree
             let start = group.htrees.slice()[cur_htree as usize] as usize;
-            let end = if cur_htree as usize + 1 < group.htrees.len() {
-                group.htrees.slice()[cur_htree as usize + 1] as usize
+            let next_htree = cur_htree as usize + 1;
+            let end = if next_htree < group.htrees.len() {
+                group.htrees.slice()[next_htree] as usize
             } else {
                 group.codes.len()
             };
             for (index, code) in group.codes.slice()[start..end].iter().enumerate() {
                 let count = (index < 256) as u32 * 255 + 1;
+                total_count += count;
                 let sym = code.value;
                 if u64::from(code.value) <= Spec::MAX_SYMBOL {
                     ret.histogram.slice_mut()[cur_htree as usize * Spec::ALPHABET_SIZE + sym as usize] +=  count;
                 }
             }
+            assert_eq!(total_count, 65536);
         }
+        ret.renormalize();    
         ret
+    }
+    fn renormalize(&mut self) {
+        let shift = 4;
+        let multiplier = 1 << shift;
+        assert_eq!(65536/TOT_FREQ, 1<<shift);
+        for cur_htree in 0..self.num_htrees {
+            // precondition: table adds up to 65536
+            let mut total_count = 0u32;
+            for sym in 0..Spec::ALPHABET_SIZE {
+                total_count += self.histogram.slice_mut()[cur_htree as usize * Spec::ALPHABET_SIZE + sym as usize];
+            }
+            assert_eq!(total_count, 65536);
+            let mut delta = 0i32;
+            for sym in 0..Spec::ALPHABET_SIZE {
+                let cur = &mut self.histogram.slice_mut()[cur_htree as usize * Spec::ALPHABET_SIZE + sym as usize];
+                let mut div = *cur >> shift;
+                let rem = *cur & (multiplier - 1);
+                if *cur != 0 {
+                    if div == 0 {
+                        div = 1;
+                        delta += (multiplier - rem) as i32;
+                    } else {
+                        if rem >= multiplier / 2 {
+                            div += 1;
+                            delta += (multiplier - rem) as i32;
+                        } else {
+                            delta -= rem as i32;
+                        }
+                    }
+                    *cur = div;
+                }
+            }
+            assert_eq!(if delta < 0 {(-delta) as u32} else {delta as u32 } & (multiplier as u32 - 1), 0);
+            delta /= multiplier as i32;
+            for sym in 0..Spec::ALPHABET_SIZE {
+                let cur = &mut self.histogram.slice_mut()[cur_htree as usize * Spec::ALPHABET_SIZE + sym as usize];
+                if *cur != 0 {
+                    if delta < 0 {
+                        *cur += 1;
+                        delta +=1;
+                    }
+                    if delta > 0 && *cur > 1 {
+                        *cur -= 1;
+                        delta -=1;
+                    }
+                }
+            }
+            assert!(delta >= 0);
+            if delta != 0 {
+                for sym in 0..Spec::ALPHABET_SIZE {
+                    let cur = &mut self.histogram.slice_mut()[cur_htree as usize * Spec::ALPHABET_SIZE + sym as usize];
+                    if *cur != 0 {
+                        if delta > 0 && *cur > 1 {
+                            let adj = min(*cur - 1, delta as u32);
+                            *cur -= adj;
+                            delta -= adj as i32;
+                        }
+                    }
+                    if delta == 0 {
+                        break;
+                    }
+                }
+            }
+            assert_eq!(delta, 0);
+            let mut total_count = 0u32;
+            for cur_htree in 0..self.num_htrees {
+                for sym in 0..Spec::ALPHABET_SIZE {
+                    total_count += self.histogram.slice_mut()[cur_htree as usize * Spec::ALPHABET_SIZE + sym as usize];
+                }
+            }
+            // postcondition: table adds up to TOT_FREQ
+            assert_eq!(total_count, u32::from(TOT_FREQ));
+        }
     }
 }
 struct ANSTable<Symbol:Sized+Ord+AddAssign<Symbol>, AllocS: Allocator<Symbol>, AllocH: Allocator<HistEnt>, Spec:HistogramSpec>
