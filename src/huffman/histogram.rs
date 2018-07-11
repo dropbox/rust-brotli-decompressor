@@ -1,3 +1,4 @@
+use core;
 use core::ops::AddAssign;
 use core::cmp::{Ord, min, max};
 use core::convert::From;
@@ -11,10 +12,44 @@ type Freq = u16;
 const TF_SHIFT: Freq = 12;
 const TOT_FREQ: Freq = 1 << TF_SHIFT;
 
-pub struct HistEnt {
-    pub start: Freq,
-    pub freq: Freq,
+#[derive(Copy,Clone,Default)]
+pub struct HistEnt(pub u32);
+
+impl HistEnt {
+    #[inline(always)]
+    pub fn start(&self) -> Freq {
+        (self.0 & 0xffff) as Freq
+    }
+    #[inline(always)]
+    pub fn freq(&self) -> Freq {
+        (self.0 >> 16) as Freq
+    }
+    #[inline(always)]
+    pub fn set_start(&mut self, start:Freq) -> HistEnt {
+        self.0 &= 0xffff0000;
+        self.0 |= start as u32;
+        *self
+    }
+    #[inline(always)]
+    pub fn set_freq(&mut self, freq:Freq) -> HistEnt {
+        self.0 &= 0xffff;
+        self.0 |= (freq as u32) << 16;
+        *self
+    }
 }
+
+impl From<u32> for HistEnt {
+    fn from(data:u32) -> HistEnt {
+        HistEnt(data)
+    }
+}
+
+impl Into<u32> for HistEnt {
+    fn into(self) -> u32 {
+        self.0
+    }
+}
+
 
 trait HistogramSpec:Default {
     const ALPHABET_SIZE:usize;
@@ -27,9 +62,10 @@ struct Histogram<AllocU32:Allocator<u32>, Spec:HistogramSpec> {
     num_htrees: u16,
     spec:Spec,
 }
-impl<AllocU32:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocU32, Spec> {
-    fn new<AllocHC:Allocator<HuffmanCode>>(alloc_u32: &mut AllocU32,  group:&HuffmanTreeGroup<AllocU32,AllocHC>) -> Self{
-        let mut  ret = Histogram::<AllocU32, Spec> {
+
+impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
+    fn new<AllocU32: Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u32: &mut AllocH,  group:&HuffmanTreeGroup<AllocU32,AllocHC>) -> Self{
+        let mut  ret = Histogram::<AllocH, Spec> {
             num_htrees:group.num_htrees,
             histogram:alloc_u32.alloc_cell(Spec::ALPHABET_SIZE * group.num_htrees as usize),
             spec:Spec::default(),
@@ -130,13 +166,52 @@ impl<AllocU32:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocU32, Spec> {
             assert_eq!(total_count, u32::from(TOT_FREQ));
         }
     }
+    fn free(&mut self, m32: &mut AllocH) {
+        m32.free_cell(core::mem::replace(&mut self.histogram, AllocH::AllocatedMemory::default()));
+        
+    }
 }
-struct ANSTable<Symbol:Sized+Ord+AddAssign<Symbol>, AllocS: Allocator<Symbol>, AllocH: Allocator<HistEnt>, Spec:HistogramSpec>
-    where u64:From<Symbol> {
+struct ANSTable<HistEntTrait, Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone, AllocS: Allocator<Symbol>, AllocH: Allocator<HistEntTrait>, Spec:HistogramSpec>
+    where HistEnt:From<HistEntTrait> {
     state_lookup:AllocS::AllocatedMemory,
     sym:AllocH::AllocatedMemory,
     spec: Spec,
     num_htrees: u16,
+}
+impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
+     AllocS: Allocator<Symbol>,
+     AllocH: Allocator<u32>, Spec:HistogramSpec> ANSTable<u32, Symbol, AllocS, AllocH, Spec> {
+    fn new<AllocU32:Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group:&HuffmanTreeGroup<AllocU32, AllocHC>, spec: Spec) -> Self {
+        let mut histogram = Histogram::<AllocH, Spec>::new(alloc_u32, group);
+        let mut rev_lookup = alloc_u8.alloc_cell(histogram.num_htrees as usize * TOT_FREQ as usize);
+        for cur_htree in 0..group.num_htrees {
+            let mut running_start = 0;
+            let mut sym = Symbol::from(0u8);
+            for start_freq in histogram.histogram.slice_mut().split_at_mut(
+                cur_htree as usize * Spec::ALPHABET_SIZE).1.split_at_mut(Spec::ALPHABET_SIZE).0.iter_mut() {
+                let count = *start_freq;
+                *start_freq = HistEnt::default().set_start(running_start as u16).set_freq(count as u16).into();
+                if count != 0 {
+                    let running_end = running_start as usize + count as usize;
+                    for rev_lk in rev_lookup.slice_mut()[running_start as usize..running_end].iter_mut() {
+                        *rev_lk = sym.clone();
+                    }
+                    running_start = running_end;
+                }
+            }
+            sym += Symbol::from(1u8);
+        }
+        ANSTable::<u32, Symbol, AllocS, AllocH, Spec>{
+            state_lookup:rev_lookup,
+            sym:histogram.histogram,
+            spec:spec,
+            num_htrees:histogram.num_htrees
+        }
+    }
+    fn free(&mut self, ms: &mut AllocS, mh: &mut AllocH) {
+        ms.free_cell(core::mem::replace(&mut self.state_lookup, AllocS::AllocatedMemory::default()));
+        mh.free_cell(core::mem::replace(&mut self.sym, AllocH::AllocatedMemory::default()));
+    }
 }
 #[derive(Clone,Copy,Default)]
 struct LiteralSpec{}
@@ -156,6 +231,6 @@ impl HistogramSpec for BlockLengthSpec {
     const ALPHABET_SIZE: usize = 26;
     const MAX_SYMBOL: u64 = 25;
 }
-struct LiteralANSTable<AllocSym:Allocator<u8>, AllocH:Allocator<HistEnt>>(ANSTable<u8, AllocSym,  AllocH, LiteralSpec>);
+struct LiteralANSTable<AllocSym:Allocator<u8>, AllocH:Allocator<u32>>(ANSTable<u32, u8, AllocSym,  AllocH, LiteralSpec>);
 
-struct DistanceANSTable<AllocSym:Allocator<u16>, AllocH:Allocator<HistEnt>>(ANSTable<u16, AllocSym,  AllocH, DistanceSpec>);
+struct DistanceANSTable<AllocSym:Allocator<u16>, AllocH:Allocator<u32>>(ANSTable<u32, u16, AllocSym,  AllocH, DistanceSpec>);
