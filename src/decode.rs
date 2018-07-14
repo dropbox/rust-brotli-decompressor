@@ -1,5 +1,4 @@
 #![allow(non_snake_case)]
-#![allow(unused_parens)]
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(non_upper_case_globals)]
@@ -28,6 +27,8 @@ use ::dictionary::{kBrotliDictionary, kBrotliDictionaryOffsetsByLength,
                    kBrotliDictionarySizeBitsByLength, kBrotliMaxDictionaryWordLength,
                    kBrotliMinDictionaryWordLength};
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
+#[allow(unused)]
+use huffman::histogram::{HistEnt,ANSTable, HistogramSpec, LiteralSpec, DistanceSpec, BlockLengthSpec, InsertCopySpec};
 pub enum BrotliResult {
   ResultSuccess,
   NeedsMoreInput,
@@ -200,9 +201,10 @@ fn DecodeVarLenUint8(substate_decode_uint8: &mut state::BrotliRunningDecodeUint8
 }
 
 fn DecodeMetaBlockLength<AllocU8: alloc::Allocator<u8>,
+                         AllocU16: alloc::Allocator<u16>,
                          AllocU32: alloc::Allocator<u32>,
                          AllocHC: alloc::Allocator<HuffmanCode>>
-  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+  (s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> BrotliResult {
   let mut bits: u32 = 0;
@@ -471,10 +473,11 @@ fn Log2Floor(mut x: u32) -> u32 {
 // The list of symbols MUST NOT contain duplicates.
 //
 fn ReadSimpleHuffmanSymbols<AllocU8: alloc::Allocator<u8>,
-                            AllocU32: alloc::Allocator<u32>,
+                            AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                             AllocHC: alloc::Allocator<HuffmanCode>>
   (alphabet_size: u32, max_symbol: u32,
-   s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> BrotliResult {
 
@@ -617,10 +620,11 @@ fn ProcessRepeatedCodeLength(code_len: u32,
 
 // Reads and decodes symbol codelengths.
 fn ReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
+                         AllocU16: alloc::Allocator<u16>,
                          AllocU32: alloc::Allocator<u32>,
                          AllocHC: alloc::Allocator<HuffmanCode>>
   (alphabet_size: u32,
-   s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> BrotliResult {
 
@@ -689,10 +693,11 @@ fn ReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
 }
 
 fn SafeReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
-                             AllocU32: alloc::Allocator<u32>,
+                             AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                              AllocHC: alloc::Allocator<HuffmanCode>>
   (alphabet_size: u32,
-   s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> BrotliResult {
   while (s.symbol < alphabet_size && s.space > 0) {
@@ -757,9 +762,10 @@ fn SafeReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
 // Reads and decodes 15..18 codes using static prefix code.
 // Each code is 2..4 bits long. In total 30..72 bits are used.
 fn ReadCodeLengthCodeLengths<AllocU8: alloc::Allocator<u8>,
-                             AllocU32: alloc::Allocator<u32>,
+                             AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                              AllocHC: alloc::Allocator<HuffmanCode>>
-  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+  (s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> BrotliResult {
 
@@ -824,14 +830,15 @@ fn ReadCodeLengthCodeLengths<AllocU8: alloc::Allocator<u8>,
 // Huffman table. In worst case 3520 bits are read.
 //
 fn ReadHuffmanCode<AllocU8: alloc::Allocator<u8>,
-                   AllocU32: alloc::Allocator<u32>,
+                   AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                    AllocHC: alloc::Allocator<HuffmanCode>>
   (mut alphabet_size: u32,
    max_symbol: u32,
    table: &mut [HuffmanCode],
    offset: usize,
    opt_table_size: Option<&mut u32>,
-   s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> BrotliResult {
   // Unnecessary masking, but might be good for safety.
@@ -1086,10 +1093,11 @@ fn InverseMoveToFrontTransform(v: &mut [u8],
 }
 // Decodes a series of Huffman table using ReadHuffmanCode function.
 fn HuffmanTreeGroupDecode<AllocU8: alloc::Allocator<u8>,
-                          AllocU32: alloc::Allocator<u32>,
+                          AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                           AllocHC: alloc::Allocator<HuffmanCode>>
   (group_index: i32,
-   mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   mut s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> BrotliResult {
   let mut hcodes: AllocHC::AllocatedMemory;
@@ -1155,16 +1163,19 @@ fn HuffmanTreeGroupDecode<AllocU8: alloc::Allocator<u8>,
                  mem::replace(&mut hcodes, AllocHC::AllocatedMemory::default()));
     mem::replace(&mut s.literal_hgroup.htrees,
                  mem::replace(&mut htrees, AllocU32::AllocatedMemory::default()));
+    ANSTable::new(&mut s.alloc_u8, &mut s.alloc_u32, &s.literal_hgroup, LiteralSpec{});
   } else if group_index == 1 {
     mem::replace(&mut s.insert_copy_hgroup.codes,
                  mem::replace(&mut hcodes, AllocHC::AllocatedMemory::default()));
     mem::replace(&mut s.insert_copy_hgroup.htrees,
                  mem::replace(&mut htrees, AllocU32::AllocatedMemory::default()));
+    ANSTable::new(&mut s.alloc_u16, &mut s.alloc_u32, &s.insert_copy_hgroup, InsertCopySpec{});
   } else {
     mem::replace(&mut s.distance_hgroup.codes,
                  mem::replace(&mut hcodes, AllocHC::AllocatedMemory::default()));
     mem::replace(&mut s.distance_hgroup.htrees,
                  mem::replace(&mut htrees, AllocU32::AllocatedMemory::default()));
+    ANSTable::new(&mut s.alloc_u16, &mut s.alloc_u32, &s.distance_hgroup, DistanceSpec{});
   }
   if let BrotliResult::ResultSuccess = result {
     s.substate_tree_group = BrotliRunningTreeGroupState::BROTLI_STATE_TREE_GROUP_NONE
@@ -1190,12 +1201,13 @@ fn bzero(data: &mut [u8]) {
 // 4) Optionally, apply InverseMoveToFront transform to the resulting map.
 //
 fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
+                         AllocU16: alloc::Allocator<u16>,
                          AllocU32: alloc::Allocator<u32>,
                          AllocHC: alloc::Allocator<HuffmanCode>>
   (context_map_size: u32,
    num_htrees: &mut u32,
    context_map_arg: &mut AllocU8::AllocatedMemory,
-   mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   mut s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> BrotliResult {
 
@@ -1343,11 +1355,12 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
 }
 
 fn DecodeContextMap<AllocU8: alloc::Allocator<u8>,
-                    AllocU32: alloc::Allocator<u32>,
+                    AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                     AllocHC: alloc::Allocator<HuffmanCode>>
   (context_map_size: usize,
    is_dist_context_map: bool,
-   mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   mut s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> BrotliResult {
 
@@ -1438,9 +1451,10 @@ fn DecodeBlockTypeAndLength<
   true
 }
 fn DetectTrivialLiteralBlockTypes<AllocU8: alloc::Allocator<u8>,
-                                  AllocU32: alloc::Allocator<u32>,
+                                  AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                                   AllocHC: alloc::Allocator<HuffmanCode>>
-  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>) {
+  (s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>) {
   for iter in s.trivial_literal_contexts.iter_mut() {
     *iter = 0;
   }
@@ -1467,9 +1481,10 @@ fn DetectTrivialLiteralBlockTypes<AllocU8: alloc::Allocator<u8>,
   }
 }
 fn PrepareLiteralDecoding<AllocU8: alloc::Allocator<u8>,
-                          AllocU32: alloc::Allocator<u32>,
+                          AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                           AllocHC: alloc::Allocator<HuffmanCode>>
-  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>) {
+  (s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>) {
 
   let context_offset: u32;
   let block_type = fast!((s.block_type_length_state.block_type_rb)[1]) as usize;
@@ -1488,10 +1503,11 @@ fn PrepareLiteralDecoding<AllocU8: alloc::Allocator<u8>,
 // pe and updates the state for literal context.
 // Reads 3..54 bits.
 fn DecodeLiteralBlockSwitchInternal<AllocU8: alloc::Allocator<u8>,
-                                    AllocU32: alloc::Allocator<u32>,
+                                    AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                                     AllocHC: alloc::Allocator<HuffmanCode>>
   (safe: bool,
-   s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> bool {
 
@@ -1506,7 +1522,7 @@ fn DecodeLiteralBlockSwitchInternal<AllocU8: alloc::Allocator<u8>,
 // AllocU8 : alloc::Allocator<u8>,
 // AllocU32 : alloc::Allocator<u32>,
 // AllocHC : alloc::Allocator<HuffmanCode>> (safe : bool,
-// mut s : &mut BrotliState<AllocU8, AllocU32, AllocHC>) {
+// mut s : &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>) {
 // DecodeLiteralBlockSwitchInternal(false, s);
 // }
 //
@@ -1515,17 +1531,18 @@ fn DecodeLiteralBlockSwitchInternal<AllocU8: alloc::Allocator<u8>,
 // AllocU8 : alloc::Allocator<u8>,
 // AllocU32 : alloc::Allocator<u32>,
 // AllocHC : alloc::Allocator<HuffmanCode>> (safe : bool,
-// mut s : &mut BrotliState<AllocU8, AllocU32, AllocHC>) -> bool {
+// mut s : &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>) -> bool {
 // return DecodeLiteralBlockSwitchInternal(true, s);
 // }
 //
 // Block switch for insert/copy length.
 // Reads 3..54 bits.
 fn DecodeCommandBlockSwitchInternal<AllocU8: alloc::Allocator<u8>,
-                                    AllocU32: alloc::Allocator<u32>,
+                                    AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                                     AllocHC: alloc::Allocator<HuffmanCode>>
   (safe: bool,
-   s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> bool {
   if (!DecodeBlockTypeAndLength(safe, &mut s.block_type_length_state, &mut s.br, 1, input)) {
@@ -1537,17 +1554,19 @@ fn DecodeCommandBlockSwitchInternal<AllocU8: alloc::Allocator<u8>,
 
 #[allow(dead_code)]
 fn DecodeCommandBlockSwitch<AllocU8: alloc::Allocator<u8>,
-                            AllocU32: alloc::Allocator<u32>,
+                            AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                             AllocHC: alloc::Allocator<HuffmanCode>>
-  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+  (s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8]) {
   DecodeCommandBlockSwitchInternal(false, s, input);
 }
 #[allow(dead_code)]
 fn SafeDecodeCommandBlockSwitch<AllocU8: alloc::Allocator<u8>,
-                                AllocU32: alloc::Allocator<u32>,
+                                AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                                 AllocHC: alloc::Allocator<HuffmanCode>>
-  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+  (s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> bool {
   DecodeCommandBlockSwitchInternal(true, s, input)
@@ -1556,10 +1575,11 @@ fn SafeDecodeCommandBlockSwitch<AllocU8: alloc::Allocator<u8>,
 // Block switch for distance codes.
 // Reads 3..54 bits.
 fn DecodeDistanceBlockSwitchInternal<AllocU8: alloc::Allocator<u8>,
-                                     AllocU32: alloc::Allocator<u32>,
+                                     AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                                      AllocHC: alloc::Allocator<HuffmanCode>>
   (safe: bool,
-   s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> bool {
   if (!DecodeBlockTypeAndLength(safe, &mut s.block_type_length_state, &mut s.br, 2, input)) {
@@ -1574,31 +1594,34 @@ fn DecodeDistanceBlockSwitchInternal<AllocU8: alloc::Allocator<u8>,
 
 #[allow(dead_code)]
 fn DecodeDistanceBlockSwitch<AllocU8: alloc::Allocator<u8>,
-                             AllocU32: alloc::Allocator<u32>,
+                             AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                              AllocHC: alloc::Allocator<HuffmanCode>>
-  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+  (s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8]) {
   DecodeDistanceBlockSwitchInternal(false, s, input);
 }
 
 #[allow(dead_code)]
 fn SafeDecodeDistanceBlockSwitch<AllocU8: alloc::Allocator<u8>,
-                                 AllocU32: alloc::Allocator<u32>,
+                                 AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                                  AllocHC: alloc::Allocator<HuffmanCode>>
-  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+  (s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> bool {
   DecodeDistanceBlockSwitchInternal(true, s, input)
 }
 
 fn WriteRingBuffer<AllocU8: alloc::Allocator<u8>,
-                   AllocU32: alloc::Allocator<u32>,
+                   AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                    AllocHC: alloc::Allocator<HuffmanCode>>
   (available_out: &mut usize,
    output: &mut [u8],
    output_offset: &mut usize,
    total_out: &mut usize,
-   s: &mut BrotliState<AllocU8, AllocU32, AllocHC>)
+   s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>)
    -> BrotliResult {
   let pos = if s.pos > s.ringbuffer_size {
     s.ringbuffer_size as usize
@@ -1631,13 +1654,14 @@ fn WriteRingBuffer<AllocU8: alloc::Allocator<u8>,
 }
 
 fn CopyUncompressedBlockToOutput<AllocU8: alloc::Allocator<u8>,
-                                 AllocU32: alloc::Allocator<u32>,
+                                 AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                                  AllocHC: alloc::Allocator<HuffmanCode>>
   (mut available_out: &mut usize,
    mut output: &mut [u8],
    mut output_offset: &mut usize,
    mut total_out: &mut usize,
-   mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   mut s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> BrotliResult {
   // State machine
@@ -1688,9 +1712,10 @@ fn CopyUncompressedBlockToOutput<AllocU8: alloc::Allocator<u8>,
 }
 
 fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
-                            AllocU32: alloc::Allocator<u32>,
+                            AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                             AllocHC: alloc::Allocator<HuffmanCode>>
-  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+  (s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> bool {
   // We need the slack region for the following reasons:
@@ -1754,9 +1779,10 @@ fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
 
 // Reads 1..256 2-bit context modes.
 pub fn ReadContextModes<AllocU8: alloc::Allocator<u8>,
-                        AllocU32: alloc::Allocator<u32>,
+                        AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                         AllocHC: alloc::Allocator<HuffmanCode>>
-  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+  (s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> BrotliResult {
 
@@ -1780,9 +1806,10 @@ pub fn ReadContextModes<AllocU8: alloc::Allocator<u8>,
 }
 
 pub fn TakeDistanceFromRingBuffer<AllocU8: alloc::Allocator<u8>,
-                                  AllocU32: alloc::Allocator<u32>,
+                                  AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                                   AllocHC: alloc::Allocator<HuffmanCode>>
-  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>) {
+  (s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>) {
   if (s.distance_code == 0) {
     s.dist_rb_idx -= 1;
     s.distance_code = fast!((s.dist_rb)[(s.dist_rb_idx & 3) as usize]);
@@ -1827,10 +1854,11 @@ pub fn SafeReadBits(br: &mut bit_reader::BrotliBitReader,
 
 // Precondition: s.distance_code < 0
 pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
-                            AllocU32: alloc::Allocator<u32>,
+                            AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                             AllocHC: alloc::Allocator<HuffmanCode>>
   (safe: bool,
-   s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8],
    distance_hgroup: &[&[HuffmanCode]; 256])
    -> bool {
@@ -1896,10 +1924,11 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
 
 
 pub fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
-                           AllocU32: alloc::Allocator<u32>,
+                           AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                            AllocHC: alloc::Allocator<HuffmanCode>>
   (safe: bool,
-   s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    insert_length: &mut i32,
    input: &[u8],
    insert_copy_hgroup: &[&[HuffmanCode]; 256])
@@ -2016,10 +2045,11 @@ fn memcpy_within_slice(data: &mut [u8], off_dst: usize, off_src: usize, size: us
 }
 
 fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
-                           AllocU32: alloc::Allocator<u32>,
+                           AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                            AllocHC: alloc::Allocator<HuffmanCode>>
   (safe: bool,
-   s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> BrotliResult {
   if (!CheckInputAmount(safe, &s.br, 28)) || (!WarmupBitReader(safe, &mut s.br, input)) {
@@ -2407,18 +2437,20 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
 }
 
 fn ProcessCommands<AllocU8: alloc::Allocator<u8>,
-                   AllocU32: alloc::Allocator<u32>,
+                   AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                    AllocHC: alloc::Allocator<HuffmanCode>>
-  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+  (s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> BrotliResult {
   ProcessCommandsInternal(false, s, input)
 }
 
 fn SafeProcessCommands<AllocU8: alloc::Allocator<u8>,
-                       AllocU32: alloc::Allocator<u32>,
+                       AllocU16: alloc::Allocator<u16>,
+                         AllocU32: alloc::Allocator<u32>,
                        AllocHC: alloc::Allocator<HuffmanCode>>
-  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+  (s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
    input: &[u8])
    -> BrotliResult {
   ProcessCommandsInternal(true, s, input)
@@ -2440,6 +2472,7 @@ pub fn BrotliMaxDistanceSymbol(ndirect: u32, npostfix: u32) -> u32{
 }
 
 pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
+                              AllocU16: alloc::Allocator<u16>,
                               AllocU32: alloc::Allocator<u32>,
                               AllocHC: alloc::Allocator<HuffmanCode>>
   (available_in: &mut usize,
@@ -2449,7 +2482,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
    mut output_offset: &mut usize,
    mut output: &mut [u8],
    mut total_out: &mut usize,
-   mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>)
+   mut s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>)
    -> BrotliResult {
 
   let mut result: BrotliResult = BrotliResult::ResultSuccess;

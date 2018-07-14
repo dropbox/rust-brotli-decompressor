@@ -139,6 +139,7 @@ pub fn decompress_internal<InputType, OutputType>(r: &mut InputType,
   for _i in 0..range {
     let mut brotli_state =
       BrotliState::new(HeapAllocator::<u8> { default_value: 0 },
+                       HeapAllocator::<u16> { default_value: 0 },
                        HeapAllocator::<u32> { default_value: 0 },
                        HeapAllocator::<HuffmanCode> { default_value: HuffmanCode::default() });
     let mut input = brotli_state.alloc_u8.alloc_cell(input_buffer_limit);

@@ -8,7 +8,9 @@ use alloc::SliceWrapper;
 use alloc::SliceWrapperMut;
 use super::HuffmanCode;
 use super::HuffmanTreeGroup;
-type Freq = u16;
+#[allow(unused)]
+pub type Freq = u16;
+#[allow(unused)]
 const TF_SHIFT: Freq = 12;
 const TOT_FREQ: Freq = 1 << TF_SHIFT;
 
@@ -51,7 +53,7 @@ impl Into<u32> for HistEnt {
 }
 
 
-trait HistogramSpec:Default {
+pub trait HistogramSpec:Default {
     const ALPHABET_SIZE:usize;
     const MAX_SYMBOL:u64;
     
@@ -171,7 +173,7 @@ impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
         
     }
 }
-struct ANSTable<HistEntTrait, Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone, AllocS: Allocator<Symbol>, AllocH: Allocator<HistEntTrait>, Spec:HistogramSpec>
+pub struct ANSTable<HistEntTrait, Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone, AllocS: Allocator<Symbol>, AllocH: Allocator<HistEntTrait>, Spec:HistogramSpec>
     where HistEnt:From<HistEntTrait> {
     state_lookup:AllocS::AllocatedMemory,
     sym:AllocH::AllocatedMemory,
@@ -181,7 +183,7 @@ struct ANSTable<HistEntTrait, Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
 impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
      AllocS: Allocator<Symbol>,
      AllocH: Allocator<u32>, Spec:HistogramSpec> ANSTable<u32, Symbol, AllocS, AllocH, Spec> {
-    fn new<AllocU32:Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group:&HuffmanTreeGroup<AllocU32, AllocHC>, spec: Spec) -> Self {
+    pub fn new<AllocU32:Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group:&HuffmanTreeGroup<AllocU32, AllocHC>, spec: Spec) -> Self {
         let mut histogram = Histogram::<AllocH, Spec>::new(alloc_u32, group);
         let mut rev_lookup = alloc_u8.alloc_cell(histogram.num_htrees as usize * TOT_FREQ as usize);
         for cur_htree in 0..group.num_htrees {
@@ -214,23 +216,30 @@ impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
     }
 }
 #[derive(Clone,Copy,Default)]
-struct LiteralSpec{}
+pub struct LiteralSpec{}
 impl HistogramSpec for LiteralSpec {
     const ALPHABET_SIZE: usize = 256;
     const MAX_SYMBOL: u64 = 0xff;
 }
 #[derive(Clone,Copy,Default)]
-struct DistanceSpec{}
+pub struct DistanceSpec{}
 impl HistogramSpec for DistanceSpec {
     const ALPHABET_SIZE: usize = 704;
     const MAX_SYMBOL: u64 = 703;
 }
 #[derive(Clone,Copy,Default)]
-struct BlockLengthSpec{}
+pub struct BlockLengthSpec{}
 impl HistogramSpec for BlockLengthSpec {
     const ALPHABET_SIZE: usize = 26;
     const MAX_SYMBOL: u64 = 25;
 }
+#[derive(Clone,Copy,Default)]
+pub struct InsertCopySpec{}
+impl HistogramSpec for InsertCopySpec {
+    const ALPHABET_SIZE: usize = 704;
+    const MAX_SYMBOL: u64 = 703;
+}
 struct LiteralANSTable<AllocSym:Allocator<u8>, AllocH:Allocator<u32>>(ANSTable<u32, u8, AllocSym,  AllocH, LiteralSpec>);
 
 struct DistanceANSTable<AllocSym:Allocator<u16>, AllocH:Allocator<u32>>(ANSTable<u32, u16, AllocSym,  AllocH, DistanceSpec>);
+struct InsertCopyANSTable<AllocSym:Allocator<u16>, AllocH:Allocator<u32>>(ANSTable<u32, u16, AllocSym,  AllocH, InsertCopySpec>);

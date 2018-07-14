@@ -83,6 +83,7 @@ pub fn BrotliDecompress<InputType, OutputType>(r: &mut InputType,
                               &mut input_buffer[..],
                               &mut output_buffer[..],
                               HeapAlloc::<u8> { default_value: 0 },
+                              HeapAlloc::<u16> { default_value: 0 },
                               HeapAlloc::<u32> { default_value: 0 },
                               HeapAlloc::<HuffmanCode> {
                                 default_value: HuffmanCode::default(),
@@ -119,6 +120,7 @@ pub fn BrotliDecompressCustomDict<InputType, OutputType>(r: &mut InputType,
                               borrowed_input_buffer,
                               borrowed_output_buffer,
                               alloc_u8,
+                              brotli_alloc::BrotliAlloc::<u16>::new(),
                               brotli_alloc::BrotliAlloc::<u32>::new(),
                               brotli_alloc::BrotliAlloc::<HuffmanCode>::new(),
                               dict,
@@ -149,6 +151,7 @@ pub fn BrotliDecompress<InputType, OutputType>(r: &mut InputType,
 pub fn BrotliDecompressCustomAlloc<InputType,
                                    OutputType,
                                    AllocU8: Allocator<u8>,
+                                   AllocU16: Allocator<u16>,
                                    AllocU32: Allocator<u32>,
                                    AllocHC: Allocator<HuffmanCode>>
   (r: &mut InputType,
@@ -156,6 +159,7 @@ pub fn BrotliDecompressCustomAlloc<InputType,
    input_buffer: &mut [u8],
    output_buffer: &mut [u8],
    alloc_u8: AllocU8,
+   alloc_u16: AllocU16,
    alloc_u32: AllocU32,
    alloc_hc: AllocHC)
    -> Result<(), io::Error>
@@ -167,6 +171,7 @@ pub fn BrotliDecompressCustomAlloc<InputType,
                            input_buffer,
                            output_buffer,
                            alloc_u8,
+                           alloc_u16,
                            alloc_u32,
                            alloc_hc,
                            Error::new(ErrorKind::UnexpectedEof, "Unexpected EOF"))
@@ -175,6 +180,7 @@ pub fn BrotliDecompressCustomIo<ErrType,
                                 InputType,
                                 OutputType,
                                 AllocU8: Allocator<u8>,
+                                AllocU16: Allocator<u16>,
                                 AllocU32: Allocator<u32>,
                                 AllocHC: Allocator<HuffmanCode>>
   (r: &mut InputType,
@@ -182,6 +188,7 @@ pub fn BrotliDecompressCustomIo<ErrType,
    input_buffer: &mut [u8],
    output_buffer: &mut [u8],
    alloc_u8: AllocU8,
+   alloc_u16: AllocU16,
    alloc_u32: AllocU32,
    alloc_hc: AllocHC,
    unexpected_eof_error_constant: ErrType)
@@ -189,12 +196,13 @@ pub fn BrotliDecompressCustomIo<ErrType,
   where InputType: CustomRead<ErrType>,
         OutputType: CustomWrite<ErrType>
 {
-  BrotliDecompressCustomIoCustomDict(r, w, input_buffer, output_buffer, alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default(), unexpected_eof_error_constant)
+  BrotliDecompressCustomIoCustomDict(r, w, input_buffer, output_buffer, alloc_u8, alloc_u16, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default(), unexpected_eof_error_constant)
 }
 pub fn BrotliDecompressCustomIoCustomDict<ErrType,
                                 InputType,
                                 OutputType,
                                 AllocU8: Allocator<u8>,
+                                AllocU16: Allocator<u16>,
                                 AllocU32: Allocator<u32>,
                                 AllocHC: Allocator<HuffmanCode>>
   (r: &mut InputType,
@@ -202,6 +210,7 @@ pub fn BrotliDecompressCustomIoCustomDict<ErrType,
    input_buffer: &mut [u8],
    output_buffer: &mut [u8],
    alloc_u8: AllocU8,
+   alloc_u16: AllocU16,
    alloc_u32: AllocU32,
    alloc_hc: AllocHC,
    custom_dictionary: AllocU8::AllocatedMemory,
@@ -210,7 +219,7 @@ pub fn BrotliDecompressCustomIoCustomDict<ErrType,
   where InputType: CustomRead<ErrType>,
         OutputType: CustomWrite<ErrType>
 {
-  let mut brotli_state = BrotliState::new_with_custom_dictionary(alloc_u8, alloc_u32, alloc_hc, custom_dictionary);
+  let mut brotli_state = BrotliState::new_with_custom_dictionary(alloc_u8, alloc_u16, alloc_u32, alloc_hc, custom_dictionary);
   assert!(input_buffer.len() != 0);
   assert!(output_buffer.len() != 0);
   let mut available_out: usize = output_buffer.len();

@@ -17,36 +17,39 @@ pub use alloc::{AllocatedStackMemory, Allocator, SliceWrapper, SliceWrapperMut, 
 pub struct DecompressorWriterCustomAlloc<W: Write,
      BufferType : SliceWrapperMut<u8>,
      AllocU8 : Allocator<u8>,
+     AllocU16 : Allocator<u16>,
      AllocU32 : Allocator<u32>,
      AllocHC : Allocator<HuffmanCode> >(DecompressorWriterCustomIo<io::Error,
                                                              IntoIoWriter<W>,
                                                              BufferType,
-                                                             AllocU8, AllocU32, AllocHC>);
+                                                             AllocU8, AllocU16, AllocU32, AllocHC>);
 
 
 #[cfg(not(feature="no-stdlib"))]
 impl<W: Write,
      BufferType : SliceWrapperMut<u8>,
      AllocU8,
+     AllocU16 : Allocator<u16>,
      AllocU32,
-     AllocHC> DecompressorWriterCustomAlloc<W, BufferType, AllocU8, AllocU32, AllocHC>
+     AllocHC> DecompressorWriterCustomAlloc<W, BufferType, AllocU8, AllocU16, AllocU32, AllocHC>
  where AllocU8 : Allocator<u8>, AllocU32 : Allocator<u32>, AllocHC : Allocator<HuffmanCode>
     {
     pub fn new(w: W, buffer : BufferType,
-               alloc_u8 : AllocU8, alloc_u32 : AllocU32, alloc_hc : AllocHC) -> Self {
+               alloc_u8 : AllocU8, alloc_u16: AllocU16, alloc_u32 : AllocU32, alloc_hc : AllocHC) -> Self {
      let dict = AllocU8::AllocatedMemory::default();
-     Self::new_with_custom_dictionary(w, buffer, alloc_u8, alloc_u32, alloc_hc, dict)
+     Self::new_with_custom_dictionary(w, buffer, alloc_u8, alloc_u16, alloc_u32, alloc_hc, dict)
 
     }
     pub fn new_with_custom_dictionary(w: W, buffer : BufferType,
-               alloc_u8 : AllocU8, alloc_u32 : AllocU32, alloc_hc : AllocHC, dict: AllocU8::AllocatedMemory) -> Self {
-        DecompressorWriterCustomAlloc::<W, BufferType, AllocU8, AllocU32, AllocHC>(
+                                      alloc_u8 : AllocU8, alloc_u16: AllocU16, alloc_u32 : AllocU32, alloc_hc : AllocHC,
+                                      dict: AllocU8::AllocatedMemory) -> Self {
+        DecompressorWriterCustomAlloc::<W, BufferType, AllocU8, AllocU16, AllocU32, AllocHC>(
           DecompressorWriterCustomIo::<Error,
                                  IntoIoWriter<W>,
                                  BufferType,
-                                 AllocU8, AllocU32, AllocHC>::new_with_custom_dictionary(IntoIoWriter::<W>(w),
+                                 AllocU8, AllocU16, AllocU32, AllocHC>::new_with_custom_dictionary(IntoIoWriter::<W>(w),
                                                                   buffer,
-                                                                  alloc_u8, alloc_u32, alloc_hc,
+                                                                  alloc_u8, alloc_u16, alloc_u32, alloc_hc,
                                                                   dict,
                                                                   Error::new(ErrorKind::InvalidData,
                                                                              "Invalid Data")))
@@ -63,10 +66,12 @@ impl<W: Write,
 impl<W: Write,
      BufferType : SliceWrapperMut<u8>,
      AllocU8 : Allocator<u8>,
+     AllocU16 : Allocator<u16>,
      AllocU32 : Allocator<u32>,
      AllocHC : Allocator<HuffmanCode> > Write for DecompressorWriterCustomAlloc<W,
                                                                          BufferType,
                                                                          AllocU8,
+                                                                         AllocU16,
                                                                          AllocU32,
                                                                          AllocHC> {
   	fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
@@ -83,6 +88,7 @@ pub struct DecompressorWriter<W: Write>(DecompressorWriterCustomAlloc<W,
                                                          <HeapAlloc<u8>
                                                           as Allocator<u8>>::AllocatedMemory,
                                                          HeapAlloc<u8>,
+                                                         HeapAlloc<u16>,
                                                          HeapAlloc<u32>,
                                                          HeapAlloc<HuffmanCode> >);
 
@@ -94,6 +100,7 @@ impl<W: Write> DecompressorWriter<W> {
   }
   pub fn new_with_custom_dictionary(w: W, buffer_size: usize, dict: <HeapAlloc<u8> as Allocator<u8>>::AllocatedMemory) -> Self {
     let mut alloc_u8 = HeapAlloc::<u8> { default_value: 0 };
+    let alloc_u16 = HeapAlloc::<u16> { default_value: 0 };
     let buffer = alloc_u8.alloc_cell(if buffer_size == 0 {4096} else {buffer_size});
     let alloc_u32 = HeapAlloc::<u32> { default_value: 0 };
     let alloc_hc = HeapAlloc::<HuffmanCode> { default_value: HuffmanCode::default() };
@@ -101,10 +108,12 @@ impl<W: Write> DecompressorWriter<W> {
                                                 <HeapAlloc<u8>
                                                  as Allocator<u8>>::AllocatedMemory,
                                                 HeapAlloc<u8>,
+                                                HeapAlloc<u16>,
                                                 HeapAlloc<u32>,
                                                 HeapAlloc<HuffmanCode> >::new_with_custom_dictionary(w,
                                                                               buffer,
                                                                               alloc_u8,
+                                                                              alloc_u16,
                                                                               alloc_u32,
                                                                               alloc_hc,
                                                                               dict))
@@ -124,6 +133,7 @@ pub struct DecompressorWriter<W: Write>(DecompressorWriterCustomAlloc<W,
                                                          <HeapAllocUninitialized<u8>
                                                           as Allocator<u8>>::AllocatedMemory,
                                                          HeapAllocUninitialized<u8>,
+                                                         HeapAllocUninitialized<u16>,
                                                          HeapAllocUninitialized<u32>,
                                                          HeapAllocUninitialized<HuffmanCode> >);
 
@@ -137,15 +147,18 @@ impl<W: Write> DecompressorWriter<W> {
   pub fn new_with_custom_dictionary(w: W, buffer_size: usize, dict: <HeapAllocUninitialized<u8> as Allocator<u8>>::AllocatedMemory) -> Self {
     let mut alloc_u8 = unsafe { HeapAllocUninitialized::<u8>::new() };
     let buffer = alloc_u8.alloc_cell(buffer_size);
+    let mut alloc_u16 = unsafe { HeapAllocUninitialized::<u8>::new() };
+    let buffer = alloc_u16.alloc_cell(buffer_size);
     let alloc_u32 = unsafe { HeapAllocUninitialized::<u32>::new() };
     let alloc_hc = unsafe { HeapAllocUninitialized::<HuffmanCode>::new() };
     DecompressorWriter::<W>(DecompressorWriterCustomAlloc::<W,
                                                 <HeapAllocUninitialized<u8>
                                                  as Allocator<u8>>::AllocatedMemory,
                                                 HeapAllocUninitialized<u8>,
+                                                HeapAllocUninitialized<u16>,
                                                 HeapAllocUninitialized<u32>,
                                                 HeapAllocUninitialized<HuffmanCode> >
-      ::new_with_custom_dictionary(w, buffer, alloc_u8, alloc_u32, alloc_hc, dict))
+      ::new_with_custom_dictionary(w, buffer, alloc_u8, alloc_u16, alloc_u32, alloc_hc, dict))
   }
 
   pub fn get_ref(&self) -> &W {
@@ -171,6 +184,7 @@ pub struct DecompressorWriterCustomIo<ErrType,
                                 W: CustomWrite<ErrType>,
                                 BufferType: SliceWrapperMut<u8>,
                                 AllocU8: Allocator<u8>,
+                                AllocU16: Allocator<u16>,
                                 AllocU32: Allocator<u32>,
                                 AllocHC: Allocator<HuffmanCode>>
 {
@@ -178,7 +192,7 @@ pub struct DecompressorWriterCustomIo<ErrType,
   total_out: usize,
   output: W,
   error_if_invalid_data: Option<ErrType>,
-  state: BrotliState<AllocU8, AllocU32, AllocHC>,
+  state: BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
 }
 
 
@@ -197,26 +211,28 @@ impl<ErrType,
      W: CustomWrite<ErrType>,
      BufferType : SliceWrapperMut<u8>,
      AllocU8,
+     AllocU16: Allocator<u16>,
      AllocU32,
-     AllocHC> DecompressorWriterCustomIo<ErrType, W, BufferType, AllocU8, AllocU32, AllocHC>
+     AllocHC> DecompressorWriterCustomIo<ErrType, W, BufferType, AllocU8, AllocU16, AllocU32, AllocHC>
  where AllocU8 : Allocator<u8>, AllocU32 : Allocator<u32>, AllocHC : Allocator<HuffmanCode>
 {
 
     pub fn new(w: W, buffer : BufferType,
-               alloc_u8 : AllocU8, alloc_u32 : AllocU32, alloc_hc : AllocHC,
+               alloc_u8 : AllocU8, alloc_u16: AllocU16, alloc_u32 : AllocU32, alloc_hc : AllocHC,
                invalid_data_error_type : ErrType) -> Self {
            let dict = AllocU8::AllocatedMemory::default();
-           Self::new_with_custom_dictionary(w, buffer, alloc_u8, alloc_u32, alloc_hc, dict, invalid_data_error_type)
+           Self::new_with_custom_dictionary(w, buffer, alloc_u8, alloc_u16, alloc_u32, alloc_hc, dict, invalid_data_error_type)
     }
     pub fn new_with_custom_dictionary(w: W, buffer : BufferType,
-               alloc_u8 : AllocU8, alloc_u32 : AllocU32, alloc_hc : AllocHC,
+               alloc_u8 : AllocU8, alloc_u16: AllocU16, alloc_u32 : AllocU32, alloc_hc : AllocHC,
                dict: AllocU8::AllocatedMemory,
                invalid_data_error_type : ErrType) -> Self {
-        DecompressorWriterCustomIo::<ErrType, W, BufferType, AllocU8, AllocU32, AllocHC>{
+        DecompressorWriterCustomIo::<ErrType, W, BufferType, AllocU8, AllocU16, AllocU32, AllocHC>{
             output_buffer : buffer,
             total_out : 0,
             output: w,
             state : BrotliState::new_with_custom_dictionary(alloc_u8,
+                                     alloc_u16,
                                      alloc_u32,
                                      alloc_hc,
                                      dict),
@@ -262,11 +278,13 @@ impl<ErrType,
      W: CustomWrite<ErrType>,
      BufferType : SliceWrapperMut<u8>,
      AllocU8 : Allocator<u8>,
+     AllocU16 : Allocator<u16>,
      AllocU32 : Allocator<u32>,
      AllocHC : Allocator<HuffmanCode> > Drop for DecompressorWriterCustomIo<ErrType,
                                                                                      W,
                                                                                      BufferType,
                                                                                      AllocU8,
+                                                                                     AllocU16,
                                                                                      AllocU32,
                                                                                      AllocHC> {
   fn drop(&mut self) {
@@ -280,11 +298,13 @@ impl<ErrType,
      W: CustomWrite<ErrType>,
      BufferType : SliceWrapperMut<u8>,
      AllocU8 : Allocator<u8>,
+     AllocU16 : Allocator<u16>,
      AllocU32 : Allocator<u32>,
      AllocHC : Allocator<HuffmanCode> > CustomWrite<ErrType> for DecompressorWriterCustomIo<ErrType,
                                                                                      W,
                                                                                      BufferType,
                                                                                      AllocU8,
+                                                                                     AllocU16,
                                                                                      AllocU32,
                                                                                      AllocHC> {
 	fn write(&mut self, buf: &[u8]) -> Result<usize, ErrType > {

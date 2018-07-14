@@ -182,6 +182,7 @@ pub fn decompress<InputType, OutputType>(r: &mut InputType,
                                           input_buffer.slice_mut(),
                                           output_buffer.slice_mut(),
                                           alloc_u8,
+                                          HeapAllocator::<u16> { default_value: 0 },
                                           HeapAllocator::<u32> { default_value: 0 },
                                           HeapAllocator::<HuffmanCode> {
                                             default_value: HuffmanCode::default(),
@@ -249,6 +250,7 @@ pub struct BrotliDecompressor<R: Read>(brotli_decompressor::DecompressorCustomIo
                                                                     IntoIoReader<R>,
                                                                     Rebox<u8>,
                                                                     HeapAllocator<u8>,
+                                                                    HeapAllocator<u16>,
                                                                     HeapAllocator<u32>,
                                                                     HeapAllocator<HuffmanCode>>);
 
@@ -258,16 +260,17 @@ impl<R: Read> BrotliDecompressor<R> {
   pub fn new(r: R, buffer_size: usize) -> Self {
     let mut alloc_u8 = HeapAllocator::<u8> { default_value: 0 };
     let buffer = alloc_u8.alloc_cell(buffer_size);
+    let alloc_u16 = HeapAllocator::<u16> { default_value: 0 };
     let alloc_u32 = HeapAllocator::<u32> { default_value: 0 };
     let alloc_hc = HeapAllocator::<HuffmanCode> { default_value: HuffmanCode::default() };
     BrotliDecompressor::<R>(
           brotli_decompressor::DecompressorCustomIo::<Error,
                                  IntoIoReader<R>,
                                  Rebox<u8>,
-                                 HeapAllocator<u8>, HeapAllocator<u32>, HeapAllocator<HuffmanCode> >
+                                 HeapAllocator<u8>, HeapAllocator<u16>, HeapAllocator<u32>, HeapAllocator<HuffmanCode> >
                                  ::new(IntoIoReader::<R>(r),
                                                          buffer,
-                                                         alloc_u8, alloc_u32, alloc_hc,
+                                                         alloc_u8, alloc_u16, alloc_u32, alloc_hc,
                                                          io::Error::new(ErrorKind::InvalidData,
                                                                         "Invalid Data")))
   }
