@@ -66,12 +66,20 @@ struct Histogram<AllocU32:Allocator<u32>, Spec:HistogramSpec> {
 }
 
 impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
-    fn new<AllocU32: Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u32: &mut AllocH,  group:&HuffmanTreeGroup<AllocU32,AllocHC>) -> Self{
+    fn new<AllocU32: Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u32: &mut AllocH,  group:&HuffmanTreeGroup<AllocU32,AllocHC>, previous_mem: Option<AllocH::AllocatedMemory>) -> Self{
+        let buf = if let Some(pmem) = previous_mem {
+            assert!(pmem.len() >= Spec::ALPHABET_SIZE * group.num_htrees as usize);
+            pmem
+        } else {
+                
+            alloc_u32.alloc_cell(Spec::ALPHABET_SIZE * group.num_htrees as usize)
+        };
         let mut  ret = Histogram::<AllocH, Spec> {
             num_htrees:group.num_htrees,
-            histogram:alloc_u32.alloc_cell(Spec::ALPHABET_SIZE * group.num_htrees as usize),
+            histogram:buf,
             spec:Spec::default(),
         };
+        let mut complete = [false;256];
         for cur_htree in 0..group.num_htrees {
             let mut total_count = 0u32;
             // lets collect samples from each htree
@@ -84,10 +92,14 @@ impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
             };
             for (index, code) in group.codes.slice()[start..end].iter().enumerate() {
                 let count = (index < 256) as u32 * 255 + 1;
-                total_count += count;
                 let sym = code.value;
-                if u64::from(code.value) <= Spec::MAX_SYMBOL {
+                if u64::from(code.value) <= Spec::MAX_SYMBOL && !complete[(index & 0xff)] {
                     ret.histogram.slice_mut()[cur_htree as usize * Spec::ALPHABET_SIZE + sym as usize] +=  count;
+                    total_count += count;
+                    //eprintln!("Sym: {:x}, Adding {} to {}", sym, count, total_count);
+                }
+                if index < 256 {
+                    complete[index] = true;
                 }
             }
             assert_eq!(total_count, 65536);
@@ -98,7 +110,7 @@ impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
     fn renormalize(&mut self) {
         let shift = 4;
         let multiplier = 1 << shift;
-        assert_eq!(65536/TOT_FREQ, 1<<shift);
+        assert_eq!(65536/TOT_FREQ as u32, 1u32<<shift);
         for cur_htree in 0..self.num_htrees {
             // precondition: table adds up to 65536
             let mut total_count = 0u32;
@@ -183,9 +195,28 @@ pub struct ANSTable<HistEntTrait, Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Cl
 impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
      AllocS: Allocator<Symbol>,
      AllocH: Allocator<u32>, Spec:HistogramSpec> ANSTable<u32, Symbol, AllocS, AllocH, Spec> {
-    pub fn new<AllocU32:Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group:&HuffmanTreeGroup<AllocU32, AllocHC>, spec: Spec) -> Self {
-        let mut histogram = Histogram::<AllocH, Spec>::new(alloc_u32, group);
-        let mut rev_lookup = alloc_u8.alloc_cell(histogram.num_htrees as usize * TOT_FREQ as usize);
+    pub fn new<AllocU32:Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group:&HuffmanTreeGroup<AllocU32, AllocHC>, spec: Spec, mut old_ans: Option<Self>) -> Self {
+        let desired_lt_size = Spec::ALPHABET_SIZE * group.num_htrees as usize;
+        let mut old_ans_ok = false;
+        if let Some(ref mut old) = old_ans {
+            if old.sym.len() >= desired_lt_size {
+                old_ans_ok = true;
+            }
+        }
+        
+        let mut histogram;
+        let mut rev_lookup;
+        if old_ans_ok {
+            let mut old = old_ans.unwrap();
+            histogram = Histogram::<AllocH, Spec>::new(alloc_u32, group, Some(old.sym));
+            rev_lookup = old.state_lookup;
+        } else {
+            histogram = Histogram::<AllocH, Spec>::new(alloc_u32, group, None);
+            rev_lookup = alloc_u8.alloc_cell(histogram.num_htrees as usize * TOT_FREQ as usize);
+            if let Some(ref mut old) = old_ans {
+                old.free(alloc_u8, alloc_u32);
+            }
+        }
         for cur_htree in 0..group.num_htrees {
             let mut running_start = 0;
             let mut sym = Symbol::from(0u8);
