@@ -842,7 +842,7 @@ fn ReadHuffmanCode<AllocU8: alloc::Allocator<u8>,
    input: &[u8])
    -> BrotliResult {
   // Unnecessary masking, but might be good for safety.
-  alphabet_size &= 0x7ff;
+      alphabet_size &= 0x7ff;
   // State machine
   loop {
     match s.substate_huffman {
@@ -908,6 +908,9 @@ fn ReadHuffmanCode<AllocU8: alloc::Allocator<u8>,
                                                             &s.symbols_lists_array[..],
                                                             s.symbol);
         if let Some(opt_table_size_ref) = opt_table_size {
+                if alphabet_size == 256 {
+                    eprintln!("Length symbols: table size {}", table_size);
+                }
           *opt_table_size_ref = table_size
         }
         s.substate_huffman = BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_NONE;
@@ -968,7 +971,11 @@ fn ReadHuffmanCode<AllocU8: alloc::Allocator<u8>,
                                                       s.symbol_lists_index,
                                                       &mut s.code_length_histo);
         if let Some(opt_table_size_ref) = opt_table_size {
-          *opt_table_size_ref = table_size
+                if alphabet_size == 256 {
+                    eprintln!("Length symbols: table size {}", table_size);
+                }
+            *opt_table_size_ref = table_size
+
         }
         s.substate_huffman = BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_NONE;
         return BrotliResult::ResultSuccess;
@@ -1163,19 +1170,22 @@ fn HuffmanTreeGroupDecode<AllocU8: alloc::Allocator<u8>,
                  mem::replace(&mut hcodes, AllocHC::AllocatedMemory::default()));
     mem::replace(&mut s.literal_hgroup.htrees,
                  mem::replace(&mut htrees, AllocU32::AllocatedMemory::default()));
-    ANSTable::new(&mut s.alloc_u8, &mut s.alloc_u32, &s.literal_hgroup, LiteralSpec{}, None);
+    let old_ans = mem::replace(&mut s.literal_ans_table, ANSTable::default());
+    s.literal_ans_table = ANSTable::new(&mut s.alloc_u8, &mut s.alloc_u32, &s.literal_hgroup, LiteralSpec{}, Some(old_ans));
   } else if group_index == 1 {
     mem::replace(&mut s.insert_copy_hgroup.codes,
                  mem::replace(&mut hcodes, AllocHC::AllocatedMemory::default()));
     mem::replace(&mut s.insert_copy_hgroup.htrees,
                  mem::replace(&mut htrees, AllocU32::AllocatedMemory::default()));
-    ANSTable::new(&mut s.alloc_u16, &mut s.alloc_u32, &s.insert_copy_hgroup, InsertCopySpec{}, None);
+    let old_ans = mem::replace(&mut s.insert_copy_ans_table, ANSTable::default());
+    s.insert_copy_ans_table = ANSTable::new(&mut s.alloc_u16, &mut s.alloc_u32, &s.insert_copy_hgroup, InsertCopySpec{}, Some(old_ans));
   } else {
     mem::replace(&mut s.distance_hgroup.codes,
                  mem::replace(&mut hcodes, AllocHC::AllocatedMemory::default()));
     mem::replace(&mut s.distance_hgroup.htrees,
                  mem::replace(&mut htrees, AllocU32::AllocatedMemory::default()));
-    ANSTable::new(&mut s.alloc_u16, &mut s.alloc_u32, &s.distance_hgroup, DistanceSpec{}, None);
+    let old_ans = mem::replace(&mut s.distance_ans_table, ANSTable::default());
+    s.distance_ans_table = ANSTable::new(&mut s.alloc_u16, &mut s.alloc_u32, &s.distance_hgroup, DistanceSpec{}, Some(old_ans));
   }
   if let BrotliResult::ResultSuccess = result {
     s.substate_tree_group = BrotliRunningTreeGroupState::BROTLI_STATE_TREE_GROUP_NONE

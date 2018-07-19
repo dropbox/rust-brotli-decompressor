@@ -10,6 +10,8 @@ use bit_reader::{BrotliBitReader, BrotliGetAvailableBits, BrotliInitBitReader};
 use huffman::{BROTLI_HUFFMAN_MAX_CODE_LENGTH, BROTLI_HUFFMAN_MAX_CODE_LENGTHS_SIZE,
               BROTLI_HUFFMAN_MAX_TABLE_SIZE, HuffmanCode, HuffmanTreeGroup};
 use alloc::SliceWrapper;
+#[allow(unused)]
+use huffman::histogram::{HistEnt,ANSTable, HistogramSpec, LiteralSpec, DistanceSpec, BlockLengthSpec, InsertCopySpec};
 
 #[allow(dead_code)]
 pub enum WhichTreeGroup {
@@ -145,6 +147,9 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub literal_hgroup: HuffmanTreeGroup<AllocU32, AllocHC>,
   pub insert_copy_hgroup: HuffmanTreeGroup<AllocU32, AllocHC>,
   pub distance_hgroup: HuffmanTreeGroup<AllocU32, AllocHC>,
+  pub literal_ans_table: ANSTable<u32, u8, AllocU8, AllocU32, LiteralSpec>,
+  pub insert_copy_ans_table: ANSTable<u32, u16, AllocU16, AllocU32, InsertCopySpec>,
+  pub distance_ans_table: ANSTable<u32, u16, AllocU16, AllocU32, DistanceSpec>,
   // This is true if the literal context map histogram type always matches the
   // block type. It is then not needed to keep the context (faster decoding).
   pub trivial_literal_context: i32,
@@ -254,6 +259,10 @@ macro_rules! make_brotli_state {
             literal_hgroup : HuffmanTreeGroup::<AllocU32, AllocHC>::default(),
             insert_copy_hgroup : HuffmanTreeGroup::<AllocU32, AllocHC>::default(),
             distance_hgroup : HuffmanTreeGroup::<AllocU32, AllocHC>::default(),
+
+            literal_ans_table: ANSTable::default(),
+            insert_copy_ans_table: ANSTable::default(),
+            distance_ans_table: ANSTable::default(),
             trivial_literal_context : 0,
             distance_context : 0,
             meta_block_remaining_len : 0,
