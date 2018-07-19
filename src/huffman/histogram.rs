@@ -51,9 +51,6 @@ impl Into<u32> for HistEnt {
         self.0
     }
 }
-fn breakme() {
-    eprint!("");
-}
 
 pub trait HistogramSpec:Default {
     const ALPHABET_SIZE:usize;
@@ -100,25 +97,22 @@ impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
                     total_count += 256;
                 }
             } else {
-                breakme();
-                eprintln!("Cur HTREE {} [{} -> {}] = {} [{}]", cur_htree, start, end, group.codes.len(), group.max_symbol);
-                for (index, code) in group.codes.slice()[start..start+256].iter().enumerate() {
+                for (index, code) in group.codes.slice()[start..core::cmp::min(start+256, end)].iter().enumerate() {
                     let count = (index < 256) as u32 * 255 + 1;
                     let sym = code.value;
                     let bits = code.bits;
                     if sym < Spec::ALPHABET_SIZE as u16 { //code.bits <= 8 {//&& !complete[(index & 0xff)] {
-                        assert!(bits <= 8);
+                        //assert!(bits <= 8);
                         ret.histogram.slice_mut()[cur_htree as usize * Spec::ALPHABET_SIZE + sym as usize] +=  count;
                         total_count += count;
-                        eprintln!("Sym: {:x}, Adding {} to {}", sym, count, total_count);
                     } else {
                         let count = 65536>>bits;
                         for sub_code in 0..(1<<(bits - 8)) {
-                            let sub_index = index + sub_code + code.value as usize;
+                            let sub_index = start + index + sub_code + code.value as usize;
+                            assert!(sub_index < end);
                             let sub_sym = group.codes.slice()[sub_index].value;
                             ret.histogram.slice_mut()[cur_htree as usize * Spec::ALPHABET_SIZE + sub_sym as usize] +=  count;
                             total_count += count;
-                            eprintln!("{:?} Ign: {:x},[{}] Adding {} to {} [{} bits]", group.codes.slice()[sub_index], sub_sym, complete[(sub_sym  as usize & 0xff)], count, total_count, bits);
                             assert!(Spec::ALPHABET_SIZE > sub_sym as usize);
                         }
                     }
@@ -140,7 +134,6 @@ impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
             // precondition: table adds up to 65536
             let mut total_count = 0u32;
             for sym in 0..Spec::ALPHABET_SIZE {
-                eprintln!("{} -- {} {}", cur_htree, sym, self.histogram.slice_mut()[cur_htree as usize * Spec::ALPHABET_SIZE + sym as usize]);
                 total_count += self.histogram.slice_mut()[cur_htree as usize * Spec::ALPHABET_SIZE + sym as usize];
             }
             assert_eq!(total_count, 65536);
@@ -163,7 +156,6 @@ impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
                     }
                     *cur = div;
                 }
-                eprintln!("SYM: {} div: {}", sym, *cur);
             }
             assert_eq!(if delta < 0 {(-delta) as u32} else {delta as u32 } & (multiplier as u32 - 1), 0);
             delta /= multiplier as i32;
