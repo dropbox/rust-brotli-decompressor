@@ -125,7 +125,9 @@ impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
                     }
                 }
             }
-            assert_eq!(total_count, 65536);
+            if total_count != TOT_FREQ as u32 {
+                assert_eq!(total_count, 65536);
+            }
         }
         ret.renormalize();    
         ret
@@ -139,6 +141,9 @@ impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
             let mut total_count = 0u32;
             for sym in 0..Spec::ALPHABET_SIZE {
                 total_count += self.histogram.slice_mut()[cur_htree as usize * Spec::ALPHABET_SIZE + sym as usize];
+            }
+            if total_count == TOT_FREQ as u32 {
+                continue;
             }
             assert_eq!(total_count, 65536);
             let mut delta = 0i32;
@@ -281,11 +286,18 @@ impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
     pub fn new_from_group<AllocU32:Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group:&HuffmanTreeGroup<AllocU32, AllocHC>, spec: Spec, mut old_ans: Option<Self>) -> Self {
         Self::new(alloc_u8, alloc_u32, &group.htrees.slice()[..group.num_htrees as usize], group.codes.slice(), spec, old_ans)
     }
-    fn free(&mut self, ms: &mut AllocS, mh: &mut AllocH) {
+    pub fn free(&mut self, ms: &mut AllocS, mh: &mut AllocH) {
         ms.free_cell(core::mem::replace(&mut self.state_lookup, AllocS::AllocatedMemory::default()));
         mh.free_cell(core::mem::replace(&mut self.sym, AllocH::AllocatedMemory::default()));
     }
 }
+#[derive(Clone,Copy,Default)]
+pub struct CodeLengthPrefixSpec{}
+impl HistogramSpec for CodeLengthPrefixSpec {
+    const ALPHABET_SIZE: usize = 6;
+    const MAX_SYMBOL: u64 = 0x5;
+}
+
 #[derive(Clone,Copy,Default)]
 pub struct LiteralSpec{}
 impl HistogramSpec for LiteralSpec {

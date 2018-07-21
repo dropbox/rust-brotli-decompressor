@@ -53,9 +53,28 @@ const kCodeLengthCodeOrder: [u8; CODE_LENGTH_CODES] = [1, 2, 3, 4, 0, 5, 17, 6, 
                                                        11, 12, 13, 14, 15];
 
 // Static prefix code for the complex code length code lengths.
-const kCodeLengthPrefixLength: [u8; 16] = [2, 2, 2, 3, 2, 2, 2, 4, 2, 2, 2, 3, 2, 2, 2, 4];
+//const kCodeLengthPrefixLength: [u8; 16] = [2, 2, 2, 3, 2, 2, 2, 4, 2, 2, 2, 3, 2, 2, 2, 4];
 
-const kCodeLengthPrefixValue: [u8; 16] = [0, 4, 3, 2, 0, 4, 3, 1, 0, 4, 3, 2, 0, 4, 3, 5];
+//const kCodeLengthPrefixValue: [u8; 16] = [0, 4, 3, 2, 0, 4, 3, 1, 0, 4, 3, 2, 0, 4, 3, 5];
+
+pub const kCodeLengthPrefixCode: [HuffmanCode;16] = [
+    HuffmanCode{bits:2, value:0},
+    HuffmanCode{bits:2, value:4},
+    HuffmanCode{bits:2, value:3},
+    HuffmanCode{bits:3, value:2},
+    HuffmanCode{bits:2, value:0},
+    HuffmanCode{bits:2, value:4},
+    HuffmanCode{bits:2, value:3},
+    HuffmanCode{bits:4, value:1},
+    HuffmanCode{bits:2, value:0},
+    HuffmanCode{bits:2, value:4},
+    HuffmanCode{bits:2, value:3},
+    HuffmanCode{bits:3, value:2},
+    HuffmanCode{bits:2, value:0},
+    HuffmanCode{bits:2, value:4},
+    HuffmanCode{bits:2, value:3},
+    HuffmanCode{bits:4, value:5}];
+    
 
 
 macro_rules! BROTLI_LOG_UINT (
@@ -785,7 +804,7 @@ fn ReadCodeLengthCodeLengths<AllocU8: alloc::Allocator<u8>,
       } else {
         ix = 0;
       }
-      if (fast!((kCodeLengthPrefixLength)[ix as usize]) as u32 > available_bits) {
+      if (fast!((kCodeLengthPrefixCode)[ix as usize]).bits as u32 > available_bits) {
         s.sub_loop_counter = i;
         s.repeat = num_codes;
         s.space = space;
@@ -794,9 +813,9 @@ fn ReadCodeLengthCodeLengths<AllocU8: alloc::Allocator<u8>,
       }
     }
     BROTLI_LOG_UINT!(ix);
-    let v: u32 = fast!((kCodeLengthPrefixValue)[ix as usize]) as u32;
+    let v: u32 = fast!((kCodeLengthPrefixCode)[ix as usize]).value as u32;
     bit_reader::BrotliDropBits(&mut s.br,
-                               fast!((kCodeLengthPrefixLength)[ix as usize]) as u32);
+                               fast!((kCodeLengthPrefixCode)[ix as usize]).bits as u32);
     fast_mut!((s.code_length_code_lengths)[code_len_idx as usize]) = v as u8;
     BROTLI_LOG_ARRAY_INDEX!(s.code_length_code_lengths, code_len_idx);
     if v != 0 {

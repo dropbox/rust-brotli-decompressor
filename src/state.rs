@@ -4,6 +4,7 @@
 
 
 use alloc;
+use decode::kCodeLengthPrefixCode;
 use core;
 use context::kContextLookup;
 use bit_reader::{BrotliBitReader, BrotliGetAvailableBits, BrotliInitBitReader};
@@ -11,7 +12,7 @@ use huffman::{BROTLI_HUFFMAN_MAX_CODE_LENGTH, BROTLI_HUFFMAN_MAX_CODE_LENGTHS_SI
               BROTLI_HUFFMAN_MAX_TABLE_SIZE, HuffmanCode, HuffmanTreeGroup};
 use alloc::SliceWrapper;
 #[allow(unused)]
-use huffman::histogram::{HistEnt,ANSTable, HistogramSpec, LiteralSpec, DistanceSpec, BlockLengthSpec, InsertCopySpec};
+use huffman::histogram::{HistEnt,ANSTable, CodeLengthPrefixSpec, HistogramSpec, LiteralSpec, DistanceSpec, BlockLengthSpec, InsertCopySpec};
 
 #[allow(dead_code)]
 pub enum WhichTreeGroup {
@@ -147,6 +148,7 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub literal_hgroup: HuffmanTreeGroup<AllocU32, AllocHC>,
   pub insert_copy_hgroup: HuffmanTreeGroup<AllocU32, AllocHC>,
   pub distance_hgroup: HuffmanTreeGroup<AllocU32, AllocHC>,
+  pub code_length_ans_table: ANSTable<u32, u8, AllocU8, AllocU32, CodeLengthPrefixSpec>,
   pub literal_ans_table: ANSTable<u32, u8, AllocU8, AllocU32, LiteralSpec>,
   pub insert_copy_ans_table: ANSTable<u32, u16, AllocU16, AllocU32, InsertCopySpec>,
   pub distance_ans_table: ANSTable<u32, u16, AllocU16, AllocU32, DistanceSpec>,
@@ -231,7 +233,9 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub trivial_literal_contexts: [u32; 8],
 }
 macro_rules! make_brotli_state {
- ($alloc_u8 : expr, $alloc_u16 : expr, $alloc_u32 : expr, $alloc_hc : expr, $custom_dict : expr, $custom_dict_len: expr) => (BrotliState::<AllocU8, AllocU16, AllocU32, AllocHC>{
+    ($alloc_u8 : expr, $alloc_u16 : expr, $alloc_u32 : expr, $alloc_hc : expr, $custom_dict : expr, $custom_dict_len: expr) => {
+        if let Some(code_length_ans_table) = Some(ANSTable::new_single_code(&mut $alloc_u8, &mut $alloc_u32, &kCodeLengthPrefixCode, CodeLengthPrefixSpec::default(), None)) {
+        BrotliState::<AllocU8, AllocU16, AllocU32, AllocHC>{
             state : BrotliRunningState::BROTLI_STATE_UNINITED,
             loop_counter : 0,
             br : BrotliBitReader::default(),
@@ -259,7 +263,7 @@ macro_rules! make_brotli_state {
             literal_hgroup : HuffmanTreeGroup::<AllocU32, AllocHC>::default(),
             insert_copy_hgroup : HuffmanTreeGroup::<AllocU32, AllocHC>::default(),
             distance_hgroup : HuffmanTreeGroup::<AllocU32, AllocHC>::default(),
-
+            code_length_ans_table: code_length_ans_table,
             literal_ans_table: ANSTable::default(),
             insert_copy_ans_table: ANSTable::default(),
             distance_ans_table: ANSTable::default(),
@@ -337,16 +341,19 @@ macro_rules! make_brotli_state {
            context_modes : AllocU8::AllocatedMemory::default(),
            trivial_literal_contexts : [0u32; 8],
         }
-    );
+        } else {
+            unreachable!();
+        }
+    }
 }
 impl <'brotli_state,
       AllocU8 : alloc::Allocator<u8>,
       AllocU16 : alloc::Allocator<u16>,
       AllocU32 : alloc::Allocator<u32>,
       AllocHC : alloc::Allocator<HuffmanCode> > BrotliState<AllocU8, AllocU16, AllocU32, AllocHC> {
-    pub fn new(alloc_u8 : AllocU8,
+    pub fn new(mut alloc_u8 : AllocU8,
            alloc_u16 : AllocU16,
-           alloc_u32 : AllocU32,
+           mut alloc_u32 : AllocU32,
            alloc_hc : AllocHC) -> Self{
         let mut retval = make_brotli_state!(alloc_u8, alloc_u16, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default(), 0);
         retval.large_window = true;
@@ -355,9 +362,9 @@ impl <'brotli_state,
         BrotliInitBitReader(&mut retval.br);
         retval
     }
-    pub fn new_with_custom_dictionary(alloc_u8 : AllocU8,
+    pub fn new_with_custom_dictionary(mut alloc_u8 : AllocU8,
            alloc_u16 : AllocU16,
-           alloc_u32 : AllocU32,
+           mut alloc_u32 : AllocU32,
            alloc_hc : AllocHC,
            custom_dict: AllocU8::AllocatedMemory) -> Self{
         let custom_dict_len = custom_dict.slice().len();
@@ -368,9 +375,9 @@ impl <'brotli_state,
         BrotliInitBitReader(&mut retval.br);
         retval
     }
-    pub fn new_strict(alloc_u8 : AllocU8,
+    pub fn new_strict(mut alloc_u8 : AllocU8,
            alloc_u16 : AllocU16,
-           alloc_u32 : AllocU32,
+           mut alloc_u32 : AllocU32,
            alloc_hc : AllocHC) -> Self{
         let mut retval = make_brotli_state!(alloc_u8, alloc_u16, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default(), 0);
         retval.context_map_table = retval.alloc_hc.alloc_cell(
@@ -434,7 +441,10 @@ impl <'brotli_state,
                               AllocHC::AllocatedMemory::default()));
       self.alloc_u8.free_cell(core::mem::replace(&mut self.custom_dict,
                               AllocU8::AllocatedMemory::default()));
-
+      self.code_length_ans_table.free(&mut self.alloc_u8, &mut self.alloc_u32);
+      self.literal_ans_table.free(&mut self.alloc_u8, &mut self.alloc_u32);
+      self.insert_copy_ans_table.free(&mut self.alloc_u16, &mut self.alloc_u32);
+      self.distance_ans_table.free(&mut self.alloc_u16, &mut self.alloc_u32);
       //FIXME??  BROTLI_FREE(s, s->legacy_input_buffer);
       //FIXME??  BROTLI_FREE(s, s->legacy_output_buffer);
     }
