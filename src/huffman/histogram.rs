@@ -64,40 +64,44 @@ struct Histogram<AllocU32:Allocator<u32>, Spec:HistogramSpec> {
     spec:Spec,
 }
 impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
-    fn new<AllocU32: Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u32: &mut AllocH,  group:&HuffmanTreeGroup<AllocU32,AllocHC>, previous_mem: Option<AllocH::AllocatedMemory>) -> Self{
+    fn new_from_<AllocU32: Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u32: &mut AllocH,  group:&HuffmanTreeGroup<AllocU32,AllocHC>, previous_mem: Option<AllocH::AllocatedMemory>) -> Self{
+        Self::new(alloc_u32, &group.htrees.slice()[..group.num_htrees as usize], group.codes.slice(), previous_mem)
+    }
+    fn new(alloc_u32: &mut AllocH, group_count: &[u32], group_codes:&[HuffmanCode], previous_mem: Option<AllocH::AllocatedMemory>) -> Self{
+        let num_htrees = group_count.len();
         let buf = if let Some(pmem) = previous_mem {
-            assert!(pmem.len() >= Spec::ALPHABET_SIZE * group.num_htrees as usize);
+            assert!(pmem.len() >= Spec::ALPHABET_SIZE * num_htrees);
             pmem
         } else {
                 
-            alloc_u32.alloc_cell(Spec::ALPHABET_SIZE * group.num_htrees as usize)
+            alloc_u32.alloc_cell(Spec::ALPHABET_SIZE * num_htrees)
         };
         let mut ret = Histogram::<AllocH, Spec> {
-            num_htrees:group.num_htrees,
+            num_htrees:num_htrees as u16,
             histogram:buf,
             spec:Spec::default(),
         };
          for count in ret.histogram.slice_mut().iter_mut() {
             *count = 0;
         }
-        for cur_htree in 0..group.num_htrees {
+        for cur_htree in 0..num_htrees {
             let mut complete = [false;256];
             let mut total_count = 0u32;
             // lets collect samples from each htree
-            let start = group.htrees.slice()[cur_htree as usize] as usize;
-            let next_htree = cur_htree as usize + 1;
-            let end = if next_htree < group.num_htrees as usize {
-                group.htrees.slice()[next_htree] as usize
+            let start = group_count[cur_htree] as usize;
+            let next_htree = cur_htree + 1;
+            let end = if next_htree < num_htrees {
+                group_count[next_htree] as usize
             } else {
-                group.codes.len()
+                group_codes.len()
             };
             if start == end || end == 0 {
                 for sym in 0..256 {
-                    ret.histogram.slice_mut()[cur_htree as usize * Spec::ALPHABET_SIZE + sym as usize] = 256;
+                    ret.histogram.slice_mut()[cur_htree * Spec::ALPHABET_SIZE + sym as usize] = 256;
                     total_count += 256;
                 }
             } else {
-                for (index, code) in group.codes.slice()[start..core::cmp::min(start+256, end)].iter().enumerate() {
+                for (index, code) in group_codes[start..core::cmp::min(start+256, end)].iter().enumerate() {
                     let count = (index < 256) as u32 * 255 + 1;
                     let sym = code.value;
                     let bits = code.bits;
@@ -110,7 +114,7 @@ impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
                         for sub_code in 0..(1<<(bits - 8)) {
                             let sub_index = start + index + sub_code + code.value as usize;
                             assert!(sub_index < end);
-                            let sub_sym = group.codes.slice()[sub_index].value;
+                            let sub_sym = group_codes[sub_index].value;
                             ret.histogram.slice_mut()[cur_htree as usize * Spec::ALPHABET_SIZE + sub_sym as usize] +=  count;
                             total_count += count;
                             assert!(Spec::ALPHABET_SIZE > sub_sym as usize);
@@ -224,8 +228,11 @@ impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
 impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
      AllocS: Allocator<Symbol>,
      AllocH: Allocator<u32>, Spec:HistogramSpec> ANSTable<u32, Symbol, AllocS, AllocH, Spec> {
-    pub fn new<AllocU32:Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group:&HuffmanTreeGroup<AllocU32, AllocHC>, spec: Spec, mut old_ans: Option<Self>) -> Self {
-        let desired_lt_size = Spec::ALPHABET_SIZE * group.num_htrees as usize;
+    pub fn new_single_code(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group:&[HuffmanCode], spec: Spec, mut old_ans: Option<Self>) -> Self {
+        Self::new(alloc_u8, alloc_u32, &[0], group, spec, old_ans)
+    }
+    pub fn new(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group_count: &[u32], group:&[HuffmanCode], spec: Spec, mut old_ans: Option<Self>) -> Self {
+        let desired_lt_size = Spec::ALPHABET_SIZE * group_count.len();
         let mut old_ans_ok = false;
         if let Some(ref mut old) = old_ans {
             if old.sym.len() >= desired_lt_size {
@@ -237,16 +244,16 @@ impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
         let mut rev_lookup;
         if old_ans_ok {
             let mut old = old_ans.unwrap();
-            histogram = Histogram::<AllocH, Spec>::new(alloc_u32, group, Some(old.sym));
+            histogram = Histogram::<AllocH, Spec>::new(alloc_u32, group_count, group, Some(old.sym));
             rev_lookup = old.state_lookup;
         } else {
-            histogram = Histogram::<AllocH, Spec>::new(alloc_u32, group, None);
+            histogram = Histogram::<AllocH, Spec>::new(alloc_u32, group_count, group, None);
             rev_lookup = alloc_u8.alloc_cell(histogram.num_htrees as usize * TOT_FREQ as usize);
             if let Some(ref mut old) = old_ans {
                 old.free(alloc_u8, alloc_u32);
             }
         }
-        for cur_htree in 0..group.num_htrees {
+        for cur_htree in 0..group_count.len() {
             let mut running_start = 0;
             let mut sym = Symbol::from(0u8);
             for start_freq in histogram.histogram.slice_mut().split_at_mut(
@@ -269,6 +276,10 @@ impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
             spec:spec,
             num_htrees:histogram.num_htrees
         }
+        
+    }
+    pub fn new_from_group<AllocU32:Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group:&HuffmanTreeGroup<AllocU32, AllocHC>, spec: Spec, mut old_ans: Option<Self>) -> Self {
+        Self::new(alloc_u8, alloc_u32, &group.htrees.slice()[..group.num_htrees as usize], group.codes.slice(), spec, old_ans)
     }
     fn free(&mut self, ms: &mut AllocS, mh: &mut AllocH) {
         ms.free_cell(core::mem::replace(&mut self.state_lookup, AllocS::AllocatedMemory::default()));
