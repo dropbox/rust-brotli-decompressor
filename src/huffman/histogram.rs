@@ -64,7 +64,7 @@ struct Histogram<AllocU32:Allocator<u32>, Spec:HistogramSpec> {
     spec:Spec,
 }
 impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
-    fn new_from_<AllocU32: Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u32: &mut AllocH,  group:&HuffmanTreeGroup<AllocU32,AllocHC>, previous_mem: Option<AllocH::AllocatedMemory>) -> Self{
+    fn new_from_single_code<AllocU32: Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u32: &mut AllocH,  group:&HuffmanTreeGroup<AllocU32,AllocHC>, previous_mem: Option<AllocH::AllocatedMemory>) -> Self{
         Self::new(alloc_u32, &group.htrees.slice()[..group.num_htrees as usize], group.codes.slice(), previous_mem)
     }
     fn new(alloc_u32: &mut AllocH, group_count: &[u32], group_codes:&[HuffmanCode], previous_mem: Option<AllocH::AllocatedMemory>) -> Self{
@@ -304,6 +304,7 @@ impl HistogramSpec for LiteralSpec {
     const ALPHABET_SIZE: usize = 256;
     const MAX_SYMBOL: u64 = 0xff;
 }
+pub type ContextMapSpec = LiteralSpec;
 #[derive(Clone,Copy,Default)]
 pub struct DistanceSpec{}
 impl HistogramSpec for DistanceSpec {
@@ -322,6 +323,7 @@ impl HistogramSpec for InsertCopySpec {
     const ALPHABET_SIZE: usize = 704;
     const MAX_SYMBOL: u64 = 703;
 }
+
 struct LiteralANSTable<AllocSym:Allocator<u8>, AllocH:Allocator<u32>>(ANSTable<u32, u8, AllocSym,  AllocH, LiteralSpec>);
 
 struct DistanceANSTable<AllocSym:Allocator<u16>, AllocH:Allocator<u32>>(ANSTable<u32, u16, AllocSym,  AllocH, DistanceSpec>);

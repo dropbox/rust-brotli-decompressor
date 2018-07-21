@@ -28,7 +28,7 @@ use ::dictionary::{kBrotliDictionary, kBrotliDictionaryOffsetsByLength,
                    kBrotliMinDictionaryWordLength};
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
 #[allow(unused)]
-use huffman::histogram::{HistEnt,ANSTable, HistogramSpec, LiteralSpec, DistanceSpec, BlockLengthSpec, InsertCopySpec};
+use huffman::histogram::{HistEnt,ANSTable, HistogramSpec, LiteralSpec, ContextMapSpec, DistanceSpec, BlockLengthSpec, InsertCopySpec};
 pub enum BrotliResult {
   ResultSuccess,
   NeedsMoreInput,
@@ -1295,6 +1295,9 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
                                  None,
                                  &mut s,
                                  input);
+         let prev_table = core::mem::replace(&mut s.context_map_ans_table, ANSTable::default());
+         s.context_map_ans_table  = ANSTable::new_single_code(&mut s.alloc_u8, &mut s.alloc_u32,
+                                                              local_context_map_table.slice(), ContextMapSpec::default(), Some(prev_table));
         mem::replace(&mut s.context_map_table,
                      mem::replace(&mut local_context_map_table,
                                   AllocHC::AllocatedMemory::default()));
