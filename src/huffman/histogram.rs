@@ -306,11 +306,26 @@ impl HistogramSpec for LiteralSpec {
 }
 pub type ContextMapSpec = LiteralSpec;
 #[derive(Clone,Copy,Default)]
+pub struct BlockLenSpec{}
+impl HistogramSpec for BlockLenSpec {
+    const ALPHABET_SIZE: usize = 26;
+    const MAX_SYMBOL: u64 = 25;
+}
+
+#[derive(Clone,Copy,Default)]
+pub struct BlockTypeSpec{}
+impl HistogramSpec for BlockTypeSpec {
+    const ALPHABET_SIZE: usize = 258;
+    const MAX_SYMBOL: u64 = 257;
+}
+
+#[derive(Clone,Copy,Default)]
 pub struct DistanceSpec{}
 impl HistogramSpec for DistanceSpec {
     const ALPHABET_SIZE: usize = 704;
     const MAX_SYMBOL: u64 = 703;
 }
+
 #[derive(Clone,Copy,Default)]
 pub struct BlockLengthSpec{}
 impl HistogramSpec for BlockLengthSpec {

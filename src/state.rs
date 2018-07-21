@@ -12,7 +12,7 @@ use huffman::{BROTLI_HUFFMAN_MAX_CODE_LENGTH, BROTLI_HUFFMAN_MAX_CODE_LENGTHS_SI
               BROTLI_HUFFMAN_MAX_TABLE_SIZE, HuffmanCode, HuffmanTreeGroup};
 use alloc::SliceWrapper;
 #[allow(unused)]
-use huffman::histogram::{HistEnt,ANSTable, CodeLengthPrefixSpec, HistogramSpec, LiteralSpec, DistanceSpec, BlockLengthSpec, InsertCopySpec, ContextMapSpec};
+use huffman::histogram::{HistEnt,ANSTable, CodeLengthPrefixSpec, HistogramSpec, LiteralSpec, DistanceSpec, BlockLengthSpec, InsertCopySpec, ContextMapSpec, BlockTypeSpec, BlockLenSpec};
 
 #[allow(dead_code)]
 pub enum WhichTreeGroup {
@@ -99,13 +99,18 @@ pub enum BrotliRunningReadBlockLengthState {
 
 pub const kLiteralContextBits: usize = 6;
 
-pub struct BlockTypeAndLengthState<AllocHC: alloc::Allocator<HuffmanCode>> {
+pub struct BlockTypeAndLengthState<AllocU8: alloc::Allocator<u8>,
+                       AllocU16: alloc::Allocator<u16>,
+                       AllocU32: alloc::Allocator<u32>,
+                       AllocHC: alloc::Allocator<HuffmanCode>> {
   pub substate_read_block_length: BrotliRunningReadBlockLengthState,
   pub num_block_types: [u32; 3],
   pub block_length_index: u32,
   pub block_length: [u32; 3],
   pub block_type_trees: AllocHC::AllocatedMemory,
   pub block_len_trees: AllocHC::AllocatedMemory,
+  pub block_type_ans_table: ANSTable<u32, u16, AllocU16, AllocU32, BlockTypeSpec>,
+  pub block_len_ans_table: ANSTable<u32, u8, AllocU8, AllocU32, BlockLenSpec>,
   pub block_type_rb: [u32; 6],
 }
 
@@ -158,7 +163,7 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub trivial_literal_context: i32,
   pub distance_context: i32,
   pub meta_block_remaining_len: i32,
-  pub block_type_length_state: BlockTypeAndLengthState<AllocHC>,
+  pub block_type_length_state: BlockTypeAndLengthState<AllocU8, AllocU16, AllocU32, AllocHC>,
   pub distance_postfix_bits: u32,
   pub num_direct_distance_codes: u32,
   pub distance_postfix_mask: i32,
@@ -272,7 +277,7 @@ macro_rules! make_brotli_state {
             trivial_literal_context : 0,
             distance_context : 0,
             meta_block_remaining_len : 0,
-            block_type_length_state : BlockTypeAndLengthState::<AllocHC> {
+            block_type_length_state : BlockTypeAndLengthState::<AllocU8, AllocU16, AllocU32, AllocHC> {
               block_length_index : 0,
               block_length : [0; 3],
               num_block_types : [0;3],
@@ -280,6 +285,8 @@ macro_rules! make_brotli_state {
               substate_read_block_length : BrotliRunningReadBlockLengthState::BROTLI_STATE_READ_BLOCK_LENGTH_NONE,
               block_type_trees : AllocHC::AllocatedMemory::default(),
               block_len_trees : AllocHC::AllocatedMemory::default(),
+              block_len_ans_table: ANSTable::default(),
+              block_type_ans_table: ANSTable::default(),
             },
             distance_postfix_bits : 0,
             num_direct_distance_codes : 0,
@@ -448,6 +455,8 @@ impl <'brotli_state,
       self.insert_copy_ans_table.free(&mut self.alloc_u16, &mut self.alloc_u32);
       self.distance_ans_table.free(&mut self.alloc_u16, &mut self.alloc_u32);
       self.context_map_ans_table.free(&mut self.alloc_u8, &mut self.alloc_u32);
+      self.block_type_length_state.block_type_ans_table.free(&mut self.alloc_u16, &mut self.alloc_u32);
+      self.block_type_length_state.block_len_ans_table.free(&mut self.alloc_u8, &mut self.alloc_u32);
       //FIXME??  BROTLI_FREE(s, s->legacy_input_buffer);
       //FIXME??  BROTLI_FREE(s, s->legacy_output_buffer);
     }

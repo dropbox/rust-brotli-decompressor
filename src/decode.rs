@@ -28,7 +28,7 @@ use ::dictionary::{kBrotliDictionary, kBrotliDictionaryOffsetsByLength,
                    kBrotliMinDictionaryWordLength};
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
 #[allow(unused)]
-use huffman::histogram::{HistEnt,ANSTable, HistogramSpec, LiteralSpec, ContextMapSpec, DistanceSpec, BlockLengthSpec, InsertCopySpec};
+use huffman::histogram::{HistEnt,ANSTable, HistogramSpec, LiteralSpec, ContextMapSpec, DistanceSpec, BlockLengthSpec, InsertCopySpec, BlockTypeSpec, BlockLenSpec};
 pub enum BrotliResult {
   ResultSuccess,
   NeedsMoreInput,
@@ -1037,7 +1037,10 @@ fn SafeReadBlockLengthIndex(substate_read_block_length: &state::BrotliRunningRea
   }
 }
 fn SafeReadBlockLengthFromIndex<
-    AllocHC : alloc::Allocator<HuffmanCode> >(s : &mut BlockTypeAndLengthState<AllocHC>,
+    AllocU8: alloc::Allocator<u8>,
+    AllocU16: alloc::Allocator<u16>,
+    AllocU32: alloc::Allocator<u32>,
+    AllocHC : alloc::Allocator<HuffmanCode> >(s : &mut BlockTypeAndLengthState<AllocU8, AllocU16,AllocU32, AllocHC>,
                                               br : &mut bit_reader::BrotliBitReader,
                                               result : &mut u32,
                                               res_index : (bool, u32),
@@ -1427,8 +1430,11 @@ fn DecodeContextMap<AllocU8: alloc::Allocator<u8>,
 // Decodes a command or literal and updates block type ringbuffer.
 // Reads 3..54 bits.
 fn DecodeBlockTypeAndLength<
+    AllocU8: alloc::Allocator<u8>,
+    AllocU16: alloc::Allocator<u16>,
+    AllocU32: alloc::Allocator<u32>,
   AllocHC : alloc::Allocator<HuffmanCode>> (safe : bool,
-                                            s : &mut BlockTypeAndLengthState<AllocHC>,
+                                            s : &mut BlockTypeAndLengthState<AllocU8, AllocU16, AllocU32, AllocHC>,
                                             br : &mut bit_reader::BrotliBitReader,
                                             tree_type : i32,
                                             input : &[u8]) -> bool {
@@ -2792,6 +2798,14 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                             None,
                             &mut s,
                             local_input);
+          {
+              let old_block_type_ans = mem::replace(&mut s.block_type_length_state.block_type_ans_table,
+                                                    ANSTable::default());
+              s.block_type_length_state.block_type_ans_table = ANSTable::new_single_code(&mut s.alloc_u16, &mut s.alloc_u32,
+                                                                                     new_huffman_table.slice(),
+                                                                                     BlockTypeSpec::default(),
+                                                                                     Some(old_block_type_ans));
+          }
           mem::replace(&mut s.block_type_length_state.block_type_trees,
                        new_huffman_table);
           match result {
@@ -2811,6 +2825,14 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                                    None,
                                    &mut s,
                                    local_input);
+          {
+              let old_block_len_ans = mem::replace(&mut s.block_type_length_state.block_len_ans_table,
+                                                    ANSTable::default());
+              s.block_type_length_state.block_len_ans_table = ANSTable::new_single_code(&mut s.alloc_u8, &mut s.alloc_u32,
+                                                                                     new_huffman_table.slice(),
+                                                                                     BlockLenSpec::default(),
+                                                                                     Some(old_block_len_ans));
+          }
           mem::replace(&mut s.block_type_length_state.block_len_trees,
                        new_huffman_table);
           match result {
