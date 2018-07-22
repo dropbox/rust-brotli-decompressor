@@ -54,8 +54,6 @@ impl Into<u32> for HistEnt {
 
 pub trait HistogramSpec:Default {
     const ALPHABET_SIZE:usize;
-    const MAX_SYMBOL:u64;
-    
 }
 
 struct Histogram<AllocU32:Allocator<u32>, Spec:HistogramSpec> {
@@ -126,16 +124,15 @@ impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
                 }
             }
             if total_count != TOT_FREQ as u32 {
-                assert_eq!(total_count, 65536);
+                if total_count != 8192 {
+                    assert_eq!(total_count, 65536);
+                }
             }
         }
         ret.renormalize();    
         ret
     }
     fn renormalize(&mut self) {
-        let shift = 4;
-        let multiplier = 1 << shift;
-        assert_eq!(65536/TOT_FREQ as u32, 1u32<<shift);
         for cur_htree in 0..self.num_htrees {
             // precondition: table adds up to 65536
             let mut total_count = 0u32;
@@ -145,7 +142,15 @@ impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
             if total_count == TOT_FREQ as u32 {
                 continue;
             }
-            assert_eq!(total_count, 65536);
+            let shift;
+            if total_count != 8192 {
+                assert_eq!(total_count, 65536);
+                shift = 4;
+            } else {
+                shift = 1;
+            }
+            let multiplier = 1 << shift;
+            assert_eq!(total_count/TOT_FREQ as u32, 1u32<<shift);
             let mut delta = 0i32;
             for sym in 0..Spec::ALPHABET_SIZE {
                 let cur = &mut self.histogram.slice_mut()[cur_htree as usize * Spec::ALPHABET_SIZE + sym as usize];
@@ -295,51 +300,52 @@ impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
 pub struct CodeLengthPrefixSpec{}
 impl HistogramSpec for CodeLengthPrefixSpec {
     const ALPHABET_SIZE: usize = 6;
-    const MAX_SYMBOL: u64 = 0x5;
 }
 
 #[derive(Clone,Copy,Default)]
 pub struct LiteralSpec{}
 impl HistogramSpec for LiteralSpec {
     const ALPHABET_SIZE: usize = 256;
-    const MAX_SYMBOL: u64 = 0xff;
 }
 pub type ContextMapSpec = LiteralSpec;
 #[derive(Clone,Copy,Default)]
 pub struct BlockLenSpec{}
 impl HistogramSpec for BlockLenSpec {
     const ALPHABET_SIZE: usize = 26;
-    const MAX_SYMBOL: u64 = 25;
 }
 
 #[derive(Clone,Copy,Default)]
 pub struct BlockTypeSpec{}
 impl HistogramSpec for BlockTypeSpec {
     const ALPHABET_SIZE: usize = 258;
-    const MAX_SYMBOL: u64 = 257;
 }
 
 #[derive(Clone,Copy,Default)]
 pub struct DistanceSpec{}
 impl HistogramSpec for DistanceSpec {
     const ALPHABET_SIZE: usize = 704;
-    const MAX_SYMBOL: u64 = 703;
 }
 
 #[derive(Clone,Copy,Default)]
 pub struct BlockLengthSpec{}
 impl HistogramSpec for BlockLengthSpec {
     const ALPHABET_SIZE: usize = 26;
-    const MAX_SYMBOL: u64 = 25;
 }
 #[derive(Clone,Copy,Default)]
 pub struct InsertCopySpec{}
 impl HistogramSpec for InsertCopySpec {
     const ALPHABET_SIZE: usize = 704;
-    const MAX_SYMBOL: u64 = 703;
+}
+
+#[derive(Clone,Copy,Default)]
+pub struct CodeLengthSymbolSpec {}
+
+impl HistogramSpec for CodeLengthSymbolSpec {
+    const ALPHABET_SIZE: usize = 18;
 }
 
 struct LiteralANSTable<AllocSym:Allocator<u8>, AllocH:Allocator<u32>>(ANSTable<u32, u8, AllocSym,  AllocH, LiteralSpec>);
 
 struct DistanceANSTable<AllocSym:Allocator<u16>, AllocH:Allocator<u32>>(ANSTable<u32, u16, AllocSym,  AllocH, DistanceSpec>);
 struct InsertCopyANSTable<AllocSym:Allocator<u16>, AllocH:Allocator<u32>>(ANSTable<u32, u16, AllocSym,  AllocH, InsertCopySpec>);
+

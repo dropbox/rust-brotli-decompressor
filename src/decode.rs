@@ -28,7 +28,7 @@ use ::dictionary::{kBrotliDictionary, kBrotliDictionaryOffsetsByLength,
                    kBrotliMinDictionaryWordLength};
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
 #[allow(unused)]
-use huffman::histogram::{HistEnt,ANSTable, HistogramSpec, LiteralSpec, ContextMapSpec, DistanceSpec, BlockLengthSpec, InsertCopySpec, BlockTypeSpec, BlockLenSpec};
+use huffman::histogram::{HistEnt,ANSTable, HistogramSpec, LiteralSpec, ContextMapSpec, DistanceSpec, BlockLengthSpec, InsertCopySpec, BlockTypeSpec, BlockLenSpec, CodeLengthSymbolSpec};
 pub enum BrotliResult {
   ResultSuccess,
   NeedsMoreInput,
@@ -947,6 +947,11 @@ fn ReadHuffmanCode<AllocU8: alloc::Allocator<u8>,
         huffman::BrotliBuildCodeLengthsHuffmanTable(&mut s.table,
                                                     &s.code_length_code_lengths,
                                                     &s.code_length_histo);
+        {
+            let old_ans = mem::replace(&mut s.complex_ans_table, ANSTable::default());
+            s.complex_ans_table = ANSTable::new_single_code(&mut s.alloc_u8, &mut s.alloc_u32, &s.table[..],
+                                                            CodeLengthSymbolSpec::default(), Some(old_ans));
+        }
         for code_length_histo in s.code_length_histo[..].iter_mut() {
           *code_length_histo = 0; // memset
         }
