@@ -42,7 +42,7 @@ pub use huffman::{HuffmanCode, HuffmanTreeGroup};
 pub use state::BrotliState;
 
 pub use reader::{DecompressorCustomIo};
-
+use self::entropy::{EntropyEncoder, EntropyDecoder, NopEncoder, HuffmanDecoder};
 #[cfg(not(feature="no-stdlib"))]
 pub use reader::{Decompressor};
 
@@ -220,7 +220,12 @@ pub fn BrotliDecompressCustomIoCustomDict<ErrType,
   where InputType: CustomRead<ErrType>,
         OutputType: CustomWrite<ErrType>
 {
-  let mut brotli_state = BrotliState::new_with_custom_dictionary(alloc_u8, alloc_u16, alloc_u32, alloc_hc, custom_dictionary);
+  let mut brotli_state = BrotliState::<AllocU8,
+                                       AllocU16,
+                                       AllocU32,
+                                       AllocHC,
+                                       NopEncoder,
+                                       HuffmanDecoder>::new_with_custom_dictionary(alloc_u8, alloc_u16, alloc_u32, alloc_hc, custom_dictionary);
   assert!(input_buffer.len() != 0);
   assert!(output_buffer.len() != 0);
   let mut available_out: usize = output_buffer.len();

@@ -6,6 +6,7 @@ pub use alloc::HeapAlloc;
 pub use alloc::HeapAllocUninitialized;
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
 pub use state::BrotliState;
+pub use entropy::{HuffmanDecoder, NopEncoder, EntropyEncoder, EntropyDecoder};
 // use io_wrappers::write_all;
 pub use io_wrappers::{CustomRead, CustomWrite};
 #[cfg(not(feature="no-stdlib"))]
@@ -196,7 +197,7 @@ pub struct DecompressorCustomIo<ErrType,
   input: R,
   error_if_invalid_data: Option<ErrType>,
   read_error: Option<ErrType>,
-  state: BrotliState<AllocU8, AllocU16, AllocU32, AllocHC>,
+  state: BrotliState<AllocU8, AllocU16, AllocU32, AllocHC, NopEncoder, HuffmanDecoder>,
 }
 
 impl<ErrType,

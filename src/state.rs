@@ -11,6 +11,7 @@ use bit_reader::{BrotliBitReader, BrotliGetAvailableBits, BrotliInitBitReader};
 use huffman::{BROTLI_HUFFMAN_MAX_CODE_LENGTH, BROTLI_HUFFMAN_MAX_CODE_LENGTHS_SIZE,
               BROTLI_HUFFMAN_MAX_TABLE_SIZE, HuffmanCode, HuffmanTreeGroup};
 use alloc::SliceWrapper;
+use super::entropy::{EntropyEncoder, EntropyDecoder};
 #[allow(unused)]
 use huffman::histogram::{HistEnt,ANSTable, CodeLengthPrefixSpec, HistogramSpec, LiteralSpec, DistanceSpec, BlockLengthSpec, InsertCopySpec, ContextMapSpec, BlockTypeSpec, BlockLenSpec, CodeLengthSymbolSpec};
 
@@ -117,7 +118,8 @@ pub struct BlockTypeAndLengthState<AllocU8: alloc::Allocator<u8>,
 pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
                        AllocU16: alloc::Allocator<u16>,
                        AllocU32: alloc::Allocator<u32>,
-                       AllocHC: alloc::Allocator<HuffmanCode>>
+                       AllocHC: alloc::Allocator<HuffmanCode>,
+                       Encoder:EntropyEncoder+Default, Decoder:EntropyDecoder+Default>
 {
   pub state: BrotliRunningState,
 
@@ -240,11 +242,13 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub context_map: AllocU8::AllocatedMemory,
   pub context_modes: AllocU8::AllocatedMemory,
   pub trivial_literal_contexts: [u32; 8],
+  pub entropy_encoder: Encoder,
+  pub entropy_decoder: Decoder,
 }
 macro_rules! make_brotli_state {
     ($alloc_u8 : expr, $alloc_u16 : expr, $alloc_u32 : expr, $alloc_hc : expr, $custom_dict : expr, $custom_dict_len: expr) => {
         if let Some(code_length_ans_table) = Some(ANSTable::new_single_code(&mut $alloc_u8, &mut $alloc_u32, &kCodeLengthPrefixCode, CodeLengthPrefixSpec::default(), None)) {
-        BrotliState::<AllocU8, AllocU16, AllocU32, AllocHC>{
+        BrotliState::<AllocU8, AllocU16, AllocU32, AllocHC, Encoder, Decoder>{
             state : BrotliRunningState::BROTLI_STATE_UNINITED,
             loop_counter : 0,
             br : BrotliBitReader::default(),
@@ -352,7 +356,9 @@ macro_rules! make_brotli_state {
            num_literal_htrees : 0,
            context_map : AllocU8::AllocatedMemory::default(),
            context_modes : AllocU8::AllocatedMemory::default(),
-           trivial_literal_contexts : [0u32; 8],
+            trivial_literal_contexts : [0u32; 8],
+            entropy_encoder: Encoder::default(),
+            entropy_decoder: Decoder::default(),
         }
         } else {
             unreachable!();
@@ -363,7 +369,9 @@ impl <'brotli_state,
       AllocU8 : alloc::Allocator<u8>,
       AllocU16 : alloc::Allocator<u16>,
       AllocU32 : alloc::Allocator<u32>,
-      AllocHC : alloc::Allocator<HuffmanCode> > BrotliState<AllocU8, AllocU16, AllocU32, AllocHC> {
+      AllocHC : alloc::Allocator<HuffmanCode>,
+      Encoder:EntropyEncoder+Default,
+      Decoder:EntropyDecoder+Default> BrotliState<AllocU8, AllocU16, AllocU32, AllocHC, Encoder, Decoder> {
     pub fn new(mut alloc_u8 : AllocU8,
            alloc_u16 : AllocU16,
            mut alloc_u32 : AllocU32,

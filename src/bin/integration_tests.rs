@@ -10,6 +10,7 @@ use super::brotli_decompressor::BrotliDecompressStream;
 use super::brotli_decompressor::{Decompressor, DecompressorWriter};
 use super::brotli_decompressor::BrotliState;
 use super::brotli_decompressor::HuffmanCode;
+use super::brotli_decompressor::entropy::{NopEncoder, HuffmanDecoder};
 use super::HeapAllocator;
 
 #[allow(unused_imports)]
@@ -138,7 +139,12 @@ pub fn decompress_internal<InputType, OutputType>(r: &mut InputType,
   }
   for _i in 0..range {
     let mut brotli_state =
-      BrotliState::new(HeapAllocator::<u8> { default_value: 0 },
+          BrotliState::<HeapAllocator<u8>,
+                        HeapAllocator<u16>,
+                        HeapAllocator<u32>,
+                        HeapAllocator<HuffmanCode>,
+                        NopEncoder,
+                        HuffmanDecoder>::new(HeapAllocator::<u8> { default_value: 0 },
                        HeapAllocator::<u16> { default_value: 0 },
                        HeapAllocator::<u32> { default_value: 0 },
                        HeapAllocator::<HuffmanCode> { default_value: HuffmanCode::default() });
