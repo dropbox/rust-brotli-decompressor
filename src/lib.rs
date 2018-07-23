@@ -32,6 +32,7 @@ mod state;
 mod prefix;
 mod context;
 pub mod transform;
+pub mod entropy;
 mod test;
 mod decode;
 pub mod io_wrappers;
