@@ -216,32 +216,25 @@ impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
         
     }
 }
-pub struct ANSTable<HistEntTrait, Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone, AllocS: Allocator<Symbol>, AllocH: Allocator<HistEntTrait>, Spec:HistogramSpec>
-    where HistEnt:From<HistEntTrait> {
-    state_lookup:AllocS::AllocatedMemory,
+pub struct CDF<HistEntTrait, AllocH: Allocator<HistEntTrait>, Spec:HistogramSpec> {
     sym:AllocH::AllocatedMemory,
-    spec: Spec,
     num_htrees: u16,
+    spec: Spec,
 }
-impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
-     AllocS: Allocator<Symbol>,
-     AllocH: Allocator<u32>, Spec:HistogramSpec> Default for ANSTable<u32, Symbol, AllocS, AllocH, Spec> {
+impl<HistEntTrait, AllocH: Allocator<HistEntTrait>, Spec:HistogramSpec> Default for CDF<HistEntTrait, AllocH, Spec> {
     fn default() -> Self {
-        ANSTable::<u32, Symbol, AllocS, AllocH, Spec> {
-            state_lookup:AllocS::AllocatedMemory::default(),
+        CDF {
             sym:AllocH::AllocatedMemory::default(),
             spec:Spec::default(),
             num_htrees:0,
         }
     }
 }
-impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
-     AllocS: Allocator<Symbol>,
-     AllocH: Allocator<u32>, Spec:HistogramSpec> ANSTable<u32, Symbol, AllocS, AllocH, Spec> {
-    pub fn new_single_code(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group:&[HuffmanCode], spec: Spec, mut old_ans: Option<Self>) -> Self {
-        Self::new(alloc_u8, alloc_u32, &[0], group, spec, old_ans)
+impl<AllocH: Allocator<u32>, Spec:HistogramSpec> CDF<u32, AllocH, Spec> {
+    pub fn new_single_code(alloc_u32: &mut AllocH, group:&[HuffmanCode], spec: Spec, mut old_ans: Option<Self>) -> Self {
+        Self::new(alloc_u32, &[0], group, spec, old_ans)
     }
-    pub fn new(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group_count: &[u32], group:&[HuffmanCode], spec: Spec, mut old_ans: Option<Self>) -> Self {
+    pub fn new(alloc_u32: &mut AllocH, group_count: &[u32], group:&[HuffmanCode], spec: Spec, mut old_ans: Option<Self>) -> Self {
         let desired_lt_size = Spec::ALPHABET_SIZE * group_count.len();
         let mut old_ans_ok = false;
         if let Some(ref mut old) = old_ans {
@@ -251,40 +244,94 @@ impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
         }
         
         let mut histogram;
-        let mut rev_lookup;
         if old_ans_ok {
             let mut old = old_ans.unwrap();
             histogram = Histogram::<AllocH, Spec>::new(alloc_u32, group_count, group, Some(old.sym));
-            rev_lookup = old.state_lookup;
         } else {
             histogram = Histogram::<AllocH, Spec>::new(alloc_u32, group_count, group, None);
-            rev_lookup = alloc_u8.alloc_cell(histogram.num_htrees as usize * TOT_FREQ as usize);
-            if let Some(ref mut old) = old_ans {
-                old.free(alloc_u8, alloc_u32);
-            }
         }
         for cur_htree in 0..group_count.len() {
             let mut running_start = 0;
-            let mut sym = Symbol::from(0u8);
             for start_freq in histogram.histogram.slice_mut().split_at_mut(
                 cur_htree as usize * Spec::ALPHABET_SIZE).1.split_at_mut(Spec::ALPHABET_SIZE).0.iter_mut() {
                 let count = *start_freq;
                 *start_freq = HistEnt::default().set_start(running_start as u16).set_freq(count as u16).into();
-                if count != 0 {
-                    let running_end = running_start as usize + count as usize;
-                    for rev_lk in rev_lookup.slice_mut()[running_start as usize..running_end].iter_mut() {
-                        *rev_lk = sym.clone();
-                    }
-                    running_start = running_end;
-                }
             }
-            sym += Symbol::from(1u8);
         }
-        ANSTable::<u32, Symbol, AllocS, AllocH, Spec>{
-            state_lookup:rev_lookup,
+        CDF::<u32, AllocH, Spec>{
             sym:histogram.histogram,
             spec:spec,
             num_htrees:histogram.num_htrees
+        }
+    }
+    pub fn new_from_group<AllocU32:Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u32: &mut AllocH, group:&HuffmanTreeGroup<AllocU32, AllocHC>, spec: Spec, mut old_ans: Option<Self>) -> Self {
+        Self::new(alloc_u32, &group.htrees.slice()[..group.num_htrees as usize], group.codes.slice(), spec, old_ans)
+    }
+    pub fn free(&mut self, mh: &mut AllocH) {
+        mh.free_cell(core::mem::replace(&mut self.sym, AllocH::AllocatedMemory::default()));
+    }
+
+}
+pub struct ANSTable<HistEntTrait, Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone, AllocS: Allocator<Symbol>, AllocH: Allocator<HistEntTrait>, Spec:HistogramSpec>
+    where HistEnt:From<HistEntTrait> {
+    state_lookup:AllocS::AllocatedMemory,
+    cdf: CDF<HistEntTrait, AllocH, Spec>,
+}
+impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
+     AllocS: Allocator<Symbol>,
+     AllocH: Allocator<u32>, Spec:HistogramSpec> Default for ANSTable<u32, Symbol, AllocS, AllocH, Spec> {
+    fn default() -> Self {
+        ANSTable::<u32, Symbol, AllocS, AllocH, Spec> {
+            state_lookup:AllocS::AllocatedMemory::default(),
+            cdf:CDF::default(),
+        }
+    }
+}
+impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone+Copy,
+     AllocS: Allocator<Symbol>,
+     AllocH: Allocator<u32>, Spec:HistogramSpec> ANSTable<u32, Symbol, AllocS, AllocH, Spec> {
+    pub fn new_single_code(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group:&[HuffmanCode], spec: Spec, mut old_ans: Option<Self>) -> Self {
+        Self::new(alloc_u8, alloc_u32, &[0], group, spec, old_ans)
+    }
+    pub fn new(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group_count: &[u32], group:&[HuffmanCode], spec: Spec, mut old_ans: Option<Self>) -> Self {
+        let (cdf, old_rev) = match old_ans {
+            Some(old) => {
+                (CDF::new(alloc_u32, group_count, group, spec, Some(old.cdf)), Some(old.state_lookup))
+            }
+            None => {
+                (CDF::new(alloc_u32, group_count, group, spec, None), None)
+            }
+        };
+        
+        let mut rev = match old_rev {
+            Some(old) => {
+                if old.len() < group_count.len() as usize * TOT_FREQ as usize {
+                    alloc_u8.free_cell(old);
+                    alloc_u8.alloc_cell(group_count.len() as usize * TOT_FREQ as usize)
+                } else {
+                    old
+                }
+            },
+            None => {
+                alloc_u8.alloc_cell(group_count.len() as usize * TOT_FREQ as usize)
+            }
+        };
+        for tree_id in 0..group_count.len() as usize{
+            let mut sym = Symbol::from(0u8);
+            let mut notfirst = 0u8;
+            for start_freq in cdf.sym.slice().split_at(tree_id as usize * Spec::ALPHABET_SIZE).1.split_at(Spec::ALPHABET_SIZE).0 {
+                sym += Symbol::from(notfirst);   
+                let ent = HistEnt::from(*start_freq);
+                let rev_slice = rev.slice_mut().split_at_mut(tree_id * TOT_FREQ as usize + ent.start() as usize).1;
+                for rev_lk in rev_slice.split_at_mut(ent.freq() as usize).0 {
+                    *rev_lk = sym;
+                }
+                notfirst = 1;
+            }
+        }
+        ANSTable::<u32, Symbol, AllocS, AllocH, Spec>{
+            state_lookup:rev,
+            cdf:cdf,
         }
         
     }
@@ -293,7 +340,7 @@ impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
     }
     pub fn free(&mut self, ms: &mut AllocS, mh: &mut AllocH) {
         ms.free_cell(core::mem::replace(&mut self.state_lookup, AllocS::AllocatedMemory::default()));
-        mh.free_cell(core::mem::replace(&mut self.sym, AllocH::AllocatedMemory::default()));
+        self.cdf.free(mh);
     }
 }
 #[derive(Clone,Copy,Default)]

@@ -35,10 +35,10 @@ fn oneshot(input: &mut [u8], mut output: &mut [u8]) -> (BrotliResult, usize, usi
   let mut output_offset: usize = 0;
   let mut written: usize = 0;
   let mut brotli_state =
-     BrotliState::<StackAllocator::<u8, MemPool<u8>>,
-                      StackAllocator::<u16, MemPool<u16>>,
-                      StackAllocator::<u32, MemPool<u32>>,
-                      StackAllocator::<HuffmanCode, MemPool<HuffmanCode>>,
+     BrotliState::<StackAllocator<u8, MemPool<u8>>,
+                      StackAllocator<u16, MemPool<u16>>,
+                      StackAllocator<u32, MemPool<u32>>,
+                      StackAllocator<HuffmanCode, MemPool<HuffmanCode>>,
                   NopEncoder,
                   HuffmanDecoder>::new(stack_u8_allocator, stack_u16_allocator, stack_u32_allocator, stack_hc_allocator);
   let result = BrotliDecompressStream(&mut available_in,

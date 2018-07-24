@@ -1,6 +1,7 @@
 use super::{HuffmanCode, HuffmanTreeGroup};
 use super::huffman::histogram::{ANSTable, HistogramSpec};
 use super::BrotliResult;
+use super::bit_reader;
 use core::ops::AddAssign;
 use alloc;
 use alloc::Allocator;
@@ -14,10 +15,32 @@ pub trait EntropyEncoder {
 }
 
 pub trait EntropyDecoder {
+    fn preload<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone,
+               AllocS:Allocator<Symbol>,
+               AllocH: Allocator<u32>,
+               AllocU32:Allocator<u32>,
+               AllocHC:Allocator<HuffmanCode>,
+               Spec:HistogramSpec>(&mut self,
+                                   group:HuffmanTreeGroup<AllocU32, AllocHC>,
+                                   prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+                                   prior: u8,
+                                   br: &mut bit_reader::BrotliBitReader,
+                                   input:&[u8]) -> (u32, u32);
     // precondition: input has at least 4 bytes
-    fn get<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, AllocU32:Allocator<u32>, AllocHC:Allocator<HuffmanCode>, Spec:HistogramSpec>(&mut self, group:HuffmanTreeGroup<AllocU32, AllocHC>, prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>, prior: u8, input:&[u8], input_offset:&mut usize) -> BrotliResult;
+    fn get<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone,
+              AllocS:Allocator<Symbol>,
+              AllocH: Allocator<u32>,
+              AllocU32:Allocator<u32>,
+              AllocHC:Allocator<HuffmanCode>,
+              Spec:HistogramSpec>(&mut self,
+                                  group:HuffmanTreeGroup<AllocU32, AllocHC>,
+                                  prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+                                  prior: u8,
+                                  preloaded: (u32, u32),
+                                  br: &mut bit_reader::BrotliBitReader,
+                                  input:&[u8]) -> BrotliResult;
     // precondition: input has at least 4 bytes
-    fn get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec>(&mut self, group:&[HuffmanCode], prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>, input: &[u8], input_offset:&mut usize) -> (Symbol, BrotliResult);    
+    fn get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec>(&mut self, group:&[HuffmanCode], prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>, input: &[u8], input_offset:&mut usize) -> (Symbol, BrotliResult);
 }
 
 
@@ -27,7 +50,32 @@ pub struct HuffmanDecoder {
 }
 
 impl EntropyDecoder  for HuffmanDecoder {
-    fn get<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, AllocU32:Allocator<u32>, AllocHC:Allocator<HuffmanCode>, Spec:HistogramSpec>(&mut self, group:HuffmanTreeGroup<AllocU32, AllocHC>, prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>, prior: u8, input:&[u8], input_offset:&mut usize) -> BrotliResult{
+    fn preload<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone,
+               AllocS:Allocator<Symbol>,
+               AllocH: Allocator<u32>,
+               AllocU32:Allocator<u32>,
+               AllocHC:Allocator<HuffmanCode>,
+               Spec:HistogramSpec>(&mut self,
+                                   group:HuffmanTreeGroup<AllocU32, AllocHC>,
+                                   prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+                                   prior: u8,
+                                   br: &mut bit_reader::BrotliBitReader,
+                                   input:&[u8]) -> (u32, u32){
+        unimplemented!()
+    }
+    // precondition: input has at least 4 bytes
+    fn get<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone,
+              AllocS:Allocator<Symbol>,
+              AllocH: Allocator<u32>,
+              AllocU32:Allocator<u32>,
+              AllocHC:Allocator<HuffmanCode>,
+              Spec:HistogramSpec>(&mut self,
+                                  group:HuffmanTreeGroup<AllocU32, AllocHC>,
+                                  prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+                                  prior: u8,
+                                  preloaded: (u32, u32),
+                                  br: &mut bit_reader::BrotliBitReader,
+                                  input:&[u8]) -> BrotliResult {
         BrotliResult::ResultFailure
     }
     // precondition: input has at least 4 bytes
