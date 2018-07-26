@@ -871,7 +871,18 @@ fn ReadCodeLengthCodeLengths<AllocU8: alloc::Allocator<u8>,
       fast!((kCodeLengthCodeOrder)[s.sub_loop_counter as usize; CODE_LENGTH_CODES]).iter() {
     let code_len_idx = *code_length_code_order;
     let mut ix: u32 = 0;
-
+    let (mut v, a_result) = s.entropy_decoder.get_stationary(&kCodeLengthPrefixCode[..], &s.code_length_ans_table, 4, input, Unconditional{});
+    if ANS_READER {
+      if let BrotliResult::ResultSuccess = a_result {
+        fast_mut!((s.code_length_code_lengths)[code_len_idx as usize]) = v as u8;
+      }else {
+        s.sub_loop_counter = i;
+        s.repeat = num_codes;
+        s.space = space;
+        s.substate_huffman = BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_COMPLEX;
+        return BrotliResult::NeedsMoreInput;
+      }
+    }
     if !bit_reader::BrotliSafeGetBits(&mut s.br, 4, &mut ix, input) {
       mark_unlikely();
       let available_bits: u32 = bit_reader::BrotliGetAvailableBits(&s.br);
@@ -889,10 +900,12 @@ fn ReadCodeLengthCodeLengths<AllocU8: alloc::Allocator<u8>,
       }
     }
     BROTLI_LOG_UINT!(ix);
-    let v: u32 = fast!((kCodeLengthPrefixCode)[ix as usize]).value as u32;
+    v = fast!((kCodeLengthPrefixCode)[ix as usize]).value as u8;
     bit_reader::BrotliDropBits(&mut s.br,
                                fast!((kCodeLengthPrefixCode)[ix as usize]).bits as u32);
-    fast_mut!((s.code_length_code_lengths)[code_len_idx as usize]) = v as u8;
+    fast_mut!((s.code_length_code_lengths)[code_len_idx as usize]) = v;
+
+    // FIXME: ANS
     BROTLI_LOG_ARRAY_INDEX!(s.code_length_code_lengths, code_len_idx);
     if v != 0 {
       space = space.wrapping_sub(32 >> v);
@@ -1126,7 +1139,7 @@ fn ReadBlockLength<Decoder:EntropyDecoder, Encoder:EntropyEncoder, AllocU8: Allo
 ) -> u32 {
   let code: u32;
   let nbits: u32;
-  let (a_code, _) = decoder.get_stationary(table, ans_table, input, Unconditional{});
+  let (a_code, _) = decoder.get_stationary(table, ans_table, 8, input, Unconditional{});
   let a_nbits = prefix::kBlockLengthPrefixCode[a_code as usize].nbits as u32;
   let a_ret  = prefix::kBlockLengthPrefixCode[a_code as usize].offset as u32 + u32::from(decoder.get_uniform(a_nbits as u8, input, Unconditional{}).0);
   //FIXME: ANS
@@ -1153,7 +1166,7 @@ fn SafeReadBlockLengthIndex<Decoder:EntropyDecoder, Encoder:EntropyEncoder, Allo
 ) -> (bool, u32) {
   match *substate_read_block_length {
     state::BrotliRunningReadBlockLengthState::BROTLI_STATE_READ_BLOCK_LENGTH_NONE => {
-      let (a_index, a_result) = decoder.get_stationary(table, ans_table, input, is_speculative);
+      let (a_index, a_result) = decoder.get_stationary(table, ans_table, 8, input, is_speculative);
       let mut index: u32 = 0;
       if (!SafeReadSymbol(table, &mut br, &mut index, input)) {
         return (false, 0);
@@ -1630,6 +1643,7 @@ fn DecodeBlockTypeAndLength<
     }
     let (a_block_type, a_ret) = decoder.get_stationary(fast_slice!((s.block_type_trees)[tree_offset;]),
                                                        &s.block_type_ans_table[tree_type as usize],
+                                                       8,
                                                        input,
                                                        Unconditional{});
     if let BrotliResult::ResultSuccess = a_ret {
