@@ -33,8 +33,9 @@ pub trait EntropyEncoder {
 }
 
 pub trait EntropyDecoder {
-    type SpeculativeState;
-    fn preload<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone,
+  type SpeculativeState;
+  fn warmup(&mut self, input:&[u8]) -> BrotliResult;
+  fn preload<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone,
                AllocS:Allocator<Symbol>,
                AllocH: Allocator<u32>,
                AllocU32:Allocator<u32>,
@@ -76,6 +77,7 @@ pub struct HuffmanDecoder {
 }
 
 impl EntropyDecoder  for HuffmanDecoder {
+    fn warmup(&mut self, input:&[u8]) -> BrotliResult{ BrotliResult::ResultSuccess}
     fn preload<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone,
                AllocS:Allocator<Symbol>,
                AllocH: Allocator<u32>,
