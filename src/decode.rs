@@ -136,22 +136,26 @@ fn DecodeWindowBits<Decoder:EntropyDecoder, Encoder:EntropyEncoder, AllocU32:All
     encoder: &mut Encoder,
     m32: &mut AllocU32,
 ) -> BrotliResult {
-  let mut n: u32 = 0;
+  
   let large_window = *s_large_window;
   *s_large_window = false;
+  let (mut n, _) =  decoder.get_uniform(1, &[], Unconditional{});
   bit_reader::BrotliTakeBits(br, 1, &mut n);
   if (n == 0) {
     *s_window_bits = 16;
     return BrotliResult::ResultSuccess;
   }
+  let (mut n, _) =  decoder.get_uniform(3, &[], Unconditional{});
   bit_reader::BrotliTakeBits(br, 3, &mut n);
   if (n != 0) {
     *s_window_bits = 17 + n;
     return BrotliResult::ResultSuccess;
   }
+  let (mut n, _) =  decoder.get_uniform(3, &[], Unconditional{});
   bit_reader::BrotliTakeBits(br, 3, &mut n);
   if (n == 1) {
     if (large_window) {
+      let (mut n, _) =  decoder.get_uniform(1, &[], Unconditional{});
       bit_reader::BrotliTakeBits(br, 1, &mut n);
       if (n == 1) {
         return BrotliResult::ResultFailure;
@@ -2734,11 +2738,6 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                 continue;
               }
               // Can't finish reading and no more input.
-
-              // FIXME :: NOT SURE WHAT THIS MEANT
-              // saved_buffer = core::mem::replace(
-              //  &mut s.br.input_,
-              //  &mut[]); // clear input
               break;
             } else {
               // Input stream doesn't contain enough input.
@@ -2753,7 +2752,6 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
               }
               break;
             }
-            // unreachable!(); <- dead code
           }
           _ => {
             // Fail or needs more output.
@@ -2797,6 +2795,8 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           }
         }
         BrotliRunningState::BROTLI_STATE_LARGE_WINDOW_BITS => {
+          let (a_window_bits, a_ret) = s.entropy_decoder.get_uniform(6, local_input, Unconditional{});
+          //FIXME: ANS
           if (!bit_reader::BrotliSafeReadBits(&mut s.br, 6, &mut s.window_bits, local_input)) {
             result = BrotliResult::NeedsMoreInput;
             break;
@@ -2887,6 +2887,8 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           while s.meta_block_remaining_len > 0 {
             let mut bits = 0u32;
             // Read one byte and ignore it.
+            let (a_window_bits, a_ret) = s.entropy_decoder.get_uniform(6, local_input, Unconditional{});
+              // FIXME ANS
             if !bit_reader::BrotliSafeReadBits(&mut s.br, 8, &mut bits, local_input) {
               result = BrotliResult::NeedsMoreInput;
               break;
