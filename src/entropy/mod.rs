@@ -61,9 +61,9 @@ pub trait EntropyDecoder {
                                   input:&[u8],
                                   is_speculative: Speculative) -> BrotliResult;
     // precondition: input has at least 4 bytes
-    fn get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec, Speculative:BoolTrait>(&mut self, group:&[HuffmanCode], prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>, input: &[u8], input_offset:&mut usize, is_speculative: Speculative) -> (Symbol, BrotliResult);
+    fn get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec, Speculative:BoolTrait>(&mut self, group:&[HuffmanCode], prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>, input: &[u8], is_speculative: Speculative) -> (Symbol, BrotliResult);
     // precondition: input has at least 4 bytes
-    fn get_uniform(&mut self, nbits: u8, input: &[u8], input_offset:&mut usize) -> (u16, BrotliResult);
+    fn get_uniform<Speculative:BoolTrait>(&mut self, nbits: u8, input: &[u8], is_speculative: Speculative) -> (u32, BrotliResult);
     fn begin_speculative() -> Self::SpeculativeState;
     fn commit_speculative();
     fn abort_speculative(val:Self::SpeculativeState);
@@ -107,11 +107,11 @@ impl EntropyDecoder  for HuffmanDecoder {
     BrotliResult::ResultSuccess
   }
   // precondition: input has at least 4 bytes
-  fn get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec, Speculative:BoolTrait>(&mut self, group:&[HuffmanCode], prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>, input: &[u8], input_offset:&mut usize, is_speculative: Speculative) -> (Symbol, BrotliResult){
+  fn get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec, Speculative:BoolTrait>(&mut self, group:&[HuffmanCode], prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>, input: &[u8], is_speculative: Speculative) -> (Symbol, BrotliResult){
     (Symbol::from(0u8), BrotliResult::ResultSuccess)
   }
   // precondition: input has at least 4 bytes
-  fn get_uniform(&mut self, nbits: u8, input: &[u8], input_offset:&mut usize) -> (u16, BrotliResult){
+  fn get_uniform<Speculative:BoolTrait>(&mut self, nbits: u8, input: &[u8], is_speculative:Speculative) -> (u32, BrotliResult){
     (0, BrotliResult::ResultSuccess)
   }
   type SpeculativeState = ();

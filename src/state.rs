@@ -110,8 +110,8 @@ pub struct BlockTypeAndLengthState<AllocU8: alloc::Allocator<u8>,
   pub block_length: [u32; 3],
   pub block_type_trees: AllocHC::AllocatedMemory,
   pub block_len_trees: AllocHC::AllocatedMemory,
-  pub block_type_ans_table: ANSTable<u32, u16, AllocU16, AllocU32, BlockTypeSpec>,
-  pub block_len_ans_table: ANSTable<u32, u8, AllocU8, AllocU32, BlockLenSpec>,
+  pub block_type_ans_table: [ANSTable<u32, u16, AllocU16, AllocU32, BlockTypeSpec>;3],
+  pub block_len_ans_table: [ANSTable<u32, u8, AllocU8, AllocU32, BlockLenSpec>;3],
   pub block_type_rb: [u32; 6],
 }
 
@@ -292,8 +292,8 @@ macro_rules! make_brotli_state {
               substate_read_block_length : BrotliRunningReadBlockLengthState::BROTLI_STATE_READ_BLOCK_LENGTH_NONE,
               block_type_trees : AllocHC::AllocatedMemory::default(),
               block_len_trees : AllocHC::AllocatedMemory::default(),
-              block_len_ans_table: ANSTable::default(),
-              block_type_ans_table: ANSTable::default(),
+              block_len_ans_table: [ANSTable::default(),ANSTable::default(),ANSTable::default()],
+              block_type_ans_table: [ANSTable::default(),ANSTable::default(),ANSTable::default()],
             },
             distance_postfix_bits : 0,
             num_direct_distance_codes : 0,
@@ -467,8 +467,10 @@ impl <'brotli_state,
       self.insert_copy_ans_table.free(&mut self.alloc_u16, &mut self.alloc_u32);
       self.distance_ans_table.free(&mut self.alloc_u16, &mut self.alloc_u32);
       self.context_map_ans_table.free(&mut self.alloc_u8, &mut self.alloc_u32);
-      self.block_type_length_state.block_type_ans_table.free(&mut self.alloc_u16, &mut self.alloc_u32);
-      self.block_type_length_state.block_len_ans_table.free(&mut self.alloc_u8, &mut self.alloc_u32);
+      for type_index in 0..3 {
+        self.block_type_length_state.block_type_ans_table[type_index].free(&mut self.alloc_u16, &mut self.alloc_u32);
+        self.block_type_length_state.block_len_ans_table[type_index].free(&mut self.alloc_u8, &mut self.alloc_u32);
+      }
       self.complex_ans_table.free(&mut self.alloc_u8, &mut self.alloc_u32);
       //FIXME??  BROTLI_FREE(s, s->legacy_input_buffer);
       //FIXME??  BROTLI_FREE(s, s->legacy_output_buffer);
