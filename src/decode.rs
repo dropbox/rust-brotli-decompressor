@@ -713,17 +713,21 @@ fn ReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
                          AllocU32: alloc::Allocator<u32>,
                          AllocHC: alloc::Allocator<HuffmanCode>,
                          Encoder:EntropyEncoder+Default,
-                         Decoder:EntropyDecoder+Default>
-  (alphabet_size: u32,
-   s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC, Encoder, Decoder>,
-   input: &[u8])
-   -> BrotliResult {
+                         Decoder:EntropyDecoder+Default> (
+  alphabet_size: u32,
+  s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC, Encoder, Decoder>,
+  input: &[u8]
+) -> BrotliResult {
 
   let mut symbol = s.symbol;
   let mut repeat = s.repeat;
   let mut space = s.space;
   let mut prev_code_len: u32 = s.prev_code_len;
   let mut repeat_code_len: u32 = s.repeat_code_len;
+  match s.entropy_decoder.warmup(input) {
+    BrotliResult::ResultSuccess => {},
+    res => return res,
+  }
   if (!bit_reader::BrotliWarmupBitReader(&mut s.br, input)) {
     return BrotliResult::NeedsMoreInput;
   }
@@ -3216,7 +3220,8 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           }
           // Reads 1..11 bits.
           {
-            match s.entropy_decoder.warmup(local_input) {
+            result = s.entropy_decoder.begin_metablock(local_input);
+            match result {
               BrotliResult::ResultSuccess => {}
               _ => break,
             }
