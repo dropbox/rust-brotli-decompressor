@@ -34,6 +34,8 @@ pub trait EntropyEncoder {
 
 pub trait EntropyDecoder {
   type SpeculativeState;
+  fn bit_reader(&mut self) -> &mut bit_reader::BrotliBitReader;
+  fn br(&self) -> &bit_reader::BrotliBitReader;
   fn warmup(&mut self, input:&[u8]) -> BrotliResult;
   fn begin_metablock(&mut self, input:&[u8]) -> BrotliResult;
   fn sufficient_bits(&mut self, nbits: u8) -> bool;
@@ -79,10 +81,16 @@ pub trait EntropyDecoder {
 
 #[derive(Default)]
 pub struct HuffmanDecoder {
-    
+  br: bit_reader::BrotliBitReader,
 }
 
 impl EntropyDecoder  for HuffmanDecoder {
+  fn bit_reader(&mut self) -> &mut bit_reader::BrotliBitReader {
+    &mut self.br
+  }
+  fn br(&self) -> &bit_reader::BrotliBitReader {
+    &self.br
+  }
   fn warmup(&mut self, input:&[u8]) -> BrotliResult{ BrotliResult::ResultSuccess}
   fn begin_metablock(&mut self, input:&[u8]) -> BrotliResult{ BrotliResult::ResultSuccess}
   fn sufficient_bits(&mut self, nbits: u8) -> bool{

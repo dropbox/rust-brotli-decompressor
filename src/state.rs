@@ -125,7 +125,6 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
 
   // This counter is reused for several disjoint loops.
   pub loop_counter: i32,
-  pub br: BrotliBitReader,
   pub alloc_u8: AllocU8,
   pub alloc_u16: AllocU16,
   pub alloc_u32: AllocU32,
@@ -251,7 +250,6 @@ macro_rules! make_brotli_state {
         BrotliState::<AllocU8, AllocU16, AllocU32, AllocHC, Encoder, Decoder>{
             state : BrotliRunningState::BROTLI_STATE_UNINITED,
             loop_counter : 0,
-            br : BrotliBitReader::default(),
             alloc_u8 : $alloc_u8,
             alloc_u16 : $alloc_u16,
             alloc_u32 : $alloc_u32,
@@ -380,7 +378,7 @@ impl <'brotli_state,
         retval.large_window = true;
         retval.context_map_table = retval.alloc_hc.alloc_cell(
           BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
-        BrotliInitBitReader(&mut retval.br);
+        BrotliInitBitReader(retval.entropy_decoder.bit_reader());
         retval
     }
     pub fn new_with_custom_dictionary(mut alloc_u8 : AllocU8,
@@ -393,7 +391,7 @@ impl <'brotli_state,
         retval.context_map_table = retval.alloc_hc.alloc_cell(
           BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
         retval.large_window =  true;
-        BrotliInitBitReader(&mut retval.br);
+        BrotliInitBitReader(retval.entropy_decoder.bit_reader());
         retval
     }
     pub fn new_strict(mut alloc_u8 : AllocU8,
@@ -404,7 +402,7 @@ impl <'brotli_state,
         retval.context_map_table = retval.alloc_hc.alloc_cell(
           BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
         retval.large_window =  false;
-        BrotliInitBitReader(&mut retval.br);
+        BrotliInitBitReader(&mut retval.entropy_decoder.bit_reader());
         retval
     }
     pub fn BrotliStateMetablockBegin(self : &mut Self) {
@@ -479,7 +477,7 @@ impl <'brotli_state,
     pub fn BrotliStateIsStreamStart(self : &Self) -> bool {
         match self.state {
             BrotliRunningState::BROTLI_STATE_UNINITED =>
-                BrotliGetAvailableBits(&self.br) == 0,
+                BrotliGetAvailableBits(&self.entropy_decoder.br()) == 0,
             _ => false,
         }
     }

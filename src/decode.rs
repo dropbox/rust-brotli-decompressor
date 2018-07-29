@@ -131,7 +131,6 @@ pub use state::BrotliState;
 fn DecodeWindowBits<Decoder:EntropyDecoder, Encoder:EntropyEncoder, AllocU32:Allocator<u32>>(
     s_large_window: &mut bool,
     s_window_bits:&mut u32,
-    br: &mut bit_reader::BrotliBitReader,
     decoder: &mut Decoder,
     encoder: &mut Encoder,
     m32: &mut AllocU32,
@@ -140,23 +139,23 @@ fn DecodeWindowBits<Decoder:EntropyDecoder, Encoder:EntropyEncoder, AllocU32:All
   let large_window = *s_large_window;
   *s_large_window = false;
   let (mut n, _) =  decoder.get_uniform(1, &[], Unconditional{});
-  bit_reader::BrotliTakeBits(br, 1, &mut n);
+  bit_reader::BrotliTakeBits(decoder.bit_reader(), 1, &mut n);
   if (n == 0) {
     *s_window_bits = 16;
     return BrotliResult::ResultSuccess;
   }
   let (mut n, _) =  decoder.get_uniform(3, &[], Unconditional{});
-  bit_reader::BrotliTakeBits(br, 3, &mut n);
+  bit_reader::BrotliTakeBits(decoder.bit_reader(), 3, &mut n);
   if (n != 0) {
     *s_window_bits = 17 + n;
     return BrotliResult::ResultSuccess;
   }
   let (mut n, _) =  decoder.get_uniform(3, &[], Unconditional{});
-  bit_reader::BrotliTakeBits(br, 3, &mut n);
+  bit_reader::BrotliTakeBits(decoder.bit_reader(), 3, &mut n);
   if (n == 1) {
     if (large_window) {
       let (mut n, _) =  decoder.get_uniform(1, &[], Unconditional{});
-      bit_reader::BrotliTakeBits(br, 1, &mut n);
+      bit_reader::BrotliTakeBits(decoder.bit_reader(), 1, &mut n);
       if (n == 1) {
         return BrotliResult::ResultFailure;
       }
@@ -180,7 +179,6 @@ fn mark_unlikely() {}
 
 fn DecodeVarLenUint8<Decoder:EntropyDecoder, Encoder:EntropyEncoder, AllocU32:Allocator<u32>>(
     substate_decode_uint8: &mut state::BrotliRunningDecodeUint8State,
-    mut br: &mut bit_reader::BrotliBitReader,
     decoder: &mut Decoder,
     encoder: &mut Encoder,
     m32: &mut AllocU32,
@@ -203,7 +201,7 @@ fn DecodeVarLenUint8<Decoder:EntropyDecoder, Encoder:EntropyEncoder, AllocU32:Al
             return BrotliResult::NeedsMoreInput;          
           }
         }
-        if !bit_reader::BrotliSafeReadBits(&mut br, 1, &mut bits, input) {//^^
+        if !bit_reader::BrotliSafeReadBits(decoder.bit_reader(), 1, &mut bits, input) {//^^
           mark_unlikely();
           return BrotliResult::NeedsMoreInput;
         }
@@ -233,7 +231,7 @@ fn DecodeVarLenUint8<Decoder:EntropyDecoder, Encoder:EntropyEncoder, AllocU32:Al
             return BrotliResult::NeedsMoreInput;    
           }
         }
-        if !bit_reader::BrotliSafeReadBits(&mut br, 3, &mut bits, input) {
+        if !bit_reader::BrotliSafeReadBits(decoder.bit_reader(), 3, &mut bits, input) {
           mark_unlikely();
           *substate_decode_uint8 = BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_SHORT;
           return BrotliResult::NeedsMoreInput;
@@ -262,7 +260,7 @@ fn DecodeVarLenUint8<Decoder:EntropyDecoder, Encoder:EntropyEncoder, AllocU32:Al
             return BrotliResult::NeedsMoreInput;    
           }
         }
-        if !bit_reader::BrotliSafeReadBits(&mut br, *value, &mut bits, input) {
+        if !bit_reader::BrotliSafeReadBits(decoder.bit_reader(), *value, &mut bits, input) {
           mark_unlikely();
           *substate_decode_uint8 = BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_LONG;
           return BrotliResult::NeedsMoreInput;
@@ -288,7 +286,7 @@ fn DecodeMetaBlockLength<AllocU8: alloc::Allocator<u8>,
   loop {
     match s.substate_metablock_header {
       BrotliRunningMetablockHeaderState::BROTLI_STATE_METABLOCK_HEADER_NONE => {
-        if !bit_reader::BrotliSafeReadBits(&mut s.br, 1, &mut bits, input) {
+        if !bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 1, &mut bits, input) {
           return BrotliResult::NeedsMoreInput;
         }
         s.is_last_metablock = bits as u8;
@@ -306,7 +304,7 @@ fn DecodeMetaBlockLength<AllocU8: alloc::Allocator<u8>,
       }
       BrotliRunningMetablockHeaderState::BROTLI_STATE_METABLOCK_HEADER_EMPTY => {
         let (a_bits, a_ret) = s.entropy_decoder.get_uniform(1, input, Unconditional{});
-        if !bit_reader::BrotliSafeReadBits(&mut s.br, 1, &mut bits, input) {
+        if !bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 1, &mut bits, input) {
           return BrotliResult::NeedsMoreInput;
         }
         if bits != 0 {
@@ -319,7 +317,7 @@ fn DecodeMetaBlockLength<AllocU8: alloc::Allocator<u8>,
         // No break, transit to the next state.
       }
       BrotliRunningMetablockHeaderState::BROTLI_STATE_METABLOCK_HEADER_NIBBLES => {
-        if !bit_reader::BrotliSafeReadBits(&mut s.br, 2, &mut bits, input) {
+        if !bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 2, &mut bits, input) {
           return BrotliResult::NeedsMoreInput;
         }
         s.size_nibbles = (bits + 4) as u8;
@@ -338,7 +336,7 @@ fn DecodeMetaBlockLength<AllocU8: alloc::Allocator<u8>,
       BrotliRunningMetablockHeaderState::BROTLI_STATE_METABLOCK_HEADER_SIZE => {
         let mut i = s.loop_counter;
         while i < s.size_nibbles as i32 {
-          if !bit_reader::BrotliSafeReadBits(&mut s.br, 4, &mut bits, input) {
+          if !bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 4, &mut bits, input) {
             s.loop_counter = i;
             return BrotliResult::NeedsMoreInput;
           }
@@ -354,7 +352,7 @@ fn DecodeMetaBlockLength<AllocU8: alloc::Allocator<u8>,
       }
       BrotliRunningMetablockHeaderState::BROTLI_STATE_METABLOCK_HEADER_UNCOMPRESSED => {
         if (s.is_last_metablock == 0 && s.is_metadata == 0) {
-          if !bit_reader::BrotliSafeReadBits(&mut s.br, 1, &mut bits, input) {
+          if !bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 1, &mut bits, input) {
             return BrotliResult::NeedsMoreInput;
           }
           s.is_uncompressed = bits as u8;
@@ -365,7 +363,7 @@ fn DecodeMetaBlockLength<AllocU8: alloc::Allocator<u8>,
         return BrotliResult::ResultSuccess;
       }
       BrotliRunningMetablockHeaderState::BROTLI_STATE_METABLOCK_HEADER_RESERVED => {
-        if !bit_reader::BrotliSafeReadBits(&mut s.br, 1, &mut bits, input) {
+        if !bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 1, &mut bits, input) {
           return BrotliResult::NeedsMoreInput;
         }
         if (bits != 0) {
@@ -376,7 +374,7 @@ fn DecodeMetaBlockLength<AllocU8: alloc::Allocator<u8>,
         // No break, transit to the next state.
       }
       BrotliRunningMetablockHeaderState::BROTLI_STATE_METABLOCK_HEADER_BYTES => {
-        if !bit_reader::BrotliSafeReadBits(&mut s.br, 2, &mut bits, input) {
+        if !bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 2, &mut bits, input) {
           return BrotliResult::NeedsMoreInput;
         }
         if (bits == 0) {
@@ -392,7 +390,7 @@ fn DecodeMetaBlockLength<AllocU8: alloc::Allocator<u8>,
       BrotliRunningMetablockHeaderState::BROTLI_STATE_METABLOCK_HEADER_METADATA => {
         let mut i = s.loop_counter;
         while i < s.size_nibbles as i32 {
-          if !bit_reader::BrotliSafeReadBits(&mut s.br, 8, &mut bits, input) {
+          if !bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 8, &mut bits, input) {
             s.loop_counter = i;
             return BrotliResult::NeedsMoreInput;
           }
@@ -578,7 +576,7 @@ fn ReadSimpleHuffmanSymbols<AllocU8: alloc::Allocator<u8>,
         return BrotliResult::NeedsMoreInput;        
       }
     }
-    if !bit_reader::BrotliSafeReadBits(&mut s.br, max_bits, &mut v, input) {
+    if !bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), max_bits, &mut v, input) {
       mark_unlikely();
       s.sub_loop_counter = i;
       s.substate_huffman = BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_SIMPLE_READ;
@@ -728,13 +726,13 @@ fn ReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
     BrotliResult::ResultSuccess => {},
     res => return res,
   }
-  if (!bit_reader::BrotliWarmupBitReader(&mut s.br, input)) {
+  if (!bit_reader::BrotliWarmupBitReader(s.entropy_decoder.bit_reader(), input)) {
     return BrotliResult::NeedsMoreInput;
   }
   while (symbol < alphabet_size && space > 0) {
     let mut p_index = 0;
     let code_len: u32;
-    if (!bit_reader::BrotliCheckInputAmount(&s.br, bit_reader::BROTLI_SHORT_FILL_BIT_WINDOW_READ)) || !s.entropy_decoder.sufficient_bits(32) {
+    if (!bit_reader::BrotliCheckInputAmount(s.entropy_decoder.br(), bit_reader::BROTLI_SHORT_FILL_BIT_WINDOW_READ)) || !s.entropy_decoder.sufficient_bits(32) {
       s.symbol = symbol;
       s.repeat = repeat;
       s.prev_code_len = prev_code_len;
@@ -742,12 +740,12 @@ fn ReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
       s.space = space;
       return BrotliResult::NeedsMoreInput;
     }
-    bit_reader::BrotliFillBitWindow16(&mut s.br, input);
+    bit_reader::BrotliFillBitWindow16(s.entropy_decoder.bit_reader(), input);
     p_index +=
-      bit_reader::BrotliGetBitsUnmasked(&s.br) &
+      bit_reader::BrotliGetBitsUnmasked(s.entropy_decoder.br()) &
       bit_reader::BitMask(huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH as u32) as u64;
     let p = fast!((s.table)[p_index as usize]);
-    bit_reader::BrotliDropBits(&mut s.br, p.bits as u32); /* Use 1..5 bits */
+    bit_reader::BrotliDropBits(s.entropy_decoder.bit_reader(), p.bits as u32); /* Use 1..5 bits */
     let (a_code_len, _) = s.entropy_decoder.get_stationary(&s.table[..], &s.complex_ans_table, huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH as u8, input, Unconditional{});
     code_len = p.value as u32; /* code_len == 0..17 */
     if (code_len < kCodeLengthRepeatCode) {
@@ -767,9 +765,9 @@ fn ReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
       } else {
         3
       };
-      let repeat_delta: u32 = bit_reader::BrotliGetBitsUnmasked(&s.br) as u32 & bit_reader::BitMask(extra_bits);
+      let repeat_delta: u32 = bit_reader::BrotliGetBitsUnmasked(s.entropy_decoder.br()) as u32 & bit_reader::BitMask(extra_bits);
       let (a_repeat_delta, a_result) = s.entropy_decoder.get_uniform(extra_bits as u8, input, Unconditional{});
-      bit_reader::BrotliDropBits(&mut s.br, extra_bits);
+      bit_reader::BrotliDropBits(s.entropy_decoder.bit_reader(), extra_bits);
       ProcessRepeatedCodeLength(code_len,
                                 repeat_delta,
                                 alphabet_size,
@@ -802,16 +800,16 @@ fn SafeReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
     let mut p_index = 0;
     let code_len: u32;
     let mut bits: u32 = 0;
-    let available_bits: u32 = bit_reader::BrotliGetAvailableBits(&s.br);
+    let available_bits: u32 = bit_reader::BrotliGetAvailableBits(s.entropy_decoder.br());
     if (available_bits != 0) {
-      bits = bit_reader::BrotliGetBitsUnmasked(&s.br) as u32;
+      bits = bit_reader::BrotliGetBitsUnmasked(s.entropy_decoder.br()) as u32;
     }
     p_index += bits &
                bit_reader::BitMask(huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH as u32);
     let p = fast!((s.table)[p_index as usize]);
     if (p.bits as u32 > available_bits) {
       // pullMoreInput;
-      if (!bit_reader::BrotliPullByte(&mut s.br, input)) {
+      if (!bit_reader::BrotliPullByte(s.entropy_decoder.bit_reader(), input)) {
         return BrotliResult::NeedsMoreInput;
       }
       continue;
@@ -826,7 +824,7 @@ fn SafeReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
     }
     if (code_len < kCodeLengthRepeatCode) {
       s.entropy_decoder.commit_speculative();
-      bit_reader::BrotliDropBits(&mut s.br, p.bits as u32);
+      bit_reader::BrotliDropBits(s.entropy_decoder.bit_reader(), p.bits as u32);
       ProcessSingleCodeLength(code_len,
                               &mut s.symbol,
                               &mut s.repeat,
@@ -849,12 +847,12 @@ fn SafeReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
       }
       if (available_bits < p.bits as u32 + extra_bits) {
         // pullMoreInput;
-        if (!bit_reader::BrotliPullByte(&mut s.br, input)) {
+        if (!bit_reader::BrotliPullByte(s.entropy_decoder.bit_reader(), input)) {
           return BrotliResult::NeedsMoreInput;
         }
         continue;
       }
-      bit_reader::BrotliDropBits(&mut s.br, p.bits as u32 + extra_bits);
+      bit_reader::BrotliDropBits(s.entropy_decoder.bit_reader(), p.bits as u32 + extra_bits);
       ProcessRepeatedCodeLength(code_len,
                                 repeat_delta,
                                 alphabet_size,
@@ -903,11 +901,11 @@ fn ReadCodeLengthCodeLengths<AllocU8: alloc::Allocator<u8>,
         return BrotliResult::NeedsMoreInput;
       }
     }
-    if !bit_reader::BrotliSafeGetBits(&mut s.br, 4, &mut ix, input) {
+    if !bit_reader::BrotliSafeGetBits(s.entropy_decoder.bit_reader(), 4, &mut ix, input) {
       mark_unlikely();
-      let available_bits: u32 = bit_reader::BrotliGetAvailableBits(&s.br);
+      let available_bits: u32 = bit_reader::BrotliGetAvailableBits(s.entropy_decoder.br());
       if (available_bits != 0) {
-        ix = bit_reader::BrotliGetBitsUnmasked(&s.br) as u32 & 0xF;
+        ix = bit_reader::BrotliGetBitsUnmasked(s.entropy_decoder.br()) as u32 & 0xF;
       } else {
         ix = 0;
       }
@@ -921,7 +919,7 @@ fn ReadCodeLengthCodeLengths<AllocU8: alloc::Allocator<u8>,
     }
     BROTLI_LOG_UINT!(ix);
     v = fast!((kCodeLengthPrefixCode)[ix as usize]).value as u8;
-    bit_reader::BrotliDropBits(&mut s.br,
+    bit_reader::BrotliDropBits(s.entropy_decoder.bit_reader(),
                                fast!((kCodeLengthPrefixCode)[ix as usize]).bits as u32);
     fast_mut!((s.code_length_code_lengths)[code_len_idx as usize]) = v;
 
@@ -985,7 +983,7 @@ fn ReadHuffmanCode<AllocU8: alloc::Allocator<u8>,
             return BrotliResult::NeedsMoreInput;
           }
         }
-        if !bit_reader::BrotliSafeReadBits(&mut s.br, 2, &mut s.sub_loop_counter, input) {
+        if !bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 2, &mut s.sub_loop_counter, input) {
           return BrotliResult::NeedsMoreInput;
         }
 
@@ -1024,7 +1022,7 @@ fn ReadHuffmanCode<AllocU8: alloc::Allocator<u8>,
           }
         }
         // Read symbols, codes & code lengths directly.
-        if (!bit_reader::BrotliSafeReadBits(&mut s.br, 2, &mut s.symbol, input)) {
+        if (!bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 2, &mut s.symbol, input)) {
           // num_symbols
           s.substate_huffman = BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_SIMPLE_SIZE;
           return BrotliResult::NeedsMoreInput;
@@ -1054,7 +1052,7 @@ fn ReadHuffmanCode<AllocU8: alloc::Allocator<u8>,
               return BrotliResult::NeedsMoreInput;
             }
           }
-          if (!bit_reader::BrotliSafeReadBits(&mut s.br, 1, &mut bits, input)) {
+          if (!bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 1, &mut bits, input)) {
             s.substate_huffman = BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_SIMPLE_BUILD;
             return BrotliResult::NeedsMoreInput;
           }
@@ -1151,7 +1149,6 @@ fn ReadHuffmanCode<AllocU8: alloc::Allocator<u8>,
 fn ReadBlockLength<Decoder:EntropyDecoder, Encoder:EntropyEncoder, AllocU8: Allocator<u8>, AllocU32:Allocator<u32>>(
   table: &[HuffmanCode],
   ans_table: &ANSTable<u32, u8, AllocU8, AllocU32, BlockLenSpec>,  
-  br: &mut bit_reader::BrotliBitReader,
   decoder: &mut Decoder,
   encoder: &mut Encoder,
   m32: &mut AllocU32,
@@ -1163,10 +1160,10 @@ fn ReadBlockLength<Decoder:EntropyDecoder, Encoder:EntropyEncoder, AllocU8: Allo
   let a_nbits = prefix::kBlockLengthPrefixCode[a_code as usize].nbits as u32;
   let a_ret  = prefix::kBlockLengthPrefixCode[a_code as usize].offset as u32 + u32::from(decoder.get_uniform(a_nbits as u8, input, Unconditional{}).0);
   //FIXME: ANS
-  code = ReadSymbol(table, br, input);
+  code = ReadSymbol(table, decoder.bit_reader(), input);
   nbits = fast_ref!((prefix::kBlockLengthPrefixCode)[code as usize]).nbits as u32; /*nbits==2..24*/
   fast_ref!((prefix::kBlockLengthPrefixCode)[code as usize]).offset as u32 +
-    bit_reader::BrotliReadBits(br, nbits, input)
+    bit_reader::BrotliReadBits(decoder.bit_reader(), nbits, input)
 }
 
 
@@ -1177,7 +1174,6 @@ fn SafeReadBlockLengthIndex<Decoder:EntropyDecoder, Encoder:EntropyEncoder, Allo
   block_length_index: u32,
   table: &[HuffmanCode],
   ans_table: &ANSTable<u32, u8, AllocU8, AllocU32, BlockLenSpec>,
-  mut br: &mut bit_reader::BrotliBitReader,
   decoder: &mut Decoder,
   encoder: &mut Encoder,
   m32: &mut AllocU32,
@@ -1188,7 +1184,7 @@ fn SafeReadBlockLengthIndex<Decoder:EntropyDecoder, Encoder:EntropyEncoder, Allo
     state::BrotliRunningReadBlockLengthState::BROTLI_STATE_READ_BLOCK_LENGTH_NONE => {
       let (a_index, a_result) = decoder.get_stationary(table, ans_table, 8, input, is_speculative);
       let mut index: u32 = 0;
-      if (!SafeReadSymbol(table, &mut br, &mut index, input)) {
+      if (!SafeReadSymbol(table, decoder.bit_reader(), &mut index, input)) {
         return (false, 0);
       }
       return (true, index);
@@ -1211,7 +1207,6 @@ fn SafeReadBlockLengthFromIndex<AllocU8: alloc::Allocator<u8>,
                                 Encoder: EntropyEncoder,
                                 Speculative: BoolTrait>(
   s : &mut BlockTypeAndLengthState<AllocU8, AllocU16,AllocU32, AllocHC>,
-  br : &mut bit_reader::BrotliBitReader,
   decoder: &mut Decoder,
   encoder: &mut Encoder,
   m32: &mut AllocU32,
@@ -1226,7 +1221,7 @@ fn SafeReadBlockLengthFromIndex<AllocU8: alloc::Allocator<u8>,
   let mut bits: u32 = 0;
   let nbits = fast_ref!((prefix::kBlockLengthPrefixCode)[index as usize]).nbits; /* nbits==2..24 */
 
-  if (!bit_reader::BrotliSafeReadBits(br, nbits as u32, &mut bits, input)) {
+  if (!bit_reader::BrotliSafeReadBits(decoder.bit_reader(), nbits as u32, &mut bits, input)) {
     s.block_length_index = index;
     s.substate_read_block_length =
       state::BrotliRunningReadBlockLengthState::BROTLI_STATE_READ_BLOCK_LENGTH_SUFFIX;
@@ -1442,7 +1437,7 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
     match s.substate_context_map {
       BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_NONE => {
         result = DecodeVarLenUint8(&mut s.substate_decode_uint8,
-                                   &mut s.br, &mut s.entropy_decoder, &mut s.entropy_encoder, &mut s.alloc_u32, num_htrees, input);
+                                   &mut s.entropy_decoder, &mut s.entropy_encoder, &mut s.alloc_u32, num_htrees, input);
         match result {
           BrotliResult::ResultSuccess => {}
           _ => return result,
@@ -1471,17 +1466,17 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
         let (a_rle, _) = s.entropy_decoder.get_uniform(1, input, Unconditional{});
         // In next stage ReadHuffmanCode uses at least 4 bits, so it is safe
         // to peek 4 bits ahead.
-        if (!bit_reader::BrotliSafeGetBits(&mut s.br, 5, &mut bits, input)) {
+        if (!bit_reader::BrotliSafeGetBits(s.entropy_decoder.bit_reader(), 5, &mut bits, input)) {
           return BrotliResult::NeedsMoreInput;
         }
         if ((bits & 1) != 0) {
           // Use RLE for zeroes.
           let (a_max_run_length_prefix_minus_one, _) = s.entropy_decoder.get_uniform(4, input, Unconditional{});
           s.max_run_length_prefix = (bits >> 1) + 1;
-          bit_reader::BrotliDropBits(&mut s.br, 5);
+          bit_reader::BrotliDropBits(s.entropy_decoder.bit_reader(), 5);
         } else {
           s.max_run_length_prefix = 0;
-          bit_reader::BrotliDropBits(&mut s.br, 1);
+          bit_reader::BrotliDropBits(s.entropy_decoder.bit_reader(), 1);
         }
         BROTLI_LOG_UINT!(s.max_run_length_prefix);
         s.substate_context_map = BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_HUFFMAN;
@@ -1532,7 +1527,7 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
               }
             }
 
-            if (!SafeReadSymbol(s.context_map_table.slice(), &mut s.br, &mut code, input)) {
+            if (!SafeReadSymbol(s.context_map_table.slice(), s.entropy_decoder.bit_reader(), &mut code, input)) {
               s.code = 0xFFFF;
               s.context_index = context_index;
               return BrotliResult::NeedsMoreInput;
@@ -1564,7 +1559,7 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
                 return a_result;              
               }
             }
-            if (!bit_reader::BrotliSafeReadBits(&mut s.br, code, &mut reps, input)) {
+            if (!bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), code, &mut reps, input)) {
               s.code = code;
               s.context_index = context_index;
               return BrotliResult::NeedsMoreInput;
@@ -1596,7 +1591,7 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
             return a_result;              
           }
         }
-        if (!bit_reader::BrotliSafeReadBits(&mut s.br, 1, &mut bits, input)) {
+        if (!bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 1, &mut bits, input)) {
           s.substate_context_map = BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_TRANSFORM;
           return BrotliResult::NeedsMoreInput;
         }
@@ -1665,7 +1660,6 @@ fn DecodeBlockTypeAndLength<
   
   AllocHC : alloc::Allocator<HuffmanCode>> (safe : bool,
                                             s : &mut BlockTypeAndLengthState<AllocU8, AllocU16, AllocU32, AllocHC>,
-                                            br : &mut bit_reader::BrotliBitReader,
                                             decoder:&mut Decoder,
                                             encoder:&mut Encoder,
                                             m32: &mut AllocU32,
@@ -1685,14 +1679,14 @@ fn DecodeBlockTypeAndLength<
                                            8,
                                            input,
                                            Unconditional{});
-    block_type = ReadSymbol(fast_slice!((s.block_type_trees)[tree_offset;]), br, input);
+    block_type = ReadSymbol(fast_slice!((s.block_type_trees)[tree_offset;]), decoder.bit_reader(), input);
     fast_mut!((s.block_length)[tree_type as usize]) =
-      ReadBlockLength(fast_slice!((s.block_len_trees)[tree_offset;]), &s.block_len_ans_table[tree_type as usize], br, decoder, encoder, m32, input);
+      ReadBlockLength(fast_slice!((s.block_len_trees)[tree_offset;]), &s.block_len_ans_table[tree_type as usize], decoder, encoder, m32, input);
     if ANS_READER {
       block_type = u32::from(a_block_type);
     }
   } else {
-    let memento = bit_reader::BrotliBitReaderSaveState(br);
+    let memento = bit_reader::BrotliBitReaderSaveState(decoder.bit_reader());
     let a_memento = decoder.begin_speculative();
     let (a_block_type, a_ret) = decoder.get_stationary(fast_slice!((s.block_type_trees)[tree_offset;]),
                                            &s.block_type_ans_table[tree_type as usize],
@@ -1700,7 +1694,7 @@ fn DecodeBlockTypeAndLength<
                                            input,
                                            Speculative{});
     if (!SafeReadSymbol(fast_slice!((s.block_type_trees)[tree_offset;]),
-                        br,
+                        decoder.bit_reader(),
                         &mut block_type,
                         input)) {
       return false;
@@ -1720,16 +1714,15 @@ fn DecodeBlockTypeAndLength<
                                              fast_slice!((s.block_len_trees)[tree_offset;]),
                                              &s.block_len_ans_table[tree_type as usize],
                                              
-                                             br,
                                              decoder,
                                              encoder,
                                              m32,
                                              input,
                                              Speculative{});
-    if !SafeReadBlockLengthFromIndex(s, br, decoder, encoder, m32, &mut block_length_out, index_ret, input, Speculative{}) {
+    if !SafeReadBlockLengthFromIndex(s, decoder, encoder, m32, &mut block_length_out, index_ret, input, Speculative{}) {
       s.substate_read_block_length =
         BrotliRunningReadBlockLengthState::BROTLI_STATE_READ_BLOCK_LENGTH_NONE;
-      bit_reader::BrotliBitReaderRestoreState(br, &memento);
+      bit_reader::BrotliBitReaderRestoreState(decoder.bit_reader(), &memento);
       decoder.abort_speculative(a_memento);
       return false;
     }
@@ -1818,7 +1811,7 @@ fn DecodeLiteralBlockSwitchInternal<AllocU8: alloc::Allocator<u8>,
    input: &[u8])
    -> bool {
 
-  if !DecodeBlockTypeAndLength(safe, &mut s.block_type_length_state, &mut s.br, &mut s.entropy_decoder, &mut s.entropy_encoder, &mut s.alloc_u32, 0, input) {
+  if !DecodeBlockTypeAndLength(safe, &mut s.block_type_length_state, &mut s.entropy_decoder, &mut s.entropy_encoder, &mut s.alloc_u32, 0, input) {
     return false;
   }
   PrepareLiteralDecoding(s);
@@ -1854,7 +1847,7 @@ fn DecodeCommandBlockSwitchInternal<AllocU8: alloc::Allocator<u8>,
    s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC, Encoder, Decoder>,
    input: &[u8])
    -> bool {
-  if (!DecodeBlockTypeAndLength(safe, &mut s.block_type_length_state, &mut s.br, &mut s.entropy_decoder, &mut s.entropy_encoder, &mut s.alloc_u32, 1, input)) {
+  if (!DecodeBlockTypeAndLength(safe, &mut s.block_type_length_state, &mut s.entropy_decoder, &mut s.entropy_encoder, &mut s.alloc_u32, 1, input)) {
     return false;
   }
   s.htree_command_index = fast!((s.block_type_length_state.block_type_rb)[3]) as u16;
@@ -1897,7 +1890,7 @@ fn DecodeDistanceBlockSwitchInternal<AllocU8: alloc::Allocator<u8>,
    s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC, Encoder, Decoder>,
    input: &[u8])
    -> bool {
-  if (!DecodeBlockTypeAndLength(safe, &mut s.block_type_length_state, &mut s.br, &mut s.entropy_decoder, &mut s.entropy_encoder, &mut s.alloc_u32, 2, input)) {
+  if (!DecodeBlockTypeAndLength(safe, &mut s.block_type_length_state, &mut s.entropy_decoder, &mut s.entropy_encoder, &mut s.alloc_u32, 2, input)) {
     return false;
   }
   s.dist_context_map_slice_index =
@@ -1991,7 +1984,7 @@ fn CopyUncompressedBlockToOutput<AllocU8: alloc::Allocator<u8>,
   loop {
     match s.substate_uncompressed {
       BrotliRunningUncompressedState::BROTLI_STATE_UNCOMPRESSED_NONE => {
-        let mut nbytes = bit_reader::BrotliGetRemainingBytes(&s.br) as i32;
+        let mut nbytes = bit_reader::BrotliGetRemainingBytes(s.entropy_decoder.br()) as i32;
         if (nbytes > s.meta_block_remaining_len) {
           nbytes = s.meta_block_remaining_len;
         }
@@ -2000,7 +1993,7 @@ fn CopyUncompressedBlockToOutput<AllocU8: alloc::Allocator<u8>,
         }
         // Copy remaining bytes from s.br.buf_ to ringbuffer.
         bit_reader::BrotliCopyBytes(fast_mut!((s.ringbuffer.slice_mut())[s.pos as usize;]),
-                                    &mut s.br,
+                                    s.entropy_decoder.bit_reader(),
                                     nbytes as u32,
                                     input);
         s.pos += nbytes;
@@ -2052,7 +2045,7 @@ fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
 
   if (s.is_uncompressed != 0) {
     let next_block_header =
-      bit_reader::BrotliPeekByte(&mut s.br, s.meta_block_remaining_len as u32, input);
+      bit_reader::BrotliPeekByte(s.entropy_decoder.bit_reader(), s.meta_block_remaining_len as u32, input);
     if (next_block_header != -1) &&
         // Peek succeeded
         ((next_block_header & 3) == 3) {
@@ -2125,7 +2118,7 @@ pub fn ReadContextModes<AllocU8: alloc::Allocator<u8>,
         return a_result;
       }
     }
-    if (!bit_reader::BrotliSafeReadBits(&mut s.br, 2, &mut bits, input)) {
+    if (!bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 2, &mut bits, input)) {
       mark_unlikely();
       s.loop_counter = i;
       return BrotliResult::NeedsMoreInput;
@@ -2207,7 +2200,7 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
                                               s.dist_htree_index as u8,
                                               input);
     s.distance_code = ReadSymbol(fast!((distance_hgroup)[s.dist_htree_index as usize]),
-                                 &mut s.br,
+                                 s.entropy_decoder.bit_reader(),
                                  input) as i32;
     a_memento = s.entropy_decoder.placeholder();
     let a_distance_code = s.entropy_decoder.get_preloaded(distance_hgroup,
@@ -2221,9 +2214,9 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
   } else {
     a_memento = s.entropy_decoder.begin_speculative();
     let mut code: u32 = 0;
-    memento = bit_reader::BrotliBitReaderSaveState(&s.br);
+    memento = bit_reader::BrotliBitReaderSaveState(s.entropy_decoder.br());
     if !SafeReadSymbol(fast!((distance_hgroup)[s.dist_htree_index as usize]),
-                       &mut s.br,
+                       s.entropy_decoder.bit_reader(),
                        &mut code,
                        input) {
       return false;
@@ -2257,7 +2250,7 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
     if (!safe && (s.distance_postfix_bits == 0)) {
       nbits = (distval as u32 >> 1) + 1;
       offset = ((2 + (distval & 1)) << nbits) - 4;
-      let mut dextra = bit_reader::BrotliReadBits(&mut s.br, nbits, input);
+      let mut dextra = bit_reader::BrotliReadBits(s.entropy_decoder.bit_reader(), nbits, input);
       let (a_dextra, _) = s.entropy_decoder.get_uniform(nbits as u8, input, Unconditional{});
       if ANS_READER {
         dextra = a_dextra;
@@ -2271,9 +2264,9 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
       distval >>= s.distance_postfix_bits;
       nbits = (distval as u32 >> 1) + 1;
       if (safe) {
-        if (!SafeReadBits(&mut s.br, nbits, &mut bits, input)) {
+        if (!SafeReadBits(s.entropy_decoder.bit_reader(), nbits, &mut bits, input)) {
           s.distance_code = -1; /* Restore precondition. */
-          bit_reader::BrotliBitReaderRestoreState(&mut s.br, &memento);
+          bit_reader::BrotliBitReaderRestoreState(s.entropy_decoder.bit_reader(), &memento);
           return false;
         }
         let (a_bits, a_result) = s.entropy_decoder.get_uniform(nbits as u8, input, Speculative{});
@@ -2287,7 +2280,7 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
           bits = a_bits;
         }
       } else {
-        bits = bit_reader::BrotliReadBits(&mut s.br, nbits, input);
+        bits = bit_reader::BrotliReadBits(s.entropy_decoder.bit_reader(), nbits, input);
         let (a_bits, _) = s.entropy_decoder.get_uniform(nbits as u8, input, Unconditional{});
         if ANS_READER {
           bits = a_bits;
@@ -2331,14 +2324,14 @@ pub fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
       cmd_code = u32::from(a_cc);
     } else {
       cmd_code = ReadSymbol(fast!((insert_copy_hgroup)[s.htree_command_index as usize]),
-                            &mut s.br,
+                            s.entropy_decoder.bit_reader(),
                             input);
     }
   } else {
-    memento = bit_reader::BrotliBitReaderSaveState(&s.br);
+    memento = bit_reader::BrotliBitReaderSaveState(s.entropy_decoder.br());
     a_memento = s.entropy_decoder.begin_speculative();
     if (!SafeReadSymbol(fast!((insert_copy_hgroup)[s.htree_command_index as usize]),
-                        &mut s.br,
+                        s.entropy_decoder.bit_reader(),
                         &mut cmd_code,
                         input)) {
       return false;
@@ -2363,25 +2356,25 @@ pub fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
       mark_unlikely();
       let (a_insert_len_extra, _) = s.entropy_decoder.get_uniform(v.insert_len_extra_bits as u8, input, Unconditional{});
       insert_len_extra =
-        bit_reader::BrotliReadBits(&mut s.br, v.insert_len_extra_bits as u32, input);
+        bit_reader::BrotliReadBits(s.entropy_decoder.bit_reader(), v.insert_len_extra_bits as u32, input);
       if ANS_READER {
         insert_len_extra = a_insert_len_extra;
       }
     }
-    copy_length = bit_reader::BrotliReadBits(&mut s.br, v.copy_len_extra_bits as u32, input);
+    copy_length = bit_reader::BrotliReadBits(s.entropy_decoder.bit_reader(), v.copy_len_extra_bits as u32, input);
     let (a_copy_length, _) = s.entropy_decoder.get_uniform(v.copy_len_extra_bits as u8, input, Unconditional{});
     if ANS_READER {
       copy_length = a_copy_length;
     }
   } else {
-    if (!SafeReadBits(&mut s.br,
+    if (!SafeReadBits(s.entropy_decoder.bit_reader(),
                       v.insert_len_extra_bits as u32,
                       &mut insert_len_extra,
-                      input)) || (!SafeReadBits(&mut s.br,
+                      input)) || (!SafeReadBits(s.entropy_decoder.bit_reader(),
                                                 v.copy_len_extra_bits as u32,
                                                 &mut copy_length,
                                                 input)) {
-      bit_reader::BrotliBitReaderRestoreState(&mut s.br, &memento);
+      bit_reader::BrotliBitReaderRestoreState(s.entropy_decoder.bit_reader(), &memento);
       return false;
     }
     let (a_insert_len_extra, a_res) = s.entropy_decoder.get_uniform(v.insert_len_extra_bits as u8, input, Speculative{});
@@ -2481,7 +2474,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
    s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC, Encoder, Decoder>,
    input: &[u8])
    -> BrotliResult {
-  if (!CheckInputAmount(safe, &s.br, 28)) || (!WarmupBitReader(safe, &mut s.br, input)) {
+  if (!CheckInputAmount(safe, s.entropy_decoder.br(), 28)) || (!WarmupBitReader(safe, s.entropy_decoder.bit_reader(), input)) {
     mark_unlikely();
     return BrotliResult::NeedsMoreInput;
   }
@@ -2506,7 +2499,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
     loop {
       match s.state {
         BrotliRunningState::BROTLI_STATE_COMMAND_BEGIN => {
-          if (!CheckInputAmount(safe, &s.br, 28)) {
+          if (!CheckInputAmount(safe, s.entropy_decoder.br(), 28)) {
             // 156 bits + 7 bytes
             mark_unlikely();
             result = BrotliResult::NeedsMoreInput;
@@ -2541,7 +2534,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
             let mut bits: u32 = 0;
             let mut value: u32 = 0;
             let mut literal_htree = &fast!((literal_hgroup)[s.literal_htree_index as usize]);
-            PreloadSymbol(safe, literal_htree, &mut s.br, &mut bits, &mut value, input);
+            PreloadSymbol(safe, literal_htree, s.entropy_decoder.bit_reader(), &mut bits, &mut value, input);
             let mut preloaded = if safe {
               (0,0)
             } else {
@@ -2550,7 +2543,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
             let mut inner_return: bool = false;
             let mut inner_continue: bool = false;
             loop {
-              if (!CheckInputAmount(safe, &s.br, 28)) {
+              if (!CheckInputAmount(safe, s.entropy_decoder.br(), 28)) {
                 // 162 bits + 7 bytes
                 result = BrotliResult::NeedsMoreInput;
                 inner_return = true;
@@ -2570,7 +2563,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                   break;
                 }
                 literal_htree = fast_ref!((literal_hgroup)[s.literal_htree_index as usize]);
-                PreloadSymbol(safe, literal_htree, &mut s.br, &mut bits, &mut value, input);
+                PreloadSymbol(safe, literal_htree, s.entropy_decoder.bit_reader(), &mut bits, &mut value, input);
                 preloaded = if safe {(0,0)} else {s.entropy_decoder.preload(&literal_hgroup, &s.literal_ans_table, s.literal_htree_index as u8, input)};
                 if (s.trivial_literal_context == 0) {
                   s.state = BrotliRunningState::BROTLI_STATE_COMMAND_INNER;
@@ -2580,14 +2573,14 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               }
               if (!safe) {
                 fast_mut!((s.ringbuffer.slice_mut())[pos as usize]) =
-                  ReadPreloadedSymbol(literal_htree, &mut s.br, &mut bits, &mut value, input) as u8;
+                  ReadPreloadedSymbol(literal_htree, s.entropy_decoder.bit_reader(), &mut bits, &mut value, input) as u8;
                 let a_value = u32::from(s.entropy_decoder.get_preloaded(&literal_hgroup, &s.literal_ans_table, s.literal_htree_index as u8, preloaded, input));
                 if ANS_READER {
                   value = a_value
                 }
               } else {
                 let mut literal: u32 = 0;
-                if (!SafeReadSymbol(literal_htree, &mut s.br, &mut literal, input)) {
+                if (!SafeReadSymbol(literal_htree, s.entropy_decoder.bit_reader(), &mut literal, input)) {
                   result = BrotliResult::NeedsMoreInput;
                   inner_return = true;
                   break;
@@ -2633,7 +2626,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
             let mut inner_return: bool = false;
             let mut inner_continue: bool = false;
             loop {
-              if (!CheckInputAmount(safe, &s.br, 28)) {
+              if (!CheckInputAmount(safe, s.entropy_decoder.br(), 28)) {
                 // 162 bits + 7 bytes
                 s.state = BrotliRunningState::BROTLI_STATE_COMMAND_INNER;
                 result = BrotliResult::NeedsMoreInput;
@@ -2681,13 +2674,13 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                                                  preloaded,
                                                  input);
                                                           
-                p1 = ReadSymbol(hc, &mut s.br, input) as u8;
+                p1 = ReadSymbol(hc, s.entropy_decoder.bit_reader(), input) as u8;
                 if ANS_READER {
                   p1 = a_p1;
                 }
               } else {
                 let mut literal: u32 = 0;
-                if (!SafeReadSymbol(hc, &mut s.br, &mut literal, input)) {
+                if (!SafeReadSymbol(hc, s.entropy_decoder.bit_reader(), &mut literal, input)) {
                   result = BrotliResult::NeedsMoreInput;
                   inner_return = true;
                   break;
@@ -2992,8 +2985,8 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
   }
   if s.buffer_length == 0 {
     local_input = xinput;
-    s.br.avail_in = *available_in as u32;
-    s.br.next_in = *input_offset as u32;
+    s.entropy_decoder.bit_reader().avail_in = *available_in as u32;
+    s.entropy_decoder.bit_reader().next_in = *input_offset as u32;
   } else {
     result = BrotliResult::NeedsMoreInput;
     let copy_len = core::cmp::min(saved_buffer.len() - s.buffer_length as usize, *available_in);
@@ -3004,8 +2997,8 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
         .clone_from_slice(fast!((xinput)[*input_offset ; copy_len + *input_offset]));
     }
     local_input = &saved_buffer[..];
-    s.br.next_in = 0;
-    s.br.avail_in = s.buffer_length;
+    s.entropy_decoder.bit_reader().next_in = 0;
+    s.entropy_decoder.bit_reader().avail_in = s.buffer_length;
   }
   loop {
     match result {
@@ -3022,7 +3015,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
             }
             if s.buffer_length != 0 {
               // Used with internal buffer.
-              if s.br.avail_in == 0 {
+              if s.entropy_decoder.bit_reader().avail_in == 0 {
                 // Successfully finished read transaction.
                 // Accamulator contains less than 8 bits, because internal buffer
                 // is expanded byte-by-byte until it is enough to complete read.
@@ -3030,8 +3023,8 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                 // Switch to input stream and restart.
                 result = BrotliResult::ResultSuccess;
                 local_input = xinput;
-                s.br.avail_in = *available_in as u32;
-                s.br.next_in = *input_offset as u32;
+                s.entropy_decoder.bit_reader().avail_in = *available_in as u32;
+                s.entropy_decoder.bit_reader().next_in = *input_offset as u32;
                 continue;
               } else if *available_in != 0 {
                 // Not enough data in buffer, but can take one more byte from
@@ -3043,7 +3036,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                 // since saved_buffer[s.buffer_length as usize] = new_byte violates borrow rules
                 assert_eq!(fast!((saved_buffer)[s.buffer_length as usize]), new_byte);
                 s.buffer_length += 1;
-                s.br.avail_in = s.buffer_length;
+                s.entropy_decoder.bit_reader().avail_in = s.buffer_length;
                 (*input_offset) += 1;
                 (*available_in) -= 1;
                 // Retry with more data in buffer.
@@ -3055,8 +3048,8 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
             } else {
               // Input stream doesn't contain enough input.
               // Copy tail to internal buffer and return.
-              *input_offset = s.br.next_in as usize;
-              *available_in = s.br.avail_in as usize;
+              *input_offset = s.entropy_decoder.bit_reader().next_in as usize;
+              *available_in = s.entropy_decoder.bit_reader().avail_in as usize;
               while *available_in != 0 {
                 fast_mut!((s.buffer)[s.buffer_length as usize]) = fast!((xinput)[*input_offset]);
                 s.buffer_length += 1;
@@ -3076,9 +3069,9 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
               // Using input stream in last iteration. When decoder switches to input
               // stream it has less than 8 bits in accamulator, so it is safe to
               // return unused accamulator bits there.
-              bit_reader::BrotliBitReaderUnload(&mut s.br);
-              *available_in = s.br.avail_in as usize;
-              *input_offset = s.br.next_in as usize;
+              bit_reader::BrotliBitReaderUnload(s.entropy_decoder.bit_reader());
+              *available_in = s.entropy_decoder.bit_reader().avail_in as usize;
+              *input_offset = s.entropy_decoder.bit_reader().next_in as usize;
             }
           }
         }
@@ -3090,13 +3083,13 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
       match s.state {
         BrotliRunningState::BROTLI_STATE_UNINITED => {
           // Prepare to the first read.
-          if (!bit_reader::BrotliWarmupBitReader(&mut s.br, local_input)) {
+          if (!bit_reader::BrotliWarmupBitReader(s.entropy_decoder.bit_reader(), local_input)) {
             result = BrotliResult::NeedsMoreInput;
             break;
           }
           // Decode window size.
           /* Reads 1..8 bits. */
-          result = DecodeWindowBits(&mut s.large_window, &mut s.window_bits, &mut s.br, &mut s.entropy_decoder, &mut s.entropy_encoder, &mut s.alloc_u32);
+          result = DecodeWindowBits(&mut s.large_window, &mut s.window_bits, &mut s.entropy_decoder, &mut s.entropy_encoder, &mut s.alloc_u32);
           match result {
             BrotliResult::ResultSuccess => {}
             _ => break,
@@ -3110,7 +3103,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
         BrotliRunningState::BROTLI_STATE_LARGE_WINDOW_BITS => {
           let (a_window_bits, a_ret) = s.entropy_decoder.get_uniform(6, local_input, Unconditional{});
           //FIXME: ANS
-          if (!bit_reader::BrotliSafeReadBits(&mut s.br, 6, &mut s.window_bits, local_input)) {
+          if (!bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 6, &mut s.window_bits, local_input)) {
             result = BrotliResult::NeedsMoreInput;
             break;
           }
@@ -3156,7 +3149,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           BROTLI_LOG_UINT!(s.is_metadata);
           BROTLI_LOG_UINT!(s.is_uncompressed);
           if (s.is_metadata != 0 || s.is_uncompressed != 0) &&
-             !bit_reader::BrotliJumpToByteBoundary(&mut s.br) {
+             !bit_reader::BrotliJumpToByteBoundary(s.entropy_decoder.bit_reader()) {
             result = BROTLI_FAILURE();
             break;
           }
@@ -3202,7 +3195,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
             // Read one byte and ignore it.
             let (a_window_bits, a_ret) = s.entropy_decoder.get_uniform(6, local_input, Unconditional{});
               // FIXME ANS
-            if !bit_reader::BrotliSafeReadBits(&mut s.br, 8, &mut bits, local_input) {
+            if !bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 8, &mut bits, local_input) {
               result = BrotliResult::NeedsMoreInput;
               break;
             }
@@ -3228,7 +3221,6 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
             let index = s.loop_counter as usize;
             result =
               DecodeVarLenUint8(&mut s.substate_decode_uint8,
-                                &mut s.br,
                                 &mut s.entropy_decoder,
                                 &mut s.entropy_encoder,
                                 &mut s.alloc_u32,
@@ -3316,10 +3308,9 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                                              fast_slice!((s.block_type_length_state.block_len_trees)
                                                          [tree_offset as usize;]),
                                              &s.block_type_length_state.block_len_ans_table[s.loop_counter as usize],
-                                             &mut s.br, &mut s.entropy_decoder, &mut s.entropy_encoder, &mut s.alloc_u32, local_input, Unconditional{});
+                                             &mut s.entropy_decoder, &mut s.entropy_encoder, &mut s.alloc_u32, local_input, Unconditional{});
 
           if !SafeReadBlockLengthFromIndex(&mut s.block_type_length_state,
-                                           &mut s.br,
                                            &mut s.entropy_decoder, &mut s.entropy_encoder, &mut s.alloc_u32,
                                            &mut block_length_out,
                                            ind_ret,
@@ -3337,7 +3328,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
         }
         BrotliRunningState::BROTLI_STATE_METABLOCK_HEADER_2 => {
           let mut bits: u32 = 0;
-          if (!bit_reader::BrotliSafeReadBits(&mut s.br, 6, &mut bits, local_input)) {
+          if (!bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 6, &mut bits, local_input)) {
             result = BrotliResult::NeedsMoreInput;
             break;
           }
@@ -3558,13 +3549,13 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
             s.state = BrotliRunningState::BROTLI_STATE_METABLOCK_BEGIN;
             break;
           }
-          if (!bit_reader::BrotliJumpToByteBoundary(&mut s.br)) {
+          if (!bit_reader::BrotliJumpToByteBoundary(s.entropy_decoder.bit_reader())) {
             result = BROTLI_FAILURE();
           }
           if (s.buffer_length == 0) {
-            bit_reader::BrotliBitReaderUnload(&mut s.br);
-            *available_in = s.br.avail_in as usize;
-            *input_offset = s.br.next_in as usize;
+            bit_reader::BrotliBitReaderUnload(s.entropy_decoder.bit_reader());
+            *available_in = s.entropy_decoder.bit_reader().avail_in as usize;
+            *input_offset = s.entropy_decoder.bit_reader().next_in as usize;
           }
           s.state = BrotliRunningState::BROTLI_STATE_DONE;
           // No break, continue to next state
