@@ -138,23 +138,25 @@ fn DecodeWindowBits<Decoder:EntropyDecoder, Encoder:EntropyEncoder, AllocU32:All
   
   let large_window = *s_large_window;
   *s_large_window = false;
-  let (mut n, _) =  decoder.get_uniform(1, &[], Unconditional{});
+  let mut n = 0;
+  
+  // pre-ans let (mut n, _) =  decoder.get_uniform(1, &[], Unconditional{});
   bit_reader::BrotliTakeBits(decoder.bit_reader(), 1, &mut n);
   if (n == 0) {
     *s_window_bits = 16;
     return BrotliResult::ResultSuccess;
   }
-  let (mut n, _) =  decoder.get_uniform(3, &[], Unconditional{});
+  //pre-ans let (mut n, _) =  decoder.get_uniform(3, &[], Unconditional{});
   bit_reader::BrotliTakeBits(decoder.bit_reader(), 3, &mut n);
   if (n != 0) {
     *s_window_bits = 17 + n;
     return BrotliResult::ResultSuccess;
   }
-  let (mut n, _) =  decoder.get_uniform(3, &[], Unconditional{});
+  // pre-ans let (mut n, _) =  decoder.get_uniform(3, &[], Unconditional{});
   bit_reader::BrotliTakeBits(decoder.bit_reader(), 3, &mut n);
   if (n == 1) {
     if (large_window) {
-      let (mut n, _) =  decoder.get_uniform(1, &[], Unconditional{});
+      // pre-ans let (mut n, _) =  decoder.get_uniform(1, &[], Unconditional{});
       bit_reader::BrotliTakeBits(decoder.bit_reader(), 1, &mut n);
       if (n == 1) {
         return BrotliResult::ResultFailure;
@@ -185,87 +187,53 @@ fn DecodeVarLenUint8<Decoder:EntropyDecoder, Encoder:EntropyEncoder, AllocU32:Al
     value: &mut u32,
     input: &[u8]
 ) -> BrotliResult {
-  let mut bits: u32 = 0;
   loop {
     match *substate_decode_uint8 {
       BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_NONE => {
         let (a_none, a_ret) = decoder.get_uniform(1, input, Unconditional{});
-        if ANS_READER { // FIXME ANS
-          if let BrotliResult::ResultSuccess = a_ret {
-            if bits == 0 { //FIXME: ANS
-              *value = 0;
-              return BrotliResult::ResultSuccess;
-            }
-          } else {
-            mark_unlikely();
-            return BrotliResult::NeedsMoreInput;          
+        if let BrotliResult::ResultSuccess = a_ret {
+          if a_none == 0 { //FIXME: ANS
+            *value = 0;
+            return BrotliResult::ResultSuccess;
           }
-        }
-        if !bit_reader::BrotliSafeReadBits(decoder.bit_reader(), 1, &mut bits, input) {//^^
+        } else {
           mark_unlikely();
-          return BrotliResult::NeedsMoreInput;
-        }
-        if (bits == 0) {
-          *value = 0;
-          return BrotliResult::ResultSuccess;
+          return BrotliResult::NeedsMoreInput;          
         }
         *substate_decode_uint8 = BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_SHORT;
         // No break, transit to the next state.
       }
       BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_SHORT => {
         let (a_short, a_ret) = decoder.get_uniform(3, input, Unconditional{});
-        if ANS_READER { // FIXME ANS
-          if let BrotliResult::ResultSuccess = a_ret {
-            if a_short == 0 {
-              *value = 1;
-              *substate_decode_uint8 = BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_NONE;
-              return BrotliResult::ResultSuccess;
-            }
-            // Use output value as a temporary storage. It MUST be persisted.
-            *value = a_short;
-            // No break, transit to the next state.
-            *substate_decode_uint8 = BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_LONG;
-          } else {
-            mark_unlikely();
-            *substate_decode_uint8 = BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_SHORT;
-            return BrotliResult::NeedsMoreInput;    
+        //bits = a_short;
+        if let BrotliResult::ResultSuccess = a_ret {
+          if a_short == 0 {
+            *value = 1;
+            *substate_decode_uint8 = BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_NONE;
+            return BrotliResult::ResultSuccess;
           }
-        }
-        if !bit_reader::BrotliSafeReadBits(decoder.bit_reader(), 3, &mut bits, input) {
+          // Use output value as a temporary storage. It MUST be persisted.
+          *value = a_short;
+          // No break, transit to the next state.
+          *substate_decode_uint8 = BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_LONG;
+        } else {
           mark_unlikely();
           *substate_decode_uint8 = BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_SHORT;
-          return BrotliResult::NeedsMoreInput;
+          return BrotliResult::NeedsMoreInput;    
         }
-        if (bits == 0) {
-          *value = 1;
-          *substate_decode_uint8 = BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_NONE;
-          return BrotliResult::ResultSuccess;
-        }
-        // Use output value as a temporary storage. It MUST be persisted.
-        *value = bits;
-        // No break, transit to the next state.
-        *substate_decode_uint8 = BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_LONG;
       }
       BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_LONG => {
         let (a_long, a_ret) = decoder.get_uniform(*value as u8, input, Unconditional{});
-        if ANS_READER { // FIXME ANS
-          if let BrotliResult::ResultSuccess = a_ret {
-            // Use output value as a temporary storage. It MUST be persisted.
-            *value = (1u32 << *value) + a_long;
-            *substate_decode_uint8 = BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_NONE;
-            return BrotliResult::ResultSuccess;
-          } else {
-            mark_unlikely();
-            *substate_decode_uint8 = BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_LONG;
-            return BrotliResult::NeedsMoreInput;    
-          }
-        }
-        if !bit_reader::BrotliSafeReadBits(decoder.bit_reader(), *value, &mut bits, input) {
+        if let BrotliResult::ResultSuccess = a_ret {
+          // Use output value as a temporary storage. It MUST be persisted.
+          *value = (1u32 << *value) + a_long;
+          *substate_decode_uint8 = BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_NONE;
+          return BrotliResult::ResultSuccess;
+        } else {
           mark_unlikely();
           *substate_decode_uint8 = BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_LONG;
-          return BrotliResult::NeedsMoreInput;
+          return BrotliResult::NeedsMoreInput;    
         }
-        *value = (1u32 << *value) + bits;
         *substate_decode_uint8 = BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_NONE;
         return BrotliResult::ResultSuccess;
       }
@@ -1436,8 +1404,10 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
   loop {
     match s.substate_context_map {
       BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_NONE => {
+        s.entropy_decoder.set_active();
         result = DecodeVarLenUint8(&mut s.substate_decode_uint8,
                                    &mut s.entropy_decoder, &mut s.entropy_encoder, &mut s.alloc_u32, num_htrees, input);
+        s.entropy_decoder.set_inactive();
         match result {
           BrotliResult::ResultSuccess => {}
           _ => return result,
@@ -3193,7 +3163,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           while s.meta_block_remaining_len > 0 {
             let mut bits = 0u32;
             // Read one byte and ignore it.
-            let (a_window_bits, a_ret) = s.entropy_decoder.get_uniform(6, local_input, Unconditional{});
+            //pre ans let (a_window_bits, a_ret) = s.entropy_decoder.get_uniform(6, local_input, Unconditional{});
               // FIXME ANS
             if !bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 8, &mut bits, local_input) {
               result = BrotliResult::NeedsMoreInput;
@@ -3219,6 +3189,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
               _ => break,
             }
             let index = s.loop_counter as usize;
+            s.entropy_decoder.set_active();
             result =
               DecodeVarLenUint8(&mut s.substate_decode_uint8,
                                 &mut s.entropy_decoder,
@@ -3226,6 +3197,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                                 &mut s.alloc_u32,
                                 &mut fast_mut!((s.block_type_length_state.num_block_types)[index]),
                                 local_input);
+            s.entropy_decoder.set_inactive();
           }
           match result {
             BrotliResult::ResultSuccess => {}

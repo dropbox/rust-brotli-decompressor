@@ -34,6 +34,8 @@ pub trait EntropyEncoder {
 
 pub trait EntropyDecoder {
   type SpeculativeState;
+  fn set_active(&mut self);
+  fn set_inactive(&mut self);
   fn bit_reader(&mut self) -> &mut bit_reader::BrotliBitReader;
   fn br(&self) -> &bit_reader::BrotliBitReader;
   fn warmup(&mut self, input:&[u8]) -> BrotliResult;
@@ -81,18 +83,36 @@ pub trait EntropyDecoder {
 
 #[derive(Default)]
 pub struct HuffmanDecoder {
+  active: bool,
   br: bit_reader::BrotliBitReader,
 }
 
 impl EntropyDecoder  for HuffmanDecoder {
+  fn set_active(&mut self) {
+    self.active = true;
+  }
+  fn set_inactive(&mut self) {
+    self.active = false;
+  }
   fn bit_reader(&mut self) -> &mut bit_reader::BrotliBitReader {
     &mut self.br
   }
   fn br(&self) -> &bit_reader::BrotliBitReader {
     &self.br
   }
-  fn warmup(&mut self, input:&[u8]) -> BrotliResult{ BrotliResult::ResultSuccess}
-  fn begin_metablock(&mut self, input:&[u8]) -> BrotliResult{ BrotliResult::ResultSuccess}
+  fn warmup(&mut self, input:&[u8]) -> BrotliResult{
+    if self.active {
+      if (!bit_reader::BrotliWarmupBitReader(&mut self.br,
+                                             input)) {
+        return BrotliResult::NeedsMoreInput;
+      }
+    }
+    BrotliResult::ResultSuccess
+  }
+  fn begin_metablock(&mut self, input:&[u8]) -> BrotliResult{
+    // nothing to do for standard huffman-coded items
+    BrotliResult::ResultSuccess
+  }
   fn sufficient_bits(&mut self, nbits: u8) -> bool{
     true
   }
@@ -136,7 +156,14 @@ impl EntropyDecoder  for HuffmanDecoder {
   }
   // precondition: input has at least 4 bytes
   fn get_uniform<Speculative:BoolTrait>(&mut self, nbits: u8, input: &[u8], is_speculative:Speculative) -> (u32, BrotliResult){
-    (0, BrotliResult::ResultSuccess)
+    let mut ix = 0u32;
+    if self.active {
+      if !bit_reader::BrotliSafeReadBits(&mut self.br, u32::from(nbits), &mut ix, input) {
+        
+        return (0, BrotliResult::NeedsMoreInput)
+      }
+    }
+    (ix, BrotliResult::ResultSuccess)
   }
   type SpeculativeState = ();
   fn placeholder(&self) -> Self::SpeculativeState{
