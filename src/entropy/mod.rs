@@ -38,26 +38,35 @@ pub trait EntropyDecoder {
   fn sufficient_bits(&mut self, nbits: u8) -> bool;
   fn placeholder(&self) -> Self::SpeculativeState;
   fn preload<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone,
-               AllocS:Allocator<Symbol>,
-               AllocH: Allocator<u32>,
-               Spec:HistogramSpec>(&mut self,
+             AllocS:Allocator<Symbol>,
+             AllocH: Allocator<u32>,
+             Spec:HistogramSpec>(&mut self,
                                    group:&[&[HuffmanCode];256],
                                    prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
                                    prior: u8,
                                    input:&[u8]) -> (u32, u32);
-    // precondition: input has at least 4 bytes
-    fn get<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone,
-              AllocS:Allocator<Symbol>,
-              AllocH: Allocator<u32>,
-              Spec:HistogramSpec,
-              Speculative:BoolTrait>(&mut self,
-                                  group:&[&[HuffmanCode];256],
-                                  prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
-                                  prior: u8,
-                                  preloaded: (u32, u32),
-                                  input:&[u8],
-                                  is_speculative: Speculative) -> (Symbol, BrotliResult);
-    // precondition: input has at least 4 bytes
+  // precondition: input has at least 4 bytes
+  fn get_preloaded<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone,
+                   AllocS:Allocator<Symbol>,
+                   AllocH: Allocator<u32>,
+                   Spec:HistogramSpec>(&mut self,
+                                          group:&[&[HuffmanCode];256],
+                                          prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+                                          prior: u8,
+                                          preloaded: (u32, u32),
+                                          input:&[u8]) -> Symbol;
+  // precondition: input has at least 4 bytes
+  fn get<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone,
+         AllocS:Allocator<Symbol>,
+         AllocH: Allocator<u32>,
+         Spec:HistogramSpec,
+         Speculative:BoolTrait>(&mut self,
+                                group:&[&[HuffmanCode];256],
+                                prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+                                prior: u8,
+                                input:&[u8],
+                                is_speculative: Speculative) -> (Symbol, BrotliResult);
+  // precondition: input has at least 4 bytes
     fn get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec, Speculative:BoolTrait>(&mut self, group:&[HuffmanCode], prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>, l1numbits: u8, input: &[u8], is_speculative: Speculative) -> (Symbol, BrotliResult);
     // precondition: input has at least 4 bytes
     fn get_uniform<Speculative:BoolTrait>(&mut self, nbits: u8, input: &[u8], is_speculative: Speculative) -> (u32, BrotliResult);
@@ -88,6 +97,17 @@ impl EntropyDecoder  for HuffmanDecoder {
         (0,0)
     }
     // precondition: input has at least 4 bytes
+  fn get_preloaded<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone,
+         AllocS:Allocator<Symbol>,
+         AllocH: Allocator<u32>,
+         Spec:HistogramSpec>(&mut self,
+                                group:&[&[HuffmanCode];256],
+                                prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+                                prior: u8,
+                                preloaded: (u32, u32),
+                                input:&[u8]) -> Symbol {
+    Symbol::from(0)
+  }
   fn get<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8> + Clone,
          AllocS:Allocator<Symbol>,
          AllocH: Allocator<u32>,
@@ -96,7 +116,6 @@ impl EntropyDecoder  for HuffmanDecoder {
                                 group:&[&[HuffmanCode];256],
                                 prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
                                 prior: u8,
-                                preloaded: (u32, u32),
                                 input:&[u8],
                                 is_speculative: Speculative) -> (Symbol, BrotliResult) {
     (Symbol::from(0), BrotliResult::ResultSuccess)
