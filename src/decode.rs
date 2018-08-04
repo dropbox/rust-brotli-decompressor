@@ -526,7 +526,6 @@ fn ReadSimpleHuffmanSymbols<AllocU8: alloc::Allocator<u8>,
    s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC, Encoder, Decoder>,
    input: &[u8]
 ) -> BrotliResult {
-s.entropy_decoder.set_active();
   // max_bits == 1..11; symbol == 0..3; 1..44 bits will be read.
   let max_bits = Log2Floor(alphabet_size - 1);
   let mut i = s.sub_loop_counter;
@@ -540,11 +539,9 @@ s.entropy_decoder.set_active();
         mark_unlikely();
         s.sub_loop_counter = i;
         s.substate_huffman = BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_SIMPLE_READ;
-        s.entropy_decoder.set_inactive();
         return a_res;        
     }
     if (v >= max_symbol) {
-      s.entropy_decoder.set_inactive();
       return BROTLI_FAILURE();
     }
     *symbols_lists_item = v as u16;
@@ -556,13 +553,11 @@ s.entropy_decoder.set_active();
     for other_item in fast!((s.symbols_lists_array)[i as usize + 1 ; num_symbols as usize+ 1])
       .iter() {
       if (*symbols_list_item == *other_item) {
-        s.entropy_decoder.set_inactive();
         return BROTLI_FAILURE();
       }
     }
     i += 1;
   }
-  s.entropy_decoder.set_inactive();
   BrotliResult::ResultSuccess
 }
 
@@ -686,11 +681,9 @@ fn ReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
   let mut space = s.space;
   let mut prev_code_len: u32 = s.prev_code_len;
   let mut repeat_code_len: u32 = s.repeat_code_len;
-  s.entropy_decoder.set_active();
   match s.entropy_decoder.warmup(input) {
     BrotliResult::ResultSuccess => {},
     res => {
-      s.entropy_decoder.set_inactive();
       return res;
     },
   }
@@ -701,7 +694,6 @@ fn ReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
       s.prev_code_len = prev_code_len;
       s.repeat_code_len = repeat_code_len;
       s.space = space;
-      s.entropy_decoder.set_inactive();
       return BrotliResult::NeedsMoreInput;
     }
     let (a_code_len, _) = s.entropy_decoder.get_stationary(&s.table[..], &s.complex_ans_table, huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH as u8, input, Unconditional{});
@@ -738,7 +730,6 @@ fn ReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
     }
   }
   s.space = space;
-  s.entropy_decoder.set_inactive();
   BrotliResult::ResultSuccess
 }
 
@@ -752,7 +743,6 @@ fn SafeReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
    s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC, Encoder, Decoder>,
    input: &[u8])
    -> BrotliResult {
-  s.entropy_decoder.set_active();
   while (s.symbol < alphabet_size && s.space > 0) {
     let mut p_index = 0;
     let mut bits: u32 = 0;
@@ -761,7 +751,6 @@ fn SafeReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
     if let BrotliResult::ResultSuccess = a_result {
     } else {
       s.entropy_decoder.abort_speculative(a_memento);
-      s.entropy_decoder.set_inactive();
       return BrotliResult::NeedsMoreInput;
     }
     if u32::from(a_code_len) < kCodeLengthRepeatCode {
@@ -783,7 +772,6 @@ fn SafeReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
         s.entropy_decoder.commit_speculative();
       } else {
         s.entropy_decoder.abort_speculative(a_memento);
-        s.entropy_decoder.set_inactive();
         return BrotliResult::NeedsMoreInput;
       }
       ProcessRepeatedCodeLength(a_code_len.into(),
@@ -800,7 +788,6 @@ fn SafeReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
                                 &mut s.next_symbol[..]);
     }
   }
-  s.entropy_decoder.set_inactive();
   BrotliResult::ResultSuccess
 }
 
@@ -819,7 +806,6 @@ fn ReadCodeLengthCodeLengths<AllocU8: alloc::Allocator<u8>,
   let mut num_codes: u32 = s.repeat;
   let mut space: u32 = s.space;
     let mut i = s.sub_loop_counter;
-  s.entropy_decoder.set_active();
   for code_length_code_order in
       fast!((kCodeLengthCodeOrder)[s.sub_loop_counter as usize; CODE_LENGTH_CODES]).iter() {
     let code_len_idx = *code_length_code_order;
@@ -833,7 +819,6 @@ fn ReadCodeLengthCodeLengths<AllocU8: alloc::Allocator<u8>,
         s.repeat = num_codes;
         s.space = space;
         s.substate_huffman = BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_COMPLEX;
-        s.entropy_decoder.set_inactive();
         return BrotliResult::NeedsMoreInput;
       }
     }
@@ -850,7 +835,6 @@ fn ReadCodeLengthCodeLengths<AllocU8: alloc::Allocator<u8>,
     }
     i += 1;
   }
-  s.entropy_decoder.set_inactive();
   if (!(num_codes == 1 || space == 0)) {
     return BROTLI_FAILURE();
   }
@@ -891,14 +875,9 @@ fn ReadHuffmanCode<AllocU8: alloc::Allocator<u8>,
     match s.substate_huffman {
       BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_NONE => {
         let (a_sub_loop_counter, a_result) = s.entropy_decoder.get_uniform(2, input, Unconditional{});
-        if ANS_READER {
-          if let BrotliResult::ResultSuccess = a_result {
-            s.sub_loop_counter = a_sub_loop_counter;
-          } else {
-            return BrotliResult::NeedsMoreInput;
-          }
-        }
-        if !bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 2, &mut s.sub_loop_counter, input) {
+        if let BrotliResult::ResultSuccess = a_result {
+          s.sub_loop_counter = a_sub_loop_counter;
+        } else {
           return BrotliResult::NeedsMoreInput;
         }
 
@@ -925,22 +904,14 @@ fn ReadHuffmanCode<AllocU8: alloc::Allocator<u8>,
       }
       BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_SIMPLE_SIZE => {
         let (a_symbol, a_result) = s.entropy_decoder.get_uniform(2, input, Unconditional{});
-        if ANS_READER {
-          if let BrotliResult::ResultSuccess = a_result {
+        if let BrotliResult::ResultSuccess = a_result {
             s.symbol = a_symbol;
             s.sub_loop_counter = 0;
             // No break, transit to the next state.
             s.substate_huffman = BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_SIMPLE_READ;
-          } else {
+        } else {
             s.substate_huffman = BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_SIMPLE_SIZE;
-            return BrotliResult::NeedsMoreInput;
-          }
-        }
-        // Read symbols, codes & code lengths directly.
-        if (!bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 2, &mut s.symbol, input)) {
-          // num_symbols
-          s.substate_huffman = BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_SIMPLE_SIZE;
-          return BrotliResult::NeedsMoreInput;
+            return a_result;
         }
         s.sub_loop_counter = 0;
         // No break, transit to the next state.
@@ -958,20 +929,13 @@ fn ReadHuffmanCode<AllocU8: alloc::Allocator<u8>,
       BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_SIMPLE_BUILD => {
         let table_size: u32;
         if (s.symbol == 3) {
-          let (mut bits, a_result) = s.entropy_decoder.get_uniform(2, input, Unconditional{});
-          if ANS_READER {
-            if let BrotliResult::ResultSuccess = a_result {
+          let (mut bits, a_result) = s.entropy_decoder.get_uniform(1, input, Unconditional{});
+          if let BrotliResult::ResultSuccess = a_result {
               s.symbol += bits;
-            } else {
+          } else {
               s.substate_huffman = BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_SIMPLE_BUILD;
               return BrotliResult::NeedsMoreInput;
-            }
           }
-          if (!bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 1, &mut bits, input)) {
-            s.substate_huffman = BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_SIMPLE_BUILD;
-            return BrotliResult::NeedsMoreInput;
-          }
-          s.symbol += bits;
         }
         BROTLI_LOG_UINT!(s.symbol);
         table_size = huffman::BrotliBuildSimpleHuffmanTable(&mut table[offset..],
@@ -1275,12 +1239,16 @@ fn HuffmanTreeGroupDecode<AllocU8: alloc::Allocator<u8>,
       fast_mut!((htrees.slice_mut())[s.htree_index as usize ; (group_num_htrees as usize)])
     .iter_mut() {
     let mut table_size: u32 = 0;
+    s.entropy_decoder.set_active();
+
     result = ReadHuffmanCode(u32::from(alphabet_size), u32::from(group_max_symbol),
                              hcodes.slice_mut(),
                              s.htree_next_offset as usize,
                              Some(&mut table_size),
                              &mut s,
-                             input);
+                               input);
+    s.entropy_decoder.set_inactive();
+
     match result {
       BrotliResult::ResultSuccess => {}
       _ => break, // break and return the result code
@@ -1404,12 +1372,14 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
         let mut local_context_map_table = mem::replace(&mut s.context_map_table,
                                                        AllocHC::AllocatedMemory::default());
         let alphabet_size = *num_htrees + s.max_run_length_prefix;
+        s.entropy_decoder.set_active();
         result = ReadHuffmanCode(alphabet_size, alphabet_size,
                                  &mut local_context_map_table.slice_mut(),
                                  0,
                                  None,
                                  &mut s,
                                  input);
+         s.entropy_decoder.set_inactive();
          let prev_table = core::mem::replace(&mut s.context_map_ans_table, ANSTable::default());
          s.context_map_ans_table  = ANSTable::new_single_code(&mut s.alloc_u8, &mut s.alloc_u32,
                                                               local_context_map_table.slice(), ContextMapSpec::default(), Some(prev_table));
@@ -3165,6 +3135,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                                                    AllocHC::AllocatedMemory::default());
           let loop_counter = s.loop_counter as usize;
           let alphabet_size = fast!((s.block_type_length_state.num_block_types)[loop_counter]) + 2;
+          s.entropy_decoder.set_active();
           result =
             ReadHuffmanCode(alphabet_size, alphabet_size,
                             new_huffman_table.slice_mut(),
@@ -3172,6 +3143,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                             None,
                             &mut s,
                             local_input);
+          s.entropy_decoder.set_inactive();
           {
               let old_block_type_ans = mem::replace(&mut s.block_type_length_state.block_type_ans_table[loop_counter],
                                                     ANSTable::default());
@@ -3193,12 +3165,14 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           let tree_offset = s.loop_counter * huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as i32;
           let mut new_huffman_table = mem::replace(&mut s.block_type_length_state.block_len_trees,
                                                    AllocHC::AllocatedMemory::default());
+          s.entropy_decoder.set_active();
           result = ReadHuffmanCode(kNumBlockLengthCodes, kNumBlockLengthCodes,
                                    new_huffman_table.slice_mut(),
                                    tree_offset as usize,
                                    None,
                                    &mut s,
                                    local_input);
+          s.entropy_decoder.set_inactive();
           {
               let old_block_len_ans = mem::replace(&mut s.block_type_length_state.block_len_ans_table[s.loop_counter as usize],
                                                     ANSTable::default());
