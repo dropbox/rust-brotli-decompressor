@@ -686,34 +686,27 @@ fn ReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
   let mut space = s.space;
   let mut prev_code_len: u32 = s.prev_code_len;
   let mut repeat_code_len: u32 = s.repeat_code_len;
+  s.entropy_decoder.set_active();
   match s.entropy_decoder.warmup(input) {
     BrotliResult::ResultSuccess => {},
-    res => return res,
-  }
-  if (!bit_reader::BrotliWarmupBitReader(s.entropy_decoder.bit_reader(), input)) {
-    return BrotliResult::NeedsMoreInput;
+    res => {
+      s.entropy_decoder.set_inactive();
+      return res;
+    },
   }
   while (symbol < alphabet_size && space > 0) {
-    let mut p_index = 0;
-    let code_len: u32;
-    if (!bit_reader::BrotliCheckInputAmount(s.entropy_decoder.br(), bit_reader::BROTLI_SHORT_FILL_BIT_WINDOW_READ)) || !s.entropy_decoder.sufficient_bits(32) {
+    if !s.entropy_decoder.sufficient_bits(bit_reader::BROTLI_SHORT_FILL_BIT_WINDOW_READ as u8 * 8) {
       s.symbol = symbol;
       s.repeat = repeat;
       s.prev_code_len = prev_code_len;
       s.repeat_code_len = repeat_code_len;
       s.space = space;
+      s.entropy_decoder.set_inactive();
       return BrotliResult::NeedsMoreInput;
     }
-    bit_reader::BrotliFillBitWindow16(s.entropy_decoder.bit_reader(), input);
-    p_index +=
-      bit_reader::BrotliGetBitsUnmasked(s.entropy_decoder.br()) &
-      bit_reader::BitMask(huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH as u32) as u64;
-    let p = fast!((s.table)[p_index as usize]);
-    bit_reader::BrotliDropBits(s.entropy_decoder.bit_reader(), p.bits as u32); /* Use 1..5 bits */
     let (a_code_len, _) = s.entropy_decoder.get_stationary(&s.table[..], &s.complex_ans_table, huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH as u8, input, Unconditional{});
-    code_len = p.value as u32; /* code_len == 0..17 */
-    if (code_len < kCodeLengthRepeatCode) {
-      ProcessSingleCodeLength(code_len,
+    if a_code_len < kCodeLengthRepeatCode as u8 {
+      ProcessSingleCodeLength(a_code_len.into(),
                               &mut symbol,
                               &mut repeat,
                               &mut space,
@@ -724,16 +717,14 @@ fn ReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
                               &mut s.next_symbol[..]);
     } else {
       // code_len == 16..17, extra_bits == 2..3
-      let extra_bits: u32 = if code_len == kCodeLengthRepeatCode {
+      let extra_bits: u32 = if a_code_len == kCodeLengthRepeatCode as u8 {
         2
       } else {
         3
       };
-      let repeat_delta: u32 = bit_reader::BrotliGetBitsUnmasked(s.entropy_decoder.br()) as u32 & bit_reader::BitMask(extra_bits);
       let (a_repeat_delta, a_result) = s.entropy_decoder.get_uniform(extra_bits as u8, input, Unconditional{});
-      bit_reader::BrotliDropBits(s.entropy_decoder.bit_reader(), extra_bits);
-      ProcessRepeatedCodeLength(code_len,
-                                repeat_delta,
+      ProcessRepeatedCodeLength(a_code_len.into(),
+                                a_repeat_delta,
                                 alphabet_size,
                                 &mut symbol,
                                 &mut repeat,
@@ -747,6 +738,7 @@ fn ReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
     }
   }
   s.space = space;
+  s.entropy_decoder.set_inactive();
   BrotliResult::ResultSuccess
 }
 
