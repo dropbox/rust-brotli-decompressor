@@ -206,15 +206,19 @@ impl EntropyDecoder  for HuffmanDecoder {
     }
     (ix, BrotliResult::ResultSuccess)
   }
-  type SpeculativeState = ();
+  type SpeculativeState = bit_reader::BrotliBitReaderState;
   fn placeholder(&self) -> Self::SpeculativeState{
-    ()
+    bit_reader::BrotliBitReaderState::default()
   }
   fn begin_speculative(&mut self) -> Self::SpeculativeState{
-    ()
+    bit_reader::BrotliBitReaderSaveState(self.br())
   }
   fn commit_speculative(&mut self){}
-  fn abort_speculative(&mut self, val:Self::SpeculativeState){}
+  fn abort_speculative(&mut self, val:Self::SpeculativeState){
+    if self.active {
+      bit_reader::BrotliBitReaderRestoreState(self.bit_reader(),&val);
+    }
+  }
 }
 
 #[derive(Default)]

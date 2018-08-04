@@ -752,36 +752,21 @@ fn SafeReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
    s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC, Encoder, Decoder>,
    input: &[u8])
    -> BrotliResult {
+  s.entropy_decoder.set_active();
   while (s.symbol < alphabet_size && s.space > 0) {
     let mut p_index = 0;
-    let code_len: u32;
     let mut bits: u32 = 0;
-    let available_bits: u32 = bit_reader::BrotliGetAvailableBits(s.entropy_decoder.br());
-    if (available_bits != 0) {
-      bits = bit_reader::BrotliGetBitsUnmasked(s.entropy_decoder.br()) as u32;
-    }
-    p_index += bits &
-               bit_reader::BitMask(huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH as u32);
-    let p = fast!((s.table)[p_index as usize]);
-    if (p.bits as u32 > available_bits) {
-      // pullMoreInput;
-      if (!bit_reader::BrotliPullByte(s.entropy_decoder.bit_reader(), input)) {
-        return BrotliResult::NeedsMoreInput;
-      }
-      continue;
-    }
-    code_len = p.value as u32; /* code_len == 0..17 */
     let a_memento = s.entropy_decoder.begin_speculative();
     let (a_code_len, a_result) = s.entropy_decoder.get_stationary(&s.table[..], &s.complex_ans_table, huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH as u8, input, Speculative{});
     if let BrotliResult::ResultSuccess = a_result {
     } else {
       s.entropy_decoder.abort_speculative(a_memento);
+      s.entropy_decoder.set_inactive();
       return BrotliResult::NeedsMoreInput;
     }
-    if (code_len < kCodeLengthRepeatCode) {
+    if u32::from(a_code_len) < kCodeLengthRepeatCode {
       s.entropy_decoder.commit_speculative();
-      bit_reader::BrotliDropBits(s.entropy_decoder.bit_reader(), p.bits as u32);
-      ProcessSingleCodeLength(code_len,
+      ProcessSingleCodeLength(a_code_len.into(),
                               &mut s.symbol,
                               &mut s.repeat,
                               &mut s.space,
@@ -792,25 +777,17 @@ fn SafeReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
                               &mut s.next_symbol[..]);
     } else {
       // code_len == 16..17, extra_bits == 2..3
-      let extra_bits: u32 = code_len - 14;
-      let repeat_delta: u32 = (bits >> p.bits) & bit_reader::BitMask(extra_bits);
+      let extra_bits = u32::from(a_code_len) - 14;
       let (a_repeat_delta, a_result) = s.entropy_decoder.get_uniform(extra_bits as u8, input, Speculative{});
       if let BrotliResult::ResultSuccess = a_result {
         s.entropy_decoder.commit_speculative();
       } else {
         s.entropy_decoder.abort_speculative(a_memento);
+        s.entropy_decoder.set_inactive();
         return BrotliResult::NeedsMoreInput;
       }
-      if (available_bits < p.bits as u32 + extra_bits) {
-        // pullMoreInput;
-        if (!bit_reader::BrotliPullByte(s.entropy_decoder.bit_reader(), input)) {
-          return BrotliResult::NeedsMoreInput;
-        }
-        continue;
-      }
-      bit_reader::BrotliDropBits(s.entropy_decoder.bit_reader(), p.bits as u32 + extra_bits);
-      ProcessRepeatedCodeLength(code_len,
-                                repeat_delta,
+      ProcessRepeatedCodeLength(a_code_len.into(),
+                                a_repeat_delta.into(),
                                 alphabet_size,
                                 &mut s.symbol,
                                 &mut s.repeat,
@@ -823,6 +800,7 @@ fn SafeReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
                                 &mut s.next_symbol[..]);
     }
   }
+  s.entropy_decoder.set_inactive();
   BrotliResult::ResultSuccess
 }
 
