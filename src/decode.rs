@@ -524,9 +524,9 @@ fn ReadSimpleHuffmanSymbols<AllocU8: alloc::Allocator<u8>,
                               Decoder:EntropyDecoder+Default>
   (alphabet_size: u32, max_symbol: u32,
    s: &mut BrotliState<AllocU8, AllocU16, AllocU32, AllocHC, Encoder, Decoder>,
-   input: &[u8])
-   -> BrotliResult {
-
+   input: &[u8]
+) -> BrotliResult {
+s.entropy_decoder.set_active();
   // max_bits == 1..11; symbol == 0..3; 1..44 bits will be read.
   let max_bits = Log2Floor(alphabet_size - 1);
   let mut i = s.sub_loop_counter;
@@ -535,22 +535,16 @@ fn ReadSimpleHuffmanSymbols<AllocU8: alloc::Allocator<u8>,
                                                   num_symbols as usize + 1])
     .iter_mut() {
     let (mut v, a_res) = s.entropy_decoder.get_uniform(max_bits as u8, input, Unconditional{});
-    if ANS_READER{  
-      if let BrotliResult::ResultSuccess = a_res {
-      } else {
+    if let BrotliResult::ResultSuccess = a_res {
+    } else {
         mark_unlikely();
         s.sub_loop_counter = i;
         s.substate_huffman = BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_SIMPLE_READ;
-        return BrotliResult::NeedsMoreInput;        
-      }
-    }
-    if !bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), max_bits, &mut v, input) {
-      mark_unlikely();
-      s.sub_loop_counter = i;
-      s.substate_huffman = BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_SIMPLE_READ;
-      return BrotliResult::NeedsMoreInput;
+        s.entropy_decoder.set_inactive();
+        return a_res;        
     }
     if (v >= max_symbol) {
+      s.entropy_decoder.set_inactive();
       return BROTLI_FAILURE();
     }
     *symbols_lists_item = v as u16;
@@ -562,11 +556,13 @@ fn ReadSimpleHuffmanSymbols<AllocU8: alloc::Allocator<u8>,
     for other_item in fast!((s.symbols_lists_array)[i as usize + 1 ; num_symbols as usize+ 1])
       .iter() {
       if (*symbols_list_item == *other_item) {
+        s.entropy_decoder.set_inactive();
         return BROTLI_FAILURE();
       }
     }
     i += 1;
   }
+  s.entropy_decoder.set_inactive();
   BrotliResult::ResultSuccess
 }
 

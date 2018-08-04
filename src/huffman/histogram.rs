@@ -13,7 +13,7 @@ pub type Freq = u16;
 #[allow(unused)]
 const TF_SHIFT: Freq = 12;
 const TOT_FREQ: Freq = 1 << TF_SHIFT;
-
+const BENCHMARK_NOANS: bool = true;
 #[derive(Copy,Clone,Default)]
 pub struct HistEnt(pub u32);
 
@@ -79,7 +79,10 @@ impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
             histogram:buf,
             spec:Spec::default(),
         };
-         for count in ret.histogram.slice_mut().iter_mut() {
+        if BENCHMARK_NOANS {
+          return ret;
+        }
+        for count in ret.histogram.slice_mut().iter_mut() {
             *count = 0;
         }
         for cur_htree in 0..num_htrees {
@@ -249,6 +252,13 @@ impl<AllocH: Allocator<u32>, Spec:HistogramSpec> CDF<u32, AllocH, Spec> {
             histogram = Histogram::<AllocH, Spec>::new(alloc_u32, group_count, group, Some(old.sym));
         } else {
             histogram = Histogram::<AllocH, Spec>::new(alloc_u32, group_count, group, None);
+        }
+        if BENCHMARK_NOANS {
+            return CDF::<u32, AllocH, Spec>{
+              sym:histogram.histogram,
+              spec:spec,
+              num_htrees:histogram.num_htrees
+            };
         }
         for cur_htree in 0..group_count.len() {
             let mut running_start = 0;
