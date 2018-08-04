@@ -848,13 +848,14 @@ fn ReadCodeLengthCodeLengths<AllocU8: alloc::Allocator<u8>,
 
   let mut num_codes: u32 = s.repeat;
   let mut space: u32 = s.space;
-  let mut i = s.sub_loop_counter;
+    let mut i = s.sub_loop_counter;
+  s.entropy_decoder.set_active();
   for code_length_code_order in
       fast!((kCodeLengthCodeOrder)[s.sub_loop_counter as usize; CODE_LENGTH_CODES]).iter() {
     let code_len_idx = *code_length_code_order;
     let mut ix: u32 = 0;
     let (mut v, a_result) = s.entropy_decoder.get_stationary(&kCodeLengthPrefixCode[..], &s.code_length_ans_table, 4, input, Unconditional{});
-    if ANS_READER {
+    {
       if let BrotliResult::ResultSuccess = a_result {
         fast_mut!((s.code_length_code_lengths)[code_len_idx as usize]) = v as u8;
       }else {
@@ -862,32 +863,11 @@ fn ReadCodeLengthCodeLengths<AllocU8: alloc::Allocator<u8>,
         s.repeat = num_codes;
         s.space = space;
         s.substate_huffman = BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_COMPLEX;
-        return BrotliResult::NeedsMoreInput;
-      }
-    }
-    if !bit_reader::BrotliSafeGetBits(s.entropy_decoder.bit_reader(), 4, &mut ix, input) {
-      mark_unlikely();
-      let available_bits: u32 = bit_reader::BrotliGetAvailableBits(s.entropy_decoder.br());
-      if (available_bits != 0) {
-        ix = bit_reader::BrotliGetBitsUnmasked(s.entropy_decoder.br()) as u32 & 0xF;
-      } else {
-        ix = 0;
-      }
-      if (fast!((kCodeLengthPrefixCode)[ix as usize]).bits as u32 > available_bits) {
-        s.sub_loop_counter = i;
-        s.repeat = num_codes;
-        s.space = space;
-        s.substate_huffman = BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_COMPLEX;
+        s.entropy_decoder.set_inactive();
         return BrotliResult::NeedsMoreInput;
       }
     }
     BROTLI_LOG_UINT!(ix);
-    v = fast!((kCodeLengthPrefixCode)[ix as usize]).value as u8;
-    bit_reader::BrotliDropBits(s.entropy_decoder.bit_reader(),
-                               fast!((kCodeLengthPrefixCode)[ix as usize]).bits as u32);
-    fast_mut!((s.code_length_code_lengths)[code_len_idx as usize]) = v;
-
-    // FIXME: ANS
     BROTLI_LOG_ARRAY_INDEX!(s.code_length_code_lengths, code_len_idx);
     if v != 0 {
       space = space.wrapping_sub(32 >> v);
@@ -900,6 +880,7 @@ fn ReadCodeLengthCodeLengths<AllocU8: alloc::Allocator<u8>,
     }
     i += 1;
   }
+  s.entropy_decoder.set_inactive();
   if (!(num_codes == 1 || space == 0)) {
     return BROTLI_FAILURE();
   }

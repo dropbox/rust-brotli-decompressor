@@ -172,7 +172,11 @@ impl EntropyDecoder  for HuffmanDecoder {
     let mut ix: u32 = 0;
     if !bit_reader::BrotliSafeGetBits(self.bit_reader(), l1numbits.into(), &mut ix, input) {
       let available_bits: u32 = bit_reader::BrotliGetAvailableBits(self.br());
-      ix = bit_reader::BrotliGetBitsUnmasked(self.br()) as u32 & ((1 << l1numbits) - 1);
+      if available_bits != 0 {
+        ix = bit_reader::BrotliGetBitsUnmasked(self.br()) as u32 & ((1 << l1numbits) - 1);
+      } else {
+        ix = 0;
+      }
       if group[ix as usize].bits as u32 > available_bits {
         return (Symbol::from(0), BrotliResult::NeedsMoreInput);
       }
