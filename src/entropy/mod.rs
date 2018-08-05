@@ -45,9 +45,9 @@ pub trait EntropyEncoder {
   fn put_uniform(&mut self, nbits: u8, symbol: u16, output: &mut [u8], output_offset: &mut usize);
   fn flush(&mut self, output: &mut[u8], output_offset:&mut usize) -> BrotliResult;
 }
-
+use core::fmt;
 pub trait EntropyDecoder {
-  type SpeculativeState;
+  type SpeculativeState: fmt::Debug+PartialEq+Eq;
   fn set_active(&mut self);
   fn set_inactive(&mut self);
   fn bit_reader(&mut self) -> &mut bit_reader::BrotliBitReader;
@@ -85,8 +85,9 @@ pub trait EntropyDecoder {
                                 prior: u8,
                                 input:&[u8],
                                 is_speculative: Speculative) -> (Symbol, BrotliResult);
+  fn get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec>(&mut self, group:&[HuffmanCode], prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>, l1numbits: u8, input:&[u8]) -> Symbol;
   // precondition: input has at least 4 bytes
-    fn get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec, Speculative:BoolTrait>(&mut self, group:&[HuffmanCode], prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>, l1numbits: u8, input: &[u8], is_speculative: Speculative) -> (Symbol, BrotliResult);
+    fn safe_get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec, Speculative:BoolTrait>(&mut self, group:&[HuffmanCode], prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>, l1numbits: u8, input: &[u8], is_speculative: Speculative) -> (Symbol, BrotliResult);
     // precondition: input has at least 4 bytes
     fn get_uniform<Speculative:BoolTrait>(&mut self, nbits: u8, input: &[u8], is_speculative: Speculative) -> (u32, BrotliResult);
     fn begin_speculative(&mut self) -> Self::SpeculativeState;
@@ -167,8 +168,25 @@ impl EntropyDecoder  for HuffmanDecoder {
                                 is_speculative: Speculative) -> (Symbol, BrotliResult) {
     (Symbol::from(0), BrotliResult::ResultSuccess)
   }
+  fn get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec>(&mut self, table:&[HuffmanCode], prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>, l1numbits: u8, input: &[u8]) -> Symbol {
+  let br = self.bit_reader();
+  let bits = bit_reader::BrotliGet16BitsUnmasked(br, input);
+  let mut table_index = bits & ((1 << l1numbits) - 1);
+  let mut table_element = fast!((table)[table_index as usize]);
+  if table_element.bits > l1numbits {
+    let nbits = table_element.bits - l1numbits as u8;
+    bit_reader::BrotliDropBits(br, l1numbits.into());
+    table_index += table_element.value as u32;
+    table_element = fast!((table)[(table_index
+                           + ((bits >> l1numbits)
+                              & bit_reader::BitMask(nbits as u32))) as usize]);
+  }
+  bit_reader::BrotliDropBits(br, table_element.bits as u32);
+  Symbol::cast(table_element.value)
+
+  }
   // precondition: input has at least 4 bytes
-  fn get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec, Speculative:BoolTrait>(&mut self, group:&[HuffmanCode], prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>, l1numbits: u8, input: &[u8], is_speculative: Speculative) -> (Symbol, BrotliResult){
+  fn safe_get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec, Speculative:BoolTrait>(&mut self, group:&[HuffmanCode], prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>, l1numbits: u8, input: &[u8], is_speculative: Speculative) -> (Symbol, BrotliResult){
     if !self.active {
       return (Symbol::from(0), BrotliResult::ResultSuccess);
     }

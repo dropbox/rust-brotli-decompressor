@@ -50,7 +50,7 @@ impl Default for BrotliBitReader {
     }
   }
 }
-
+#[derive(Debug, PartialEq, Eq)]
 pub struct BrotliBitReaderState {
   pub val_: reg_t, // pre-fetched bits
   pub bit_pos_: u32, // current bit-reading position in val_
