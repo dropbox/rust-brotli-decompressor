@@ -1035,11 +1035,9 @@ fn ReadBlockLength<Decoder:EntropyDecoder, Encoder:EntropyEncoder, AllocU8: Allo
   let code: u32;
   let nbits: u32;
   //FIXME: ANS
-  decoder.set_active();
   let a_code = decoder.get_stationary(table, ans_table, 8, input);
   let a_nbits = prefix::kBlockLengthPrefixCode[a_code as usize].nbits as u32;
   let a_ret  = prefix::kBlockLengthPrefixCode[a_code as usize].offset as u32 + u32::from(decoder.get_uniform(a_nbits as u8, input, Unconditional{}).0);
-  decoder.set_inactive();
 
   /*let xmem = decoder.begin_speculative();
   code = ReadSymbol(table, decoder.bit_reader(), input);
@@ -1070,12 +1068,6 @@ fn SafeReadBlockLengthIndex<Decoder:EntropyDecoder, Encoder:EntropyEncoder, Allo
   match *substate_read_block_length {
     state::BrotliRunningReadBlockLengthState::BROTLI_STATE_READ_BLOCK_LENGTH_NONE => {
       let (a_index, a_result) = decoder.safe_get_stationary(table, ans_table, 8, input, is_speculative);
-      let mut index: u32 = 0;
-      if (!SafeReadSymbol(table, decoder.bit_reader(), &mut index, input)) {
-        return (false, 0);
-      }
-      return (true, index);
-      //FIXME: ANS
       if let BrotliResult::ResultSuccess = a_result {
         (true, a_index as u32)
       } else {
@@ -1107,18 +1099,6 @@ fn SafeReadBlockLengthFromIndex<AllocU8: alloc::Allocator<u8>,
   }
   let mut bits: u32 = 0;
   let nbits = fast_ref!((prefix::kBlockLengthPrefixCode)[index as usize]).nbits; /* nbits==2..24 */
-
-  if (!bit_reader::BrotliSafeReadBits(decoder.bit_reader(), nbits as u32, &mut bits, input)) {
-    s.block_length_index = index;
-    s.substate_read_block_length =
-      state::BrotliRunningReadBlockLengthState::BROTLI_STATE_READ_BLOCK_LENGTH_SUFFIX;
-    return false;
-  }
-  *result = fast_ref!((prefix::kBlockLengthPrefixCode)[index as usize]).offset as u32 + bits;
-  s.substate_read_block_length =
-    state::BrotliRunningReadBlockLengthState::BROTLI_STATE_READ_BLOCK_LENGTH_NONE;
-  return true;
-  //FIXME: ANS
   let (a_bits, a_result) = decoder.get_uniform(nbits as u8, input, is_speculative);
   if let BrotliResult::ResultSuccess = a_result {
     *result = fast_ref!((prefix::kBlockLengthPrefixCode)[index as usize]).offset as u32 + a_bits;
@@ -1567,40 +1547,29 @@ fn DecodeBlockTypeAndLength<
   if max_block_type <= 1 {
     return false;
   }
+  decoder.set_active();
   // Read 0..15 + 3..39 bits
   if (!safe) {
-    let (a_block_type, _) = decoder.safe_get_stationary(fast_slice!((s.block_type_trees)[tree_offset;]),
+    let a_block_type = decoder.get_stationary(fast_slice!((s.block_type_trees)[tree_offset;]),
                                            &s.block_type_ans_table[tree_type as usize],
                                            8,
-                                           input,
-                                           Unconditional{});
-    block_type = ReadSymbol(fast_slice!((s.block_type_trees)[tree_offset;]), decoder.bit_reader(), input);
+                                           input);
     fast_mut!((s.block_length)[tree_type as usize]) =
       ReadBlockLength(fast_slice!((s.block_len_trees)[tree_offset;]), &s.block_len_ans_table[tree_type as usize], decoder, encoder, m32, input);
-    if ANS_READER {
       block_type = u32::from(a_block_type);
-    }
   } else {
-    let memento = bit_reader::BrotliBitReaderSaveState(decoder.bit_reader());
     let a_memento = decoder.begin_speculative();
     let (a_block_type, a_ret) = decoder.safe_get_stationary(fast_slice!((s.block_type_trees)[tree_offset;]),
                                            &s.block_type_ans_table[tree_type as usize],
                                            8,
                                            input,
                                            Speculative{});
-    if (!SafeReadSymbol(fast_slice!((s.block_type_trees)[tree_offset;]),
-                        decoder.bit_reader(),
-                        &mut block_type,
-                        input)) {
+    if let BrotliResult::ResultSuccess = a_ret {
+      block_type = u32::from(a_block_type)
+    } else {
+      decoder.abort_speculative(a_memento);
+      decoder.set_inactive();
       return false;
-    }
-    if ANS_READER {
-      if let BrotliResult::ResultSuccess = a_ret {
-        block_type = u32::from(a_block_type)
-      } else {
-        decoder.abort_speculative(a_memento);
-        return false;
-      }
     }
     let mut block_length_out: u32 = 0;
 
@@ -1617,8 +1586,8 @@ fn DecodeBlockTypeAndLength<
     if !SafeReadBlockLengthFromIndex(s, decoder, encoder, m32, &mut block_length_out, index_ret, input, Speculative{}) {
       s.substate_read_block_length =
         BrotliRunningReadBlockLengthState::BROTLI_STATE_READ_BLOCK_LENGTH_NONE;
-      bit_reader::BrotliBitReaderRestoreState(decoder.bit_reader(), &memento);
       decoder.abort_speculative(a_memento);
+      decoder.set_inactive();
       return false;
     }
     decoder.commit_speculative();
@@ -1637,6 +1606,7 @@ fn DecodeBlockTypeAndLength<
   }
   fast_mut!((ringbuffer)[0]) = fast!((ringbuffer)[1]);
   fast_mut!((ringbuffer)[1]) = block_type;
+  decoder.set_inactive();
   true
 }
 fn DetectTrivialLiteralBlockTypes<AllocU8: alloc::Allocator<u8>,
@@ -3203,6 +3173,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
 
           let mut block_length_out: u32 = 0;
           let ind_ret: (bool, u32);
+          s.entropy_decoder.set_active();
           ind_ret = SafeReadBlockLengthIndex(&s.block_type_length_state.substate_read_block_length,
                                              s.block_type_length_state.block_length_index,
                                              fast_slice!((s.block_type_length_state.block_len_trees)
@@ -3217,8 +3188,10 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                                            local_input,
                                            Unconditional{}) {
             result = BrotliResult::NeedsMoreInput;
+            s.entropy_decoder.set_inactive();
             break;
           }
+          s.entropy_decoder.set_inactive();
           fast_mut!((s.block_type_length_state.block_length)[s.loop_counter as usize]) =
             block_length_out;
           BROTLI_LOG_UINT!(s.block_type_length_state.block_length[s.loop_counter as usize]);
