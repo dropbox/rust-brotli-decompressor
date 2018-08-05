@@ -1547,7 +1547,6 @@ fn DecodeBlockTypeAndLength<
   if max_block_type <= 1 {
     return false;
   }
-  decoder.set_active();
   // Read 0..15 + 3..39 bits
   if (!safe) {
     let a_block_type = decoder.get_stationary(fast_slice!((s.block_type_trees)[tree_offset;]),
@@ -1568,7 +1567,6 @@ fn DecodeBlockTypeAndLength<
       block_type = u32::from(a_block_type)
     } else {
       decoder.abort_speculative(a_memento);
-      decoder.set_inactive();
       return false;
     }
     let mut block_length_out: u32 = 0;
@@ -1587,7 +1585,6 @@ fn DecodeBlockTypeAndLength<
       s.substate_read_block_length =
         BrotliRunningReadBlockLengthState::BROTLI_STATE_READ_BLOCK_LENGTH_NONE;
       decoder.abort_speculative(a_memento);
-      decoder.set_inactive();
       return false;
     }
     decoder.commit_speculative();
@@ -1606,7 +1603,6 @@ fn DecodeBlockTypeAndLength<
   }
   fast_mut!((ringbuffer)[0]) = fast!((ringbuffer)[1]);
   fast_mut!((ringbuffer)[1]) = block_type;
-  decoder.set_inactive();
   true
 }
 fn DetectTrivialLiteralBlockTypes<AllocU8: alloc::Allocator<u8>,
@@ -2372,10 +2368,13 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
           }
           if (fast_mut!((s.block_type_length_state.block_length)[1]) == 0) {
             mark_unlikely();
+            s.entropy_decoder.set_active();
             if !DecodeCommandBlockSwitchInternal(safe, s, input) {
+              s.entropy_decoder.set_inactive();
               result = BrotliResult::NeedsMoreInput;
               break; // return
             }
+            s.entropy_decoder.set_inactive();
             s.state = BrotliRunningState::BROTLI_STATE_COMMAND_BEGIN;
             continue; // goto CommandBegin;
           }
@@ -2422,11 +2421,14 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               }
               if (fast!((s.block_type_length_state.block_length)[0]) == 0) {
                 mark_unlikely();
+                s.entropy_decoder.set_active();
                 if (!DecodeLiteralBlockSwitchInternal(safe, s, input)) && safe {
+                  s.entropy_decoder.set_inactive();
                   result = BrotliResult::NeedsMoreInput;
                   inner_return = true;
                   break;
                 }
+                s.entropy_decoder.set_inactive();
                 literal_htree = fast_ref!((literal_hgroup)[s.literal_htree_index as usize]);
                 PreloadSymbol(safe, literal_htree, s.entropy_decoder.bit_reader(), &mut bits, &mut value, input);
                 preloaded = if safe {(0,0)} else {s.entropy_decoder.preload(&literal_hgroup, &s.literal_ans_table, s.literal_htree_index as u8, input)};
@@ -2506,11 +2508,14 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               }
               if (fast!((s.block_type_length_state.block_length)[0]) == 0) {
                 mark_unlikely();
+                s.entropy_decoder.set_active();
                 if (!DecodeLiteralBlockSwitchInternal(safe, s, input)) && safe {
+                  s.entropy_decoder.set_inactive();
                   result = BrotliResult::NeedsMoreInput;
                   inner_return = true;
                   break;
                 }
+                s.entropy_decoder.set_inactive();
                 if s.trivial_literal_context != 0 {
                   s.state = BrotliRunningState::BROTLI_STATE_COMMAND_INNER;
                   inner_continue = true;
@@ -2607,10 +2612,13 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
           } else {
             if fast!((s.block_type_length_state.block_length)[2]) == 0 {
               mark_unlikely();
+              s.entropy_decoder.set_active();
               if (!DecodeDistanceBlockSwitchInternal(safe, s, input)) && safe {
+                s.entropy_decoder.set_inactive();
                 result = BrotliResult::NeedsMoreInput;
                 break; // return
               }
+              s.entropy_decoder.set_inactive();
             }
             if (!ReadDistanceInternal(safe, s, input, &distance_hgroup)) && safe {
               result = BrotliResult::NeedsMoreInput;
