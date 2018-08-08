@@ -2175,36 +2175,22 @@ pub fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
   let mut insert_len_extra: u32 = 0;
   let mut copy_length: u32 = 0;
   let v: prefix::CmdLutElement;
-  let mut memento = bit_reader::BrotliBitReaderState::default();
+  s.entropy_decoder.set_active();
   let a_memento;
   if (!safe) {
     a_memento = s.entropy_decoder.placeholder();
     let preloaded = s.entropy_decoder.preload(insert_copy_hgroup, &s.insert_copy_ans_table, s.htree_command_index as u8, input); 
     let a_cc = s.entropy_decoder.get_preloaded(insert_copy_hgroup, &s.insert_copy_ans_table, s.htree_command_index as u8, preloaded, input);
-    if ANS_READER {
-      cmd_code = u32::from(a_cc);
-    } else {
-      cmd_code = ReadSymbol(fast!((insert_copy_hgroup)[s.htree_command_index as usize]),
-                            s.entropy_decoder.bit_reader(),
-                            input);
-    }
+    cmd_code = u32::from(a_cc);
   } else {
-    memento = bit_reader::BrotliBitReaderSaveState(s.entropy_decoder.br());
     a_memento = s.entropy_decoder.begin_speculative();
-    if (!SafeReadSymbol(fast!((insert_copy_hgroup)[s.htree_command_index as usize]),
-                        s.entropy_decoder.bit_reader(),
-                        &mut cmd_code,
-                        input)) {
-      return false;
-    }
     let (a_cmd_code, a_result) = s.entropy_decoder.get(insert_copy_hgroup, &s.insert_copy_ans_table, s.htree_command_index as u8, input, Speculative{});
     if let BrotliResult::NeedsMoreInput = a_result {
       s.entropy_decoder.abort_speculative(a_memento);
+      s.entropy_decoder.set_inactive();
       return false;
     }
-    if ANS_READER {
-      cmd_code = u32::from(a_cmd_code);
-    }
+    cmd_code = u32::from(a_cmd_code);
   }
   v = fast!((prefix::kCmdLut)[cmd_code as usize]);
   s.distance_code = v.distance_code as i32;
@@ -2216,49 +2202,31 @@ pub fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
     if v.insert_len_extra_bits != 0 {
       mark_unlikely();
       let (a_insert_len_extra, _) = s.entropy_decoder.get_uniform(v.insert_len_extra_bits as u8, input, Unconditional{});
-      insert_len_extra =
-        bit_reader::BrotliReadBits(s.entropy_decoder.bit_reader(), v.insert_len_extra_bits as u32, input);
-      if ANS_READER {
-        insert_len_extra = a_insert_len_extra;
-      }
+      insert_len_extra = a_insert_len_extra;
     }
-    copy_length = bit_reader::BrotliReadBits(s.entropy_decoder.bit_reader(), v.copy_len_extra_bits as u32, input);
     let (a_copy_length, _) = s.entropy_decoder.get_uniform(v.copy_len_extra_bits as u8, input, Unconditional{});
-    if ANS_READER {
-      copy_length = a_copy_length;
-    }
+    copy_length = a_copy_length;
   } else {
-    if (!SafeReadBits(s.entropy_decoder.bit_reader(),
-                      v.insert_len_extra_bits as u32,
-                      &mut insert_len_extra,
-                      input)) || (!SafeReadBits(s.entropy_decoder.bit_reader(),
-                                                v.copy_len_extra_bits as u32,
-                                                &mut copy_length,
-                                                input)) {
-      bit_reader::BrotliBitReaderRestoreState(s.entropy_decoder.bit_reader(), &memento);
-      return false;
-    }
     let (a_insert_len_extra, a_res) = s.entropy_decoder.get_uniform(v.insert_len_extra_bits as u8, input, Speculative{});
     if let BrotliResult::NeedsMoreInput = a_res {
       s.entropy_decoder.abort_speculative(a_memento);
+      s.entropy_decoder.set_inactive();
       return false;
     }
-    if ANS_READER {
-      insert_len_extra = a_insert_len_extra;
-    }
+    insert_len_extra = a_insert_len_extra;
     let (a_copy_length, a_result) = s.entropy_decoder.get_uniform(v.copy_len_extra_bits as u8, input, Unconditional{});
     if let BrotliResult::NeedsMoreInput = a_result {
       s.entropy_decoder.abort_speculative(a_memento);
+      s.entropy_decoder.set_inactive();
       return false;
     }
-    if ANS_READER {
-      copy_length = a_copy_length;
-    }
+    copy_length = a_copy_length;
     s.entropy_decoder.commit_speculative();
   }
   s.copy_length = copy_length as i32 + v.copy_len_offset as i32;
   fast_mut!((s.block_type_length_state.block_length)[1]) -= 1;
   *insert_length += insert_len_extra as i32;
+  s.entropy_decoder.set_inactive();
   true
 }
 

@@ -142,7 +142,10 @@ impl EntropyDecoder  for HuffmanDecoder {
                                    prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
                                    prior: u8,
                                    input:&[u8]) -> (u32, u32){
-        (0,0)
+      let table_element =
+        fast!((table)[bit_reader::BrotliGetBits(br, HUFFMAN_TABLE_BITS, input) as usize]);
+      (u32::from(table_element.bits),
+       u32::from(table_element.value))
     }
     // precondition: input has at least 4 bytes
   fn get_preloaded<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone,
@@ -152,9 +155,25 @@ impl EntropyDecoder  for HuffmanDecoder {
                                 group:&[&[HuffmanCode];256],
                                 prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
                                 prior: u8,
-                                preloaded: (u32, u32),
+                                preloaded: mut&(u32, u32),
                                 input:&[u8]) -> Symbol {
-    Symbol::from(0)
+      let result = if *bits > HUFFMAN_TABLE_BITS {
+        mark_unlikely();
+      let val = bit_reader::BrotliGet16BitsUnmasked(br, input);
+      let mut ext_index = (val & HUFFMAN_TABLE_MASK) + preloaded.1;
+        let mask = bit_reader::BitMask((preloaded.0 - HUFFMAN_TABLE_BITS));
+        bit_reader::BrotliDropBits(br, HUFFMAN_TABLE_BITS);
+        ext_index += (val >> HUFFMAN_TABLE_BITS) & mask;
+        let ext = fast!((table)[ext_index as usize]);
+        bit_reader::BrotliDropBits(br, ext.bits as u32);
+        Symbol::cast(ext.value)
+      } else {
+        bit_reader::BrotliDropBits(br, *bits);
+        Symbol::cast(preloaded.1)
+      };
+    *preloaded = self.preload(group, prob, prior, input);
+    result
+
   }
   fn get<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone,
          AllocS:Allocator<Symbol>,
@@ -166,7 +185,49 @@ impl EntropyDecoder  for HuffmanDecoder {
                                 prior: u8,
                                 input:&[u8],
                                 is_speculative: Speculative) -> (Symbol, BrotliResult) {
-    (Symbol::from(0), BrotliResult::ResultSuccess)
+  let mut val: u32 = 0;
+  if (bit_reader::BrotliSafeGetBits(br, 15, &mut val, input)) {
+    *result = DecodeSymbol(val, table, br);
+    return true;
+  } else {
+    mark_unlikely();
+  }
+  let mut available_bits = bit_reader::BrotliGetAvailableBits(br);
+  if (available_bits == 0) {
+    if (fast!((table)[0]).bits == 0) {
+      *result = fast!((table)[0]).value as u32;
+      return true;
+    }
+    return false; /* No valid bits at all. */
+  }
+  let mut val = bit_reader::BrotliGetBitsUnmasked(br) as u32;
+  let table_index = (val & HUFFMAN_TABLE_MASK) as usize;
+  let table_element = fast!((table)[table_index]);
+  if (table_element.bits <= HUFFMAN_TABLE_BITS as u8) {
+    if (table_element.bits as u32 <= available_bits) {
+      bit_reader::BrotliDropBits(&mut br, table_element.bits as u32);
+      *result = table_element.value as u32;
+      return true;
+    } else {
+      return false; /* Not enough bits for the first level. */
+    }
+  }
+  if (available_bits <= HUFFMAN_TABLE_BITS) {
+    return false; /* Not enough bits to move to the second level. */
+  }
+
+  // Speculatively drop HUFFMAN_TABLE_BITS.
+  val = (val & bit_reader::BitMask(table_element.bits as u32)) >> HUFFMAN_TABLE_BITS;
+  available_bits -= HUFFMAN_TABLE_BITS;
+  let table_sub_element = fast!((table)[table_index + table_element.value as usize + val as usize]);
+  if (available_bits < table_sub_element.bits as u32) {
+    return false; /* Not enough bits for the second level. */
+  }
+
+  bit_reader::BrotliDropBits(&mut br, HUFFMAN_TABLE_BITS + table_sub_element.bits as u32);
+  *result = table_sub_element.value as u32;
+  true
+
   }
   fn get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec>(&mut self, table:&[HuffmanCode], prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>, l1numbits: u8, input: &[u8]) -> Symbol {
   let br = self.bit_reader();
