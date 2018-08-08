@@ -9,7 +9,7 @@
 use core;
 use super::alloc;
 pub use alloc::{AllocatedStackMemory, Allocator, SliceWrapper, SliceWrapperMut, StackAllocator};
-use super::entropy::{EntropyEncoder, EntropyDecoder, BoolTrait, Unconditional, Speculative};
+use super::entropy::{EntropyEncoder, EntropyDecoder, BoolTrait, Unconditional, Speculative, HUFFMAN_TABLE_BITS, HUFFMAN_TABLE_MASK};
 use core::mem;
 
 use super::bit_reader;
@@ -46,8 +46,6 @@ const kNumLiteralCodes: u16 = 256;
 const kNumInsertAndCopyCodes: u16 = 704;
 const kNumBlockLengthCodes: u32 = 26;
 const kDistanceContextBits: i32 = 2;
-const HUFFMAN_TABLE_BITS: u32 = 8;
-const HUFFMAN_TABLE_MASK: u32 = 0xff;
 const CODE_LENGTH_CODES: usize = 18;
 const kCodeLengthCodeOrder: [u8; CODE_LENGTH_CODES] = [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10,
                                                        11, 12, 13, 14, 15];
@@ -2410,6 +2408,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                 fast_mut!((s.ringbuffer.slice_mut())[pos as usize]) =
                   ReadPreloadedSymbol(literal_htree, s.entropy_decoder.bit_reader(), &mut bits, &mut value, input) as u8;
                 let a_value = u32::from(s.entropy_decoder.get_preloaded(&literal_hgroup, &s.literal_ans_table, s.literal_htree_index as u8, preloaded, input));
+                preloaded = s.entropy_decoder.preload(&literal_hgroup, &s.literal_ans_table, s.literal_htree_index as u8, input);
                 if ANS_READER {
                   value = a_value
                 }
