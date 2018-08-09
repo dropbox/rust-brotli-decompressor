@@ -1318,30 +1318,39 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
           bzero(context_map_arg.slice_mut()); // necessary if we compiler with unsafe feature flag
           return BrotliResult::ResultSuccess;
         }
+        s.sub_loop_counter = 0;
         s.substate_context_map = BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_READ_PREFIX;
         // No break, continue to next state.
       }
       BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_READ_PREFIX => {
-        let mut bits: u32 = 0;
-        if !s.entropy_decoder.sufficient_bits(5) {
-          return BrotliResult::NeedsMoreInput;
+        s.entropy_decoder.set_active();
+        if s.sub_loop_counter == 0 {  
+            let (a_rle, a_result) = s.entropy_decoder.get_uniform(1, input, Unconditional{});
+            if let BrotliResult::ResultSuccess = a_result {
+                if a_rle == 0 {
+                    s.sub_loop_counter = 2;
+                } else {
+                    s.sub_loop_counter = 1;
+                }
+            } else {
+                return a_result;
+            }
         }
-        let (a_rle, _) = s.entropy_decoder.get_uniform(1, input, Unconditional{});
-        // In next stage ReadHuffmanCode uses at least 4 bits, so it is safe
-        // to peek 4 bits ahead.
-        if (!bit_reader::BrotliSafeGetBits(s.entropy_decoder.bit_reader(), 5, &mut bits, input)) {
-          return BrotliResult::NeedsMoreInput;
-        }
-        if ((bits & 1) != 0) {
-          // Use RLE for zeroes.
-          let (a_max_run_length_prefix_minus_one, _) = s.entropy_decoder.get_uniform(4, input, Unconditional{});
-          s.max_run_length_prefix = (bits >> 1) + 1;
-          bit_reader::BrotliDropBits(s.entropy_decoder.bit_reader(), 5);
+        if s.sub_loop_counter == 1 {
+            // Use RLE for zeroes.
+            let (a_max_run_length_prefix_minus_one, a_result) = s.entropy_decoder.get_uniform(4, input, Unconditional{});
+            if let BrotliResult::ResultSuccess = a_result {
+                s.max_run_length_prefix = a_max_run_length_prefix_minus_one + 1;
+            } else {
+                return a_result;
+            }
         } else {
-          s.max_run_length_prefix = 0;
-          bit_reader::BrotliDropBits(s.entropy_decoder.bit_reader(), 1);
+            assert_eq!(s.sub_loop_counter, 2);
+            s.max_run_length_prefix = 0;
         }
+        s.entropy_decoder.set_inactive();
         BROTLI_LOG_UINT!(s.max_run_length_prefix);
+        s.sub_loop_counter = 0;
         s.substate_context_map = BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_HUFFMAN;
         // No break, continue to next state.
       }
