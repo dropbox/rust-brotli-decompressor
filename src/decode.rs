@@ -1373,6 +1373,7 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
         // No break, continue to next state.
       }
       BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_DECODE => {
+        s.entropy_decoder.set_active();
         let mut context_index: u32 = s.context_index;
         let max_run_length_prefix: u32 = s.max_run_length_prefix;
         let mut context_map = &mut context_map_arg.slice_mut();
@@ -1383,19 +1384,13 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
             let (a_context_map_symbol, a_result) = s.entropy_decoder.safe_get_stationary(
               s.context_map_table.slice(),
               &s.context_map_ans_table, HUFFMAN_TABLE_BITS as u8, input, Unconditional{});
-            if ANS_READER {
-              if let BrotliResult::ResultSuccess = a_result {
-              }else {
-                s.code = 0xFFFF;
-                s.context_index = context_index;
-                return a_result;
-              }
-            }
-
-            if (!SafeReadSymbol(s.context_map_table.slice(), s.entropy_decoder.bit_reader(), &mut code, input)) {
+            if let BrotliResult::ResultSuccess = a_result {
+              code = u32::from(a_context_map_symbol);
+            }else {
               s.code = 0xFFFF;
               s.context_index = context_index;
-              return BrotliResult::NeedsMoreInput;
+              s.entropy_decoder.set_inactive();
+              return a_result;
             }
             BROTLI_LOG_UINT!(code);
 
@@ -1417,21 +1412,17 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
           // we are treated like everyday citizens from this point forth
           {
             let (mut reps, a_result) = s.entropy_decoder.get_uniform(code as u8, input, Unconditional{});
-            if ANS_READER {
-              if let BrotliResult::NeedsMoreInput = a_result {
-                s.code = code;
-                s.context_index = context_index;
-                return a_result;              
-              }
-            }
-            if (!bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), code, &mut reps, input)) {
+            if let BrotliResult::ResultSuccess = a_result {
+              reps += 1u32 << code;
+            } else {
               s.code = code;
               s.context_index = context_index;
-              return BrotliResult::NeedsMoreInput;
+              s.entropy_decoder.set_inactive();
+              return a_result;              
             }
-            reps += 1u32 << code;
             BROTLI_LOG_UINT!(reps);
             if (context_index + reps > context_map_size) {
+              s.entropy_decoder.set_inactive();
               return BROTLI_FAILURE();
             }
             loop {
@@ -1447,6 +1438,7 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
         }
         // No break, continue to next state.
         s.substate_context_map = BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_TRANSFORM;
+        s.entropy_decoder.set_inactive();
       }
       BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_TRANSFORM => {
         let (mut bits, a_result) = s.entropy_decoder.get_uniform(1, input, Unconditional{});
