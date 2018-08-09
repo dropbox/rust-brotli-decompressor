@@ -1450,16 +1450,12 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
         s.entropy_decoder.set_inactive();
       }
       BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_TRANSFORM => {
-        let (mut bits, a_result) = s.entropy_decoder.get_uniform(1, input, Unconditional{});
-        if ANS_READER {
-          if let BrotliResult::NeedsMoreInput = a_result {
-            s.substate_context_map = BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_TRANSFORM;
-            return a_result;              
-          }
-        }
-        if (!bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 1, &mut bits, input)) {
+        s.entropy_decoder.set_active();
+        let (bits, a_result) = s.entropy_decoder.get_uniform(1, input, Unconditional{});
+        s.entropy_decoder.set_inactive();  
+        if let BrotliResult::NeedsMoreInput = a_result {
           s.substate_context_map = BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_TRANSFORM;
-          return BrotliResult::NeedsMoreInput;
+          return a_result;              
         }
         if (bits != 0) {
           InverseMoveToFrontTransform(context_map_arg.slice_mut(),
