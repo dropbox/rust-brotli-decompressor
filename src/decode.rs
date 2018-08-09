@@ -820,7 +820,6 @@ fn ReadCodeLengthCodeLengths<AllocU8: alloc::Allocator<u8>,
         return BrotliResult::NeedsMoreInput;
       }
     }
-    BROTLI_LOG_UINT!(ix);
     BROTLI_LOG_ARRAY_INDEX!(s.code_length_code_lengths, code_len_idx);
     if v != 0 {
       space = space.wrapping_sub(32 >> v);
@@ -941,9 +940,6 @@ fn ReadHuffmanCode<AllocU8: alloc::Allocator<u8>,
                                                             &s.symbols_lists_array[..],
                                                             s.symbol);
         if let Some(opt_table_size_ref) = opt_table_size {
-                if alphabet_size == 256 {
-                    eprintln!("Length symbols: table size {}", table_size);
-                }
           *opt_table_size_ref = table_size
         }
         s.substate_huffman = BrotliRunningHuffmanState::BROTLI_STATE_HUFFMAN_NONE;
@@ -1009,9 +1005,6 @@ fn ReadHuffmanCode<AllocU8: alloc::Allocator<u8>,
                                                       s.symbol_lists_index,
                                                       &mut s.code_length_histo);
         if let Some(opt_table_size_ref) = opt_table_size {
-                if alphabet_size == 256 {
-                    eprintln!("Length symbols: table size {}", table_size);
-                }
             *opt_table_size_ref = table_size
 
         }
@@ -1075,7 +1068,6 @@ fn SafeReadBlockLengthIndex<Decoder:EntropyDecoder, Encoder:EntropyEncoder, Allo
     _ => (true, block_length_index),
   }
 }
-
 fn SafeReadBlockLengthFromIndex<AllocU8: alloc::Allocator<u8>,
                                 AllocU16: alloc::Allocator<u16>,
                                 AllocU32: alloc::Allocator<u32>,

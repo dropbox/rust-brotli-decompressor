@@ -192,11 +192,24 @@ impl EntropyDecoder  for HuffmanDecoder {
       return (Symbol::from(0), BrotliResult::ResultSuccess);
     }
     let mut val: u32 = 0;
-    if (bit_reader::BrotliSafeGetBits(&mut self.br, 15, &mut val, input)) {
-      let preloaded = self.preload(group, prob, prior, input);
-      return (self.get_preloaded(group, prob, prior, preloaded, input), BrotliResult::ResultSuccess);
-    }
     let mut available_bits = bit_reader::BrotliGetAvailableBits(&mut self.br);
+      
+    if bit_reader::BrotliSafeGetBits(&mut self.br, 15, &mut val, input) {
+        let mut table_index = val & HUFFMAN_TABLE_MASK;
+        let mut table_element = fast!((group[usize::from(prior)])[table_index as usize]);
+        if table_element.bits > HUFFMAN_TABLE_BITS as u8 {
+            let nbits = table_element.bits - HUFFMAN_TABLE_BITS as u8;
+            bit_reader::BrotliDropBits(&mut self.br, HUFFMAN_TABLE_BITS);
+            table_index += table_element.value as u32;
+            table_element = fast!((group[usize::from(prior)])[(table_index
+                                           + ((val >> HUFFMAN_TABLE_BITS)
+                                              & bit_reader::BitMask(nbits as u32))) as usize]);
+            
+        }
+        bit_reader::BrotliDropBits(&mut self.br, table_element.bits as u32);
+        return (Symbol::cast(table_element.value), BrotliResult::ResultSuccess);
+    }
+  
     if (available_bits == 0) {
       if (fast!((group[usize::from(prior)])[0]).bits == 0) {
         return (Symbol::cast(fast!((group[usize::from(prior)])[0]).value), BrotliResult::ResultSuccess);
