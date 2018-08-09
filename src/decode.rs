@@ -1955,26 +1955,22 @@ pub fn ReadContextModes<AllocU8: alloc::Allocator<u8>,
    -> BrotliResult {
 
   let mut i: i32 = s.loop_counter;
-
+  s.entropy_decoder.set_active();
   for context_mode_iter in fast_mut!((s.context_modes.slice_mut())[i as usize ;
                                                        (s.block_type_length_state.num_block_types[0]
                                                         as usize)]).iter_mut() {
     let (mut bits, a_result) = s.entropy_decoder.get_uniform(2, input, Unconditional{});
-    if ANS_READER {
-      if let BrotliResult::NeedsMoreInput = a_result {
-        s.loop_counter = i;
-        return a_result;
-      }
-    }
-    if (!bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 2, &mut bits, input)) {
-      mark_unlikely();
+    if let BrotliResult::ResultSuccess = a_result {
+      *context_mode_iter = bits as u8;
+    } else {
+      s.entropy_decoder.set_inactive();
       s.loop_counter = i;
-      return BrotliResult::NeedsMoreInput;
+      return a_result;
     }
-    *context_mode_iter = bits as u8;
     BROTLI_LOG_UINT!(i);
     i += 1;
   }
+  s.entropy_decoder.set_inactive();
   BrotliResult::ResultSuccess
 }
 
