@@ -100,16 +100,13 @@ pub const HUFFMAN_TABLE_MASK: u32 = 0xff;
 
 #[derive(Default)]
 pub struct HuffmanDecoder {
-  active: bool,
   br: bit_reader::BrotliBitReader,
 }
 
 impl EntropyDecoder  for HuffmanDecoder {
   fn set_active(&mut self) {
-    self.active = true;
   }
   fn set_inactive(&mut self) {
-    self.active = false;
   }
   fn bit_reader(&mut self) -> &mut bit_reader::BrotliBitReader {
     &mut self.br
@@ -118,11 +115,9 @@ impl EntropyDecoder  for HuffmanDecoder {
     &self.br
   }
   fn warmup(&mut self, input:&[u8]) -> BrotliResult{
-    if self.active {
-      if (!bit_reader::BrotliWarmupBitReader(&mut self.br,
-                                             input)) {
+    if (!bit_reader::BrotliWarmupBitReader(&mut self.br,
+                                           input)) {
         return BrotliResult::NeedsMoreInput;
-      }
     }
     BrotliResult::ResultSuccess
   }
@@ -156,9 +151,6 @@ impl EntropyDecoder  for HuffmanDecoder {
                                 prior: u8,
                                 preloaded: (u32, u32),
                                 input:&[u8]) -> Symbol {
-    if !self.active {
-      return Symbol::from(0);
-    }
       let result = if preloaded.0 > HUFFMAN_TABLE_BITS {
         let val = bit_reader::BrotliGet16BitsUnmasked(&mut self.br, input);
         let mut ext_index = (val & HUFFMAN_TABLE_MASK) + preloaded.1;
@@ -185,9 +177,6 @@ impl EntropyDecoder  for HuffmanDecoder {
                                 prior: u8,
                                 input:&[u8],
                                 is_speculative: Speculative) -> (Symbol, BrotliResult) {
-    if !self.active {
-      return (Symbol::from(0), BrotliResult::ResultSuccess);
-    }
     let mut val: u32 = 0;
     let mut available_bits = bit_reader::BrotliGetAvailableBits(&mut self.br);
       
@@ -240,9 +229,6 @@ impl EntropyDecoder  for HuffmanDecoder {
     (Symbol::cast(table_sub_element.value), BrotliResult::ResultSuccess)
   }
   fn get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec>(&mut self, table:&[HuffmanCode], prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>, l1numbits: u8, input: &[u8]) -> Symbol {
-    if !self.active {
-      return Symbol::from(0);
-    }
   let br = self.bit_reader();
   let bits = bit_reader::BrotliGet16BitsUnmasked(br, input);
   let mut table_index = bits & ((1 << l1numbits) - 1);
@@ -261,9 +247,6 @@ impl EntropyDecoder  for HuffmanDecoder {
   }
   // precondition: input has at least 4 bytes
   fn safe_get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec, Speculative:BoolTrait>(&mut self, group:&[HuffmanCode], prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>, l1numbits: u8, input: &[u8], is_speculative: Speculative) -> (Symbol, BrotliResult){
-    if !self.active {
-      return (Symbol::from(0), BrotliResult::ResultSuccess);
-    }
     let mut ix: u32 = 0;
     if !bit_reader::BrotliSafeGetBits(self.bit_reader(), l1numbits.into(), &mut ix, input) {
       let available_bits: u32 = bit_reader::BrotliGetAvailableBits(self.br());
@@ -293,11 +276,9 @@ impl EntropyDecoder  for HuffmanDecoder {
         return (0, BrotliResult::ResultSuccess);
     }
     let mut ix = 0u32;
-    if self.active {
-      if !bit_reader::BrotliSafeReadBits(&mut self.br, u32::from(nbits), &mut ix, input) {
+    if !bit_reader::BrotliSafeReadBits(&mut self.br, u32::from(nbits), &mut ix, input) {
         
         return (0, BrotliResult::NeedsMoreInput)
-      }
     }
     (ix, BrotliResult::ResultSuccess)
   }
@@ -310,9 +291,7 @@ impl EntropyDecoder  for HuffmanDecoder {
   }
   fn commit_speculative(&mut self){}
   fn abort_speculative(&mut self, val:Self::SpeculativeState){
-    if self.active {
-      bit_reader::BrotliBitReaderRestoreState(self.bit_reader(),&val);
-    }
+     bit_reader::BrotliBitReaderRestoreState(self.bit_reader(),&val);
   }
 }
 

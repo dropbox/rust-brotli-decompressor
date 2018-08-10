@@ -269,7 +269,7 @@ fn DecodeMetaBlockLength<AllocU8: alloc::Allocator<u8>,
         // No break, transit to the next state.
       }
       BrotliRunningMetablockHeaderState::BROTLI_STATE_METABLOCK_HEADER_EMPTY => {
-        let (a_bits, a_ret) = s.entropy_decoder.get_uniform(1, input, Unconditional{});
+          //let (a_bits, a_ret) = s.entropy_decoder.get_uniform(1, input, Unconditional{});
         if !bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 1, &mut bits, input) {
           return BrotliResult::NeedsMoreInput;
         }
@@ -2894,7 +2894,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           }
         }
         BrotliRunningState::BROTLI_STATE_LARGE_WINDOW_BITS => {
-          let (a_window_bits, a_ret) = s.entropy_decoder.get_uniform(6, local_input, Unconditional{});
+          //let (a_window_bits, a_ret) = s.entropy_decoder.get_uniform(6, local_input, Unconditional{});
           //FIXME: ANS
           if (!bit_reader::BrotliSafeReadBits(s.entropy_decoder.bit_reader(), 6, &mut s.window_bits, local_input)) {
             result = BrotliResult::NeedsMoreInput;
