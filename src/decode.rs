@@ -2009,7 +2009,6 @@ pub fn TakeDistanceFromRingBuffer<AllocU8: alloc::Allocator<u8>,
     }
   }
 }
-
 pub fn SafeReadBits(br: &mut bit_reader::BrotliBitReader,
                     n_bits: u32,
                     val: &mut u32,
@@ -2325,12 +2324,13 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
             let mut bits: u32 = 0;
             let mut value: u32 = 0;
             let mut literal_htree = &fast!((literal_hgroup)[s.literal_htree_index as usize]);
-            PreloadSymbol(safe, literal_htree, s.entropy_decoder.bit_reader(), &mut bits, &mut value, input);
+            s.entropy_decoder.set_active();
             let mut preloaded = if safe {
               (0,0)
             } else {
               s.entropy_decoder.preload(&literal_hgroup, &s.literal_ans_table, s.literal_htree_index as u8, input)
             };
+            s.entropy_decoder.set_inactive();
             let mut inner_return: bool = false;
             let mut inner_continue: bool = false;
             loop {
@@ -2357,8 +2357,9 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                 }
                 s.entropy_decoder.set_inactive();
                 literal_htree = fast_ref!((literal_hgroup)[s.literal_htree_index as usize]);
-                PreloadSymbol(safe, literal_htree, s.entropy_decoder.bit_reader(), &mut bits, &mut value, input);
+                s.entropy_decoder.set_active();
                 preloaded = if safe {(0,0)} else {s.entropy_decoder.preload(&literal_hgroup, &s.literal_ans_table, s.literal_htree_index as u8, input)};
+                s.entropy_decoder.set_inactive();
                 if (s.trivial_literal_context == 0) {
                   s.state = BrotliRunningState::BROTLI_STATE_COMMAND_INNER;
                   inner_continue = true;
@@ -2366,31 +2367,33 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                 }
               }
               if (!safe) {
+                /*
                 fast_mut!((s.ringbuffer.slice_mut())[pos as usize]) =
                   ReadPreloadedSymbol(literal_htree, s.entropy_decoder.bit_reader(), &mut bits, &mut value, input) as u8;
-                let a_value = u32::from(s.entropy_decoder.get_preloaded(&literal_hgroup, &s.literal_ans_table, s.literal_htree_index as u8, preloaded, input));
+                 */
+                s.entropy_decoder.set_active();
+                fast_mut!((s.ringbuffer.slice_mut())[pos as usize]) = s.entropy_decoder.get_preloaded(&literal_hgroup, &s.literal_ans_table, s.literal_htree_index as u8, preloaded, input);
                 preloaded = s.entropy_decoder.preload(&literal_hgroup, &s.literal_ans_table, s.literal_htree_index as u8, input);
-                if ANS_READER {
-                  value = a_value
-                }
+                s.entropy_decoder.set_inactive();
               } else {
+                /*
                 let mut literal: u32 = 0;
                 if (!SafeReadSymbol(literal_htree, s.entropy_decoder.bit_reader(), &mut literal, input)) {
                   result = BrotliResult::NeedsMoreInput;
                   inner_return = true;
                   break;
+                }*/
+                s.entropy_decoder.set_active();
+                let (literal, a_result) = s.entropy_decoder.get(&literal_hgroup, &s.literal_ans_table, s.literal_htree_index, input, Unconditional{});
+                s.entropy_decoder.set_inactive();
+                if let BrotliResult::ResultSuccess = a_result {
+
+                } else {
+                  result = a_result;
+                  inner_return = true;
+                  break;                    
                 }
-                let (a_literal, a_result) = s.entropy_decoder.get(&literal_hgroup, &s.literal_ans_table, s.literal_htree_index, input, Unconditional{});
-                if ANS_READER {
-                  if let BrotliResult::ResultSuccess = a_result {
-                    literal = u32::from(a_literal);
-                  } else {
-                    result = a_result;
-                    inner_return = true;
-                    break;                    
-                  }
-                }
-                fast_mut!((s.ringbuffer.slice_mut())[pos as usize]) = literal as u8;
+                fast_mut!((s.ringbuffer.slice_mut())[pos as usize]) = literal;
               }
               fast_mut!((s.block_type_length_state.block_length)[0]) -= 1;
               BROTLI_LOG_UINT!(s.literal_htree_index);
@@ -2462,42 +2465,32 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               }
               p2 = p1;
               if (!safe) {
+                s.entropy_decoder.set_active();
                 let preloaded = s.entropy_decoder.preload(&literal_hgroup,
                                                           &s.literal_ans_table,
                                                           context_index,
                                                           input);
-                let a_p1 = s.entropy_decoder.get_preloaded(&literal_hgroup,
-                                                 &s.literal_ans_table,
-                                                 context_index,
-                                                 preloaded,
-                                                 input);
-                                                          
-                p1 = ReadSymbol(hc, s.entropy_decoder.bit_reader(), input) as u8;
-                if ANS_READER {
-                  p1 = a_p1;
-                }
+                p1 = s.entropy_decoder.get_preloaded(&literal_hgroup,
+                                                     &s.literal_ans_table,
+                                                     context_index,
+                                                     preloaded,
+                                                     input);
+                s.entropy_decoder.set_inactive();
               } else {
-                let mut literal: u32 = 0;
-                if (!SafeReadSymbol(hc, s.entropy_decoder.bit_reader(), &mut literal, input)) {
-                  result = BrotliResult::NeedsMoreInput;
+                s.entropy_decoder.set_active();
+                let (literal, a_result) = s.entropy_decoder.get(&literal_hgroup,
+                                                             &s.literal_ans_table,
+                                                                context_index,
+                                                                input,
+                                                                Unconditional{});
+                s.entropy_decoder.set_inactive();
+                if let BrotliResult::ResultSuccess = a_result {
+                } else {
+                  result = a_result;
                   inner_return = true;
                   break;
                 }
-                let (a_literal, a_result) = s.entropy_decoder.get(&literal_hgroup,
-                                                             &s.literal_ans_table,
-                                                             context_index,
-                                                             input,
-                                                                  Unconditional{});
-                if ANS_READER {
-                  if let BrotliResult::ResultSuccess = a_result {
-                    literal = u32::from(a_literal);
-                  } else {
-                    result = a_result;
-                    inner_return = true;
-                    break;                    
-                  }
-                }
-                p1 = literal as u8;
+                p1 = literal;
               }
               fast_slice_mut!((s.ringbuffer)[pos as usize]) = p1;
               fast_mut!((s.block_type_length_state.block_length)[0]) -= 1;
@@ -2556,7 +2549,6 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
           // postReadDistance:
           BROTLI_LOG!("[ProcessCommandsInternal] pos = %d distance = %d\n",
                       pos, s.distance_code);
-
           if (s.max_distance != s.max_backward_distance) {
             if (pos < s.max_backward_distance_minus_custom_dict_size) {
               s.max_distance = pos + s.custom_dict_size;

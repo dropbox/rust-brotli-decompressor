@@ -131,9 +131,6 @@ impl EntropyDecoder  for HuffmanDecoder {
     BrotliResult::ResultSuccess
   }
   fn sufficient_bits(&mut self, nbits: u8) -> bool{
-    if !self.active {
-      return true;
-    }
     bit_reader::BrotliCheckInputAmount(self.br(), nbits.into())
   }
   fn preload<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone,
