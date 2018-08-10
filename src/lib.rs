@@ -143,6 +143,7 @@ pub fn BrotliDecompress<InputType, OutputType>(r: &mut InputType,
                               &mut input_buffer[..],
                               &mut output_buffer[..],
                               unsafe { HeapAllocUninitialized::<u8>::new() },
+                              unsafe { HeapAllocUninitialized::<u16>::new() },
                               unsafe { HeapAllocUninitialized::<u32>::new() },
                               unsafe { HeapAllocUninitialized::<HuffmanCode>::new() })
 }

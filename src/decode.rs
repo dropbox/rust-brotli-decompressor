@@ -16,7 +16,7 @@ use super::bit_reader;
 use super::huffman;
 use super::state;
 use super::prefix;
-const ANS_READER:bool = false;
+
 use super::transform::{TransformDictionaryWord, kNumTransforms};
 use state::{BlockTypeAndLengthState, BrotliRunningContextMapState, BrotliRunningDecodeUint8State,
             BrotliRunningHuffmanState, BrotliRunningMetablockHeaderState,
@@ -130,8 +130,8 @@ fn DecodeWindowBits<Decoder:EntropyDecoder, Encoder:EntropyEncoder, AllocU32:All
     s_large_window: &mut bool,
     s_window_bits:&mut u32,
     decoder: &mut Decoder,
-    encoder: &mut Encoder,
-    m32: &mut AllocU32,
+    _encoder: &mut Encoder,
+    _m32: &mut AllocU32,
 ) -> BrotliResult {
   
   let large_window = *s_large_window;
@@ -180,8 +180,8 @@ fn mark_unlikely() {}
 fn DecodeVarLenUint8<Decoder:EntropyDecoder, Encoder:EntropyEncoder, AllocU32:Allocator<u32>>(
     substate_decode_uint8: &mut state::BrotliRunningDecodeUint8State,
     decoder: &mut Decoder,
-    encoder: &mut Encoder,
-    m32: &mut AllocU32,
+    _encoder: &mut Encoder,
+    _m32: &mut AllocU32,
     value: &mut u32,
     input: &[u8]
 ) -> BrotliResult {
@@ -232,8 +232,6 @@ fn DecodeVarLenUint8<Decoder:EntropyDecoder, Encoder:EntropyEncoder, AllocU32:Al
           *substate_decode_uint8 = BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_LONG;
           return BrotliResult::NeedsMoreInput;    
         }
-        *substate_decode_uint8 = BrotliRunningDecodeUint8State::BROTLI_STATE_DECODE_UINT8_NONE;
-        return BrotliResult::ResultSuccess;
       }
     }
   }
@@ -372,132 +370,6 @@ fn DecodeMetaBlockLength<AllocU8: alloc::Allocator<u8>,
       }
     }
   }
-}
-// Decodes the Huffman code.
-// This method doesn't read data from the bit reader, BUT drops the amount of
-// bits that correspond to the decoded symbol.
-// bits MUST contain at least 15 (BROTLI_HUFFMAN_MAX_CODE_LENGTH) valid bits.
-#[inline(always)]
-fn DecodeSymbol(bits: u32, table: &[HuffmanCode], br: &mut bit_reader::BrotliBitReader) -> u32 {
-  let mut table_index = bits & HUFFMAN_TABLE_MASK;
-  let mut table_element = fast!((table)[table_index as usize]);
-  if table_element.bits > HUFFMAN_TABLE_BITS as u8 {
-    let nbits = table_element.bits - HUFFMAN_TABLE_BITS as u8;
-    bit_reader::BrotliDropBits(br, HUFFMAN_TABLE_BITS);
-    table_index += table_element.value as u32;
-    table_element = fast!((table)[(table_index
-                           + ((bits >> HUFFMAN_TABLE_BITS)
-                              & bit_reader::BitMask(nbits as u32))) as usize]);
-  }
-  bit_reader::BrotliDropBits(br, table_element.bits as u32);
-  table_element.value as u32
-}
-
-// Reads and decodes the next Huffman code from bit-stream.
-// This method peeks 16 bits of input and drops 0 - 15 of them.
-#[inline(always)]
-fn ReadSymbol(table: &[HuffmanCode], br: &mut bit_reader::BrotliBitReader, input: &[u8]) -> u32 {
-  DecodeSymbol(bit_reader::BrotliGet16BitsUnmasked(br, input), table, br)
-}
-
-// Same as DecodeSymbol, but it is known that there is less than 15 bits of
-// input are currently available.
-fn SafeDecodeSymbol(table: &[HuffmanCode],
-                    mut br: &mut bit_reader::BrotliBitReader,
-                    result: &mut u32)
-                    -> bool {
-  let mut available_bits = bit_reader::BrotliGetAvailableBits(br);
-  if (available_bits == 0) {
-    if (fast!((table)[0]).bits == 0) {
-      *result = fast!((table)[0]).value as u32;
-      return true;
-    }
-    return false; /* No valid bits at all. */
-  }
-  let mut val = bit_reader::BrotliGetBitsUnmasked(br) as u32;
-  let table_index = (val & HUFFMAN_TABLE_MASK) as usize;
-  let table_element = fast!((table)[table_index]);
-  if (table_element.bits <= HUFFMAN_TABLE_BITS as u8) {
-    if (table_element.bits as u32 <= available_bits) {
-      bit_reader::BrotliDropBits(&mut br, table_element.bits as u32);
-      *result = table_element.value as u32;
-      return true;
-    } else {
-      return false; /* Not enough bits for the first level. */
-    }
-  }
-  if (available_bits <= HUFFMAN_TABLE_BITS) {
-    return false; /* Not enough bits to move to the second level. */
-  }
-
-  // Speculatively drop HUFFMAN_TABLE_BITS.
-  val = (val & bit_reader::BitMask(table_element.bits as u32)) >> HUFFMAN_TABLE_BITS;
-  available_bits -= HUFFMAN_TABLE_BITS;
-  let table_sub_element = fast!((table)[table_index + table_element.value as usize + val as usize]);
-  if (available_bits < table_sub_element.bits as u32) {
-    return false; /* Not enough bits for the second level. */
-  }
-
-  bit_reader::BrotliDropBits(&mut br, HUFFMAN_TABLE_BITS + table_sub_element.bits as u32);
-  *result = table_sub_element.value as u32;
-  true
-}
-
-fn SafeReadSymbol(table: &[HuffmanCode],
-                  br: &mut bit_reader::BrotliBitReader,
-                  result: &mut u32,
-                  input: &[u8])
-                  -> bool {
-  let mut val: u32 = 0;
-  if (bit_reader::BrotliSafeGetBits(br, 15, &mut val, input)) {
-    *result = DecodeSymbol(val, table, br);
-    return true;
-  } else {
-    mark_unlikely();
-  }
-  SafeDecodeSymbol(table, br, result)
-}
-
-// Makes a look-up in first level Huffman table. Peeks 8 bits.
-fn PreloadSymbol(safe: bool,
-                 table: &[HuffmanCode],
-                 br: &mut bit_reader::BrotliBitReader,
-                 bits: &mut u32,
-                 value: &mut u32,
-                 input: &[u8]) {
-  if (safe) {
-    return;
-  }
-  let table_element =
-    fast!((table)[bit_reader::BrotliGetBits(br, HUFFMAN_TABLE_BITS, input) as usize]);
-  *bits = table_element.bits as u32;
-  *value = table_element.value as u32;
-}
-
-// Decodes the next Huffman code using data prepared by PreloadSymbol.
-// Reads 0 - 15 bits. Also peeks 8 following bits.
-fn ReadPreloadedSymbol(table: &[HuffmanCode],
-                       br: &mut bit_reader::BrotliBitReader,
-                       bits: &mut u32,
-                       value: &mut u32,
-                       input: &[u8])
-                       -> u32 {
-  let result = if *bits > HUFFMAN_TABLE_BITS {
-    mark_unlikely();
-    let val = bit_reader::BrotliGet16BitsUnmasked(br, input);
-    let mut ext_index = (val & HUFFMAN_TABLE_MASK) + *value;
-    let mask = bit_reader::BitMask((*bits - HUFFMAN_TABLE_BITS));
-    bit_reader::BrotliDropBits(br, HUFFMAN_TABLE_BITS);
-    ext_index += (val >> HUFFMAN_TABLE_BITS) & mask;
-    let ext = fast!((table)[ext_index as usize]);
-    bit_reader::BrotliDropBits(br, ext.bits as u32);
-    ext.value as u32
-  } else {
-    bit_reader::BrotliDropBits(br, *bits);
-    *value
-  };
-  PreloadSymbol(false, table, br, bits, value, input);
-  result
 }
 
 fn Log2Floor(mut x: u32) -> u32 {
@@ -712,7 +584,7 @@ fn ReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
       } else {
         3
       };
-      let (a_repeat_delta, a_result) = s.entropy_decoder.get_uniform(extra_bits as u8, input, Unconditional{});
+      let (a_repeat_delta, _) = s.entropy_decoder.get_uniform(extra_bits as u8, input, Unconditional{});
       ProcessRepeatedCodeLength(a_code_len.into(),
                                 a_repeat_delta,
                                 alphabet_size,
@@ -742,8 +614,6 @@ fn SafeReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
    input: &[u8])
    -> BrotliResult {
   while (s.symbol < alphabet_size && s.space > 0) {
-    let mut p_index = 0;
-    let mut bits: u32 = 0;
     let a_memento = s.entropy_decoder.begin_speculative();
     let (a_code_len, a_result) = s.entropy_decoder.safe_get_stationary(&s.table[..], &s.complex_ans_table, huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH as u8, input, Speculative{});
     if let BrotliResult::ResultSuccess = a_result {
@@ -807,7 +677,6 @@ fn ReadCodeLengthCodeLengths<AllocU8: alloc::Allocator<u8>,
   for code_length_code_order in
       fast!((kCodeLengthCodeOrder)[s.sub_loop_counter as usize; CODE_LENGTH_CODES]).iter() {
     let code_len_idx = *code_length_code_order;
-    let mut ix: u32 = 0;
     let (mut v, a_result) = s.entropy_decoder.safe_get_stationary(&kCodeLengthPrefixCode[..], &s.code_length_ans_table, 4, input, Unconditional{});
     {
       if let BrotliResult::ResultSuccess = a_result {
@@ -1019,12 +888,10 @@ fn ReadBlockLength<Decoder:EntropyDecoder, Encoder:EntropyEncoder, AllocU8: Allo
   table: &[HuffmanCode],
   ans_table: &ANSTable<u32, u8, AllocU8, AllocU32, BlockLenSpec>,  
   decoder: &mut Decoder,
-  encoder: &mut Encoder,
-  m32: &mut AllocU32,
+  _encoder: &mut Encoder,
+  _m32: &mut AllocU32,
   input: &[u8]
 ) -> u32 {
-  let code: u32;
-  let nbits: u32;
   //FIXME: ANS
   let a_code = decoder.get_stationary(table, ans_table, 8, input);
   let a_nbits = prefix::kBlockLengthPrefixCode[a_code as usize].nbits as u32;
@@ -1051,8 +918,8 @@ fn SafeReadBlockLengthIndex<Decoder:EntropyDecoder, Encoder:EntropyEncoder, Allo
   table: &[HuffmanCode],
   ans_table: &ANSTable<u32, u8, AllocU8, AllocU32, BlockLenSpec>,
   decoder: &mut Decoder,
-  encoder: &mut Encoder,
-  m32: &mut AllocU32,
+  _encoder: &mut Encoder,
+  _m32: &mut AllocU32,
   input: &[u8],
   is_speculative: Speculative,
 ) -> (bool, u32) {
@@ -1077,8 +944,8 @@ fn SafeReadBlockLengthFromIndex<AllocU8: alloc::Allocator<u8>,
                                 Speculative: BoolTrait>(
   s : &mut BlockTypeAndLengthState<AllocU8, AllocU16,AllocU32, AllocHC>,
   decoder: &mut Decoder,
-  encoder: &mut Encoder,
-  m32: &mut AllocU32,
+  _encoder: &mut Encoder,
+  _m32: &mut AllocU32,
   result : &mut u32,
   res_index : (bool, u32),
   input : &[u8],
@@ -1087,7 +954,6 @@ fn SafeReadBlockLengthFromIndex<AllocU8: alloc::Allocator<u8>,
   if !res {
     return false;
   }
-  let mut bits: u32 = 0;
   let nbits = fast_ref!((prefix::kBlockLengthPrefixCode)[index as usize]).nbits; /* nbits==2..24 */
   let (a_bits, a_result) = decoder.get_uniform(nbits as u8, input, is_speculative);
   if let BrotliResult::ResultSuccess = a_result {
@@ -1217,7 +1083,6 @@ fn HuffmanTreeGroupDecode<AllocU8: alloc::Allocator<u8>,
       fast_mut!((htrees.slice_mut())[s.htree_index as usize ; (group_num_htrees as usize)])
     .iter_mut() {
     let mut table_size: u32 = 0;
-    s.entropy_decoder.set_active();
 
     result = ReadHuffmanCode(u32::from(alphabet_size), u32::from(group_max_symbol),
                              hcodes.slice_mut(),
@@ -1225,7 +1090,6 @@ fn HuffmanTreeGroupDecode<AllocU8: alloc::Allocator<u8>,
                              Some(&mut table_size),
                              &mut s,
                                input);
-    s.entropy_decoder.set_inactive();
 
     match result {
       BrotliResult::ResultSuccess => {}
@@ -1297,10 +1161,8 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
   loop {
     match s.substate_context_map {
       BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_NONE => {
-        s.entropy_decoder.set_active();
         result = DecodeVarLenUint8(&mut s.substate_decode_uint8,
                                    &mut s.entropy_decoder, &mut s.entropy_encoder, &mut s.alloc_u32, num_htrees, input);
-        s.entropy_decoder.set_inactive();
         match result {
           BrotliResult::ResultSuccess => {}
           _ => return result,
@@ -1323,7 +1185,6 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
         // No break, continue to next state.
       }
       BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_READ_PREFIX => {
-        s.entropy_decoder.set_active();
         if s.sub_loop_counter == 0 {  
             let (a_rle, a_result) = s.entropy_decoder.get_uniform(1, input, Unconditional{});
             if let BrotliResult::ResultSuccess = a_result {
@@ -1348,7 +1209,6 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
             assert_eq!(s.sub_loop_counter, 2);
             s.max_run_length_prefix = 0;
         }
-        s.entropy_decoder.set_inactive();
         BROTLI_LOG_UINT!(s.max_run_length_prefix);
         s.sub_loop_counter = 0;
         s.substate_context_map = BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_HUFFMAN;
@@ -1359,14 +1219,12 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
         let mut local_context_map_table = mem::replace(&mut s.context_map_table,
                                                        AllocHC::AllocatedMemory::default());
         let alphabet_size = *num_htrees + s.max_run_length_prefix;
-        s.entropy_decoder.set_active();
         result = ReadHuffmanCode(alphabet_size, alphabet_size,
                                  &mut local_context_map_table.slice_mut(),
                                  0,
                                  None,
                                  &mut s,
                                  input);
-         s.entropy_decoder.set_inactive();
          let prev_table = core::mem::replace(&mut s.context_map_ans_table, ANSTable::default());
          s.context_map_ans_table  = ANSTable::new_single_code(&mut s.alloc_u8, &mut s.alloc_u32,
                                                               local_context_map_table.slice(), ContextMapSpec::default(), Some(prev_table));
@@ -1382,7 +1240,6 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
         // No break, continue to next state.
       }
       BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_DECODE => {
-        s.entropy_decoder.set_active();
         let mut context_index: u32 = s.context_index;
         let max_run_length_prefix: u32 = s.max_run_length_prefix;
         let mut context_map = &mut context_map_arg.slice_mut();
@@ -1398,7 +1255,6 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
             }else {
               s.code = 0xFFFF;
               s.context_index = context_index;
-              s.entropy_decoder.set_inactive();
               return a_result;
             }
             BROTLI_LOG_UINT!(code);
@@ -1426,12 +1282,10 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
             } else {
               s.code = code;
               s.context_index = context_index;
-              s.entropy_decoder.set_inactive();
               return a_result;              
             }
             BROTLI_LOG_UINT!(reps);
             if (context_index + reps > context_map_size) {
-              s.entropy_decoder.set_inactive();
               return BROTLI_FAILURE();
             }
             loop {
@@ -1447,12 +1301,9 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
         }
         // No break, continue to next state.
         s.substate_context_map = BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_TRANSFORM;
-        s.entropy_decoder.set_inactive();
       }
       BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_TRANSFORM => {
-        s.entropy_decoder.set_active();
         let (bits, a_result) = s.entropy_decoder.get_uniform(1, input, Unconditional{});
-        s.entropy_decoder.set_inactive();  
         if let BrotliResult::NeedsMoreInput = a_result {
           s.substate_context_map = BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_TRANSFORM;
           return a_result;              
@@ -1530,7 +1381,7 @@ fn DecodeBlockTypeAndLength<
   let max_block_type = fast!((s.num_block_types)[tree_type as usize]);
   let tree_offset = tree_type as usize * huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize;
 
-  let mut block_type: u32 = 0;
+  let mut block_type: u32;
   if max_block_type <= 1 {
     return false;
   }
@@ -1955,7 +1806,6 @@ pub fn ReadContextModes<AllocU8: alloc::Allocator<u8>,
    -> BrotliResult {
 
   let mut i: i32 = s.loop_counter;
-  s.entropy_decoder.set_active();
   for context_mode_iter in fast_mut!((s.context_modes.slice_mut())[i as usize ;
                                                        (s.block_type_length_state.num_block_types[0]
                                                         as usize)]).iter_mut() {
@@ -1963,14 +1813,12 @@ pub fn ReadContextModes<AllocU8: alloc::Allocator<u8>,
     if let BrotliResult::ResultSuccess = a_result {
       *context_mode_iter = bits as u8;
     } else {
-      s.entropy_decoder.set_inactive();
       s.loop_counter = i;
       return a_result;
     }
     BROTLI_LOG_UINT!(i);
     i += 1;
   }
-  s.entropy_decoder.set_inactive();
   BrotliResult::ResultSuccess
 }
 
@@ -2009,18 +1857,6 @@ pub fn TakeDistanceFromRingBuffer<AllocU8: alloc::Allocator<u8>,
     }
   }
 }
-pub fn SafeReadBits(br: &mut bit_reader::BrotliBitReader,
-                    n_bits: u32,
-                    val: &mut u32,
-                    input: &[u8])
-                    -> bool {
-  if (n_bits != 0) {
-    bit_reader::BrotliSafeReadBits(br, n_bits, val, input)
-  } else {
-    *val = 0;
-    true
-  }
-}
 
 // Precondition: s.distance_code < 0
 pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
@@ -2035,7 +1871,6 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
    distance_hgroup: &[&[HuffmanCode]; 256])
    -> bool {
   let mut distval: i32;
-  s.entropy_decoder.set_active();
   let a_memento;
   if (!safe) {
     let preloaded = s.entropy_decoder.preload(distance_hgroup,
@@ -2051,7 +1886,6 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
     s.distance_code = i32::from(a_distance_code);
   } else {
     a_memento = s.entropy_decoder.begin_speculative();
-    let mut code: u32 = 0;
     let (a_code, a_result) = s.entropy_decoder.get(distance_hgroup,
                                                    &s.distance_ans_table,
                                                    s.dist_htree_index as u8,
@@ -2059,7 +1893,6 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
                                                    Speculative{});
     if let BrotliResult::NeedsMoreInput = a_result {
       s.entropy_decoder.abort_speculative(a_memento);
-      s.entropy_decoder.set_inactive();
       return false;
     }
     s.distance_code = i32::from(a_code);
@@ -2069,7 +1902,6 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
   if ((s.distance_code as u64 & 0xfffffffffffffff0) == 0) {
     TakeDistanceFromRingBuffer(s);
     fast_mut!((s.block_type_length_state.block_length)[2]) -= 1;
-    s.entropy_decoder.set_inactive();
     return true;
   }
   distval = s.distance_code - s.num_direct_distance_codes as i32;
@@ -2085,7 +1917,7 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
                         a_dextra as i32;
     } else {
       // This branch also works well when s.distance_postfix_bits == 0
-      let mut bits: u32 = 0;
+      let bits: u32;
       postfix = distval & s.distance_postfix_mask;
       distval >>= s.distance_postfix_bits;
       nbits = (distval as u32 >> 1) + 1;
@@ -2097,7 +1929,6 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
         } else {
           s.distance_code = -1; /* Restore precondition. */
           s.entropy_decoder.abort_speculative(a_memento);
-          s.entropy_decoder.set_inactive();
           return false;
         }
       } else {
@@ -2112,7 +1943,6 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
   }
   s.distance_code = s.distance_code - NUM_DISTANCE_SHORT_CODES as i32 + 1;
   fast_mut!((s.block_type_length_state.block_length)[2]) -= 1;
-  s.entropy_decoder.set_inactive();
   true
 }
 
@@ -2129,11 +1959,10 @@ pub fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
   input: &[u8],
   insert_copy_hgroup: &[&[HuffmanCode]; 256],
 ) -> bool {
-  let mut cmd_code: u32 = 0;
+  let cmd_code: u32;
   let mut insert_len_extra: u32 = 0;
-  let mut copy_length: u32 = 0;
+  let copy_length: u32;
   let v: prefix::CmdLutElement;
-  s.entropy_decoder.set_active();
   let a_memento;
   if (!safe) {
     a_memento = s.entropy_decoder.placeholder();
@@ -2145,7 +1974,6 @@ pub fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
     let (a_cmd_code, a_result) = s.entropy_decoder.get(insert_copy_hgroup, &s.insert_copy_ans_table, s.htree_command_index as u8, input, Speculative{});
     if let BrotliResult::NeedsMoreInput = a_result {
       s.entropy_decoder.abort_speculative(a_memento);
-      s.entropy_decoder.set_inactive();
       return false;
     }
     cmd_code = u32::from(a_cmd_code);
@@ -2168,14 +1996,12 @@ pub fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
     let (a_insert_len_extra, a_res) = s.entropy_decoder.get_uniform(v.insert_len_extra_bits as u8, input, Speculative{});
     if let BrotliResult::NeedsMoreInput = a_res {
       s.entropy_decoder.abort_speculative(a_memento);
-      s.entropy_decoder.set_inactive();
       return false;
     }
     insert_len_extra = a_insert_len_extra;
     let (a_copy_length, a_result) = s.entropy_decoder.get_uniform(v.copy_len_extra_bits as u8, input, Unconditional{});
     if let BrotliResult::NeedsMoreInput = a_result {
       s.entropy_decoder.abort_speculative(a_memento);
-      s.entropy_decoder.set_inactive();
       return false;
     }
     copy_length = a_copy_length;
@@ -2184,7 +2010,6 @@ pub fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
   s.copy_length = copy_length as i32 + v.copy_len_offset as i32;
   fast_mut!((s.block_type_length_state.block_length)[1]) -= 1;
   *insert_length += insert_len_extra as i32;
-  s.entropy_decoder.set_inactive();
   true
 }
 
@@ -2294,13 +2119,10 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
           }
           if (fast_mut!((s.block_type_length_state.block_length)[1]) == 0) {
             mark_unlikely();
-            s.entropy_decoder.set_active();
             if !DecodeCommandBlockSwitchInternal(safe, s, input) {
-              s.entropy_decoder.set_inactive();
               result = BrotliResult::NeedsMoreInput;
               break; // return
             }
-            s.entropy_decoder.set_inactive();
             s.state = BrotliRunningState::BROTLI_STATE_COMMAND_BEGIN;
             continue; // goto CommandBegin;
           }
@@ -2321,16 +2143,11 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
         BrotliRunningState::BROTLI_STATE_COMMAND_INNER => {
           // Read the literals in the command
           if (s.trivial_literal_context != 0) {
-            let mut bits: u32 = 0;
-            let mut value: u32 = 0;
-            let mut literal_htree = &fast!((literal_hgroup)[s.literal_htree_index as usize]);
-            s.entropy_decoder.set_active();
             let mut preloaded = if safe {
               (0,0)
             } else {
               s.entropy_decoder.preload(&literal_hgroup, &s.literal_ans_table, s.literal_htree_index as u8, input)
             };
-            s.entropy_decoder.set_inactive();
             let mut inner_return: bool = false;
             let mut inner_continue: bool = false;
             loop {
@@ -2348,18 +2165,12 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               }
               if (fast!((s.block_type_length_state.block_length)[0]) == 0) {
                 mark_unlikely();
-                s.entropy_decoder.set_active();
                 if (!DecodeLiteralBlockSwitchInternal(safe, s, input)) && safe {
-                  s.entropy_decoder.set_inactive();
                   result = BrotliResult::NeedsMoreInput;
                   inner_return = true;
                   break;
                 }
-                s.entropy_decoder.set_inactive();
-                literal_htree = fast_ref!((literal_hgroup)[s.literal_htree_index as usize]);
-                s.entropy_decoder.set_active();
                 preloaded = if safe {(0,0)} else {s.entropy_decoder.preload(&literal_hgroup, &s.literal_ans_table, s.literal_htree_index as u8, input)};
-                s.entropy_decoder.set_inactive();
                 if (s.trivial_literal_context == 0) {
                   s.state = BrotliRunningState::BROTLI_STATE_COMMAND_INNER;
                   inner_continue = true;
@@ -2371,10 +2182,8 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                 fast_mut!((s.ringbuffer.slice_mut())[pos as usize]) =
                   ReadPreloadedSymbol(literal_htree, s.entropy_decoder.bit_reader(), &mut bits, &mut value, input) as u8;
                  */
-                s.entropy_decoder.set_active();
                 fast_mut!((s.ringbuffer.slice_mut())[pos as usize]) = s.entropy_decoder.get_preloaded(&literal_hgroup, &s.literal_ans_table, s.literal_htree_index as u8, preloaded, input);
                 preloaded = s.entropy_decoder.preload(&literal_hgroup, &s.literal_ans_table, s.literal_htree_index as u8, input);
-                s.entropy_decoder.set_inactive();
               } else {
                 /*
                 let mut literal: u32 = 0;
@@ -2383,9 +2192,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                   inner_return = true;
                   break;
                 }*/
-                s.entropy_decoder.set_active();
                 let (literal, a_result) = s.entropy_decoder.get(&literal_hgroup, &s.literal_ans_table, s.literal_htree_index, input, Unconditional{});
-                s.entropy_decoder.set_inactive();
                 if let BrotliResult::ResultSuccess = a_result {
 
                 } else {
@@ -2439,14 +2246,11 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               }
               if (fast!((s.block_type_length_state.block_length)[0]) == 0) {
                 mark_unlikely();
-                s.entropy_decoder.set_active();
                 if (!DecodeLiteralBlockSwitchInternal(safe, s, input)) && safe {
-                  s.entropy_decoder.set_inactive();
                   result = BrotliResult::NeedsMoreInput;
                   inner_return = true;
                   break;
                 }
-                s.entropy_decoder.set_inactive();
                 if s.trivial_literal_context != 0 {
                   s.state = BrotliRunningState::BROTLI_STATE_COMMAND_INNER;
                   inner_continue = true;
@@ -2457,15 +2261,9 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               BROTLI_LOG_UINT!(p1);
               BROTLI_LOG_UINT!(p2);
               BROTLI_LOG_UINT!(context);
-              let hc: &[HuffmanCode];
               let context_index = fast_slice!((s.context_map)[s.context_map_slice_index + context as usize]);
-              {
-                
-                hc = fast!((literal_hgroup)[context_index as usize]);
-              }
               p2 = p1;
               if (!safe) {
-                s.entropy_decoder.set_active();
                 let preloaded = s.entropy_decoder.preload(&literal_hgroup,
                                                           &s.literal_ans_table,
                                                           context_index,
@@ -2475,15 +2273,12 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                                                      context_index,
                                                      preloaded,
                                                      input);
-                s.entropy_decoder.set_inactive();
               } else {
-                s.entropy_decoder.set_active();
                 let (literal, a_result) = s.entropy_decoder.get(&literal_hgroup,
                                                              &s.literal_ans_table,
                                                                 context_index,
                                                                 input,
                                                                 Unconditional{});
-                s.entropy_decoder.set_inactive();
                 if let BrotliResult::ResultSuccess = a_result {
                 } else {
                   result = a_result;
@@ -2533,13 +2328,10 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
           } else {
             if fast!((s.block_type_length_state.block_length)[2]) == 0 {
               mark_unlikely();
-              s.entropy_decoder.set_active();
               if (!DecodeDistanceBlockSwitchInternal(safe, s, input)) && safe {
-                s.entropy_decoder.set_inactive();
                 result = BrotliResult::NeedsMoreInput;
                 break; // return
               }
-              s.entropy_decoder.set_inactive();
             }
             if (!ReadDistanceInternal(safe, s, input, &distance_hgroup)) && safe {
               result = BrotliResult::NeedsMoreInput;
@@ -3012,7 +2804,6 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
               _ => break,
             }
             let index = s.loop_counter as usize;
-            s.entropy_decoder.set_active();
             result =
               DecodeVarLenUint8(&mut s.substate_decode_uint8,
                                 &mut s.entropy_decoder,
@@ -3020,7 +2811,6 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                                 &mut s.alloc_u32,
                                 &mut fast_mut!((s.block_type_length_state.num_block_types)[index]),
                                 local_input);
-            s.entropy_decoder.set_inactive();
           }
           match result {
             BrotliResult::ResultSuccess => {}
@@ -3041,7 +2831,6 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                                                    AllocHC::AllocatedMemory::default());
           let loop_counter = s.loop_counter as usize;
           let alphabet_size = fast!((s.block_type_length_state.num_block_types)[loop_counter]) + 2;
-          s.entropy_decoder.set_active();
           result =
             ReadHuffmanCode(alphabet_size, alphabet_size,
                             new_huffman_table.slice_mut(),
@@ -3049,7 +2838,6 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                             None,
                             &mut s,
                             local_input);
-          s.entropy_decoder.set_inactive();
           {
               let old_block_type_ans = mem::replace(&mut s.block_type_length_state.block_type_ans_table[loop_counter],
                                                     ANSTable::default());
@@ -3071,14 +2859,12 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           let tree_offset = s.loop_counter * huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as i32;
           let mut new_huffman_table = mem::replace(&mut s.block_type_length_state.block_len_trees,
                                                    AllocHC::AllocatedMemory::default());
-          s.entropy_decoder.set_active();
           result = ReadHuffmanCode(kNumBlockLengthCodes, kNumBlockLengthCodes,
                                    new_huffman_table.slice_mut(),
                                    tree_offset as usize,
                                    None,
                                    &mut s,
                                    local_input);
-          s.entropy_decoder.set_inactive();
           {
               let old_block_len_ans = mem::replace(&mut s.block_type_length_state.block_len_ans_table[s.loop_counter as usize],
                                                     ANSTable::default());
@@ -3101,7 +2887,6 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
 
           let mut block_length_out: u32 = 0;
           let ind_ret: (bool, u32);
-          s.entropy_decoder.set_active();
           ind_ret = SafeReadBlockLengthIndex(&s.block_type_length_state.substate_read_block_length,
                                              s.block_type_length_state.block_length_index,
                                              fast_slice!((s.block_type_length_state.block_len_trees)
@@ -3116,10 +2901,8 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                                            local_input,
                                            Unconditional{}) {
             result = BrotliResult::NeedsMoreInput;
-            s.entropy_decoder.set_inactive();
             break;
           }
-          s.entropy_decoder.set_inactive();
           fast_mut!((s.block_type_length_state.block_length)[s.loop_counter as usize]) =
             block_length_out;
           BROTLI_LOG_UINT!(s.block_type_length_state.block_length[s.loop_counter as usize]);

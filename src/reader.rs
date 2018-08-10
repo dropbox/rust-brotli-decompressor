@@ -140,6 +140,7 @@ pub struct Decompressor<R: Read>(DecompressorCustomAlloc<R,
                                                          <HeapAllocUninitialized<u8>
                                                           as Allocator<u8>>::AllocatedMemory,
                                                          HeapAllocUninitialized<u8>,
+                                                         HeapAllocUninitialized<u16>,
                                                          HeapAllocUninitialized<u32>,
                                                          HeapAllocUninitialized<HuffmanCode> >);
 
@@ -154,15 +155,17 @@ impl<R: Read> Decompressor<R> {
                                                  as Allocator<u8>>::AllocatedMemory) -> Self {
     let mut alloc_u8 = unsafe { HeapAllocUninitialized::<u8>::new() };
     let buffer = alloc_u8.alloc_cell(if buffer_size == 0 {4096} else {buffer_size});
+    let alloc_u16 = unsafe { HeapAllocUninitialized::<u16>::new() };
     let alloc_u32 = unsafe { HeapAllocUninitialized::<u32>::new() };
     let alloc_hc = unsafe { HeapAllocUninitialized::<HuffmanCode>::new() };
     Decompressor::<R>(DecompressorCustomAlloc::<R,
                                                 <HeapAllocUninitialized<u8>
                                                  as Allocator<u8>>::AllocatedMemory,
                                                 HeapAllocUninitialized<u8>,
+                                                HeapAllocUninitialized<u16>,
                                                 HeapAllocUninitialized<u32>,
                                                 HeapAllocUninitialized<HuffmanCode> >
-      ::new_with_custom_dictionary(r, buffer, alloc_u8, alloc_u32, alloc_hc, dict))
+      ::new_with_custom_dictionary(r, buffer, alloc_u8, alloc_u16, alloc_u32, alloc_hc, dict))
   }
 
   pub fn get_ref(&self) -> &R {

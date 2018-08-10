@@ -59,9 +59,10 @@ pub trait HistogramSpec:Default {
 struct Histogram<AllocU32:Allocator<u32>, Spec:HistogramSpec> {
     histogram: AllocU32::AllocatedMemory,
     num_htrees: u16,
-    spec:Spec,
+    _spec:Spec,
 }
 impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
+    #[allow(dead_code)]
     fn new_from_single_code<AllocU32: Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u32: &mut AllocH,  group:&HuffmanTreeGroup<AllocU32,AllocHC>, previous_mem: Option<AllocH::AllocatedMemory>) -> Self{
         Self::new(alloc_u32, &group.htrees.slice()[..group.num_htrees as usize], group.codes.slice(), previous_mem)
     }
@@ -77,7 +78,7 @@ impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
         let mut ret = Histogram::<AllocH, Spec> {
             num_htrees:num_htrees as u16,
             histogram:buf,
-            spec:Spec::default(),
+            _spec:Spec::default(),
         };
         if BENCHMARK_NOANS {
           return ret;
@@ -214,11 +215,13 @@ impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
             assert_eq!(total_count, u32::from(TOT_FREQ));
         }
     }
-    fn free(&mut self, m32: &mut AllocH) {
+    #[allow(unused)] // these usually just get converted over to CDFs
+    pub fn free(&mut self, m32: &mut AllocH) {
         m32.free_cell(core::mem::replace(&mut self.histogram, AllocH::AllocatedMemory::default()));
         
     }
 }
+#[allow(unused)]
 pub struct CDF<HistEntTrait, AllocH: Allocator<HistEntTrait>, Spec:HistogramSpec> {
     sym:AllocH::AllocatedMemory,
     num_htrees: u16,
@@ -234,6 +237,7 @@ impl<HistEntTrait, AllocH: Allocator<HistEntTrait>, Spec:HistogramSpec> Default 
     }
 }
 impl<AllocH: Allocator<u32>, Spec:HistogramSpec> CDF<u32, AllocH, Spec> {
+    #[allow(unused)]
     pub fn new_single_code(alloc_u32: &mut AllocH, group:&[HuffmanCode], spec: Spec, mut old_ans: Option<Self>) -> Self {
         Self::new(alloc_u32, &[0], group, spec, old_ans)
     }
@@ -248,7 +252,7 @@ impl<AllocH: Allocator<u32>, Spec:HistogramSpec> CDF<u32, AllocH, Spec> {
         
         let mut histogram;
         if old_ans_ok {
-            let mut old = old_ans.unwrap();
+            let old = old_ans.unwrap();
             histogram = Histogram::<AllocH, Spec>::new(alloc_u32, group_count, group, Some(old.sym));
         } else {
             histogram = Histogram::<AllocH, Spec>::new(alloc_u32, group_count, group, None);
@@ -274,6 +278,7 @@ impl<AllocH: Allocator<u32>, Spec:HistogramSpec> CDF<u32, AllocH, Spec> {
             num_htrees:histogram.num_htrees
         }
     }
+    #[allow(unused)]
     pub fn new_from_group<AllocU32:Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u32: &mut AllocH, group:&HuffmanTreeGroup<AllocU32, AllocHC>, spec: Spec, mut old_ans: Option<Self>) -> Self {
         Self::new(alloc_u32, &group.htrees.slice()[..group.num_htrees as usize], group.codes.slice(), spec, old_ans)
     }
@@ -300,10 +305,10 @@ impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
 impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone+Copy,
      AllocS: Allocator<Symbol>,
      AllocH: Allocator<u32>, Spec:HistogramSpec> ANSTable<u32, Symbol, AllocS, AllocH, Spec> {
-    pub fn new_single_code(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group:&[HuffmanCode], spec: Spec, mut old_ans: Option<Self>) -> Self {
+    pub fn new_single_code(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group:&[HuffmanCode], spec: Spec, old_ans: Option<Self>) -> Self {
         Self::new(alloc_u8, alloc_u32, &[0], group, spec, old_ans)
     }
-    pub fn new(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group_count: &[u32], group:&[HuffmanCode], spec: Spec, mut old_ans: Option<Self>) -> Self {
+    pub fn new(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group_count: &[u32], group:&[HuffmanCode], spec: Spec, old_ans: Option<Self>) -> Self {
         let (cdf, old_rev) = match old_ans {
             Some(old) => {
                 (CDF::new(alloc_u32, group_count, group, spec, Some(old.cdf)), Some(old.state_lookup))
@@ -326,9 +331,16 @@ impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone+Copy,
                 alloc_u8.alloc_cell(group_count.len() as usize * TOT_FREQ as usize)
             }
         };
+        if BENCHMARK_NOANS {
+            return ANSTable::<u32, Symbol, AllocS, AllocH, Spec>{
+                state_lookup:rev,
+                cdf:cdf,
+            };
+        }
         for tree_id in 0..group_count.len() as usize{
             let mut sym = Symbol::from(0u8);
             let mut notfirst = 0u8;
+            
             for start_freq in cdf.sym.slice().split_at(tree_id as usize * Spec::ALPHABET_SIZE).1.split_at(Spec::ALPHABET_SIZE).0 {
                 sym += Symbol::from(notfirst);   
                 let ent = HistEnt::from(*start_freq);
@@ -345,7 +357,7 @@ impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone+Copy,
         }
         
     }
-    pub fn new_from_group<AllocU32:Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group:&HuffmanTreeGroup<AllocU32, AllocHC>, spec: Spec, mut old_ans: Option<Self>) -> Self {
+    pub fn new_from_group<AllocU32:Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group:&HuffmanTreeGroup<AllocU32, AllocHC>, spec: Spec, old_ans: Option<Self>) -> Self {
         Self::new(alloc_u8, alloc_u32, &group.htrees.slice()[..group.num_htrees as usize], group.codes.slice(), spec, old_ans)
     }
     pub fn free(&mut self, ms: &mut AllocS, mh: &mut AllocH) {
@@ -401,8 +413,8 @@ impl HistogramSpec for CodeLengthSymbolSpec {
     const ALPHABET_SIZE: usize = 18;
 }
 
-struct LiteralANSTable<AllocSym:Allocator<u8>, AllocH:Allocator<u32>>(ANSTable<u32, u8, AllocSym,  AllocH, LiteralSpec>);
+//struct LiteralANSTable<AllocSym:Allocator<u8>, AllocH:Allocator<u32>>(ANSTable<u32, u8, AllocSym,  AllocH, LiteralSpec>);
 
-struct DistanceANSTable<AllocSym:Allocator<u16>, AllocH:Allocator<u32>>(ANSTable<u32, u16, AllocSym,  AllocH, DistanceSpec>);
-struct InsertCopyANSTable<AllocSym:Allocator<u16>, AllocH:Allocator<u32>>(ANSTable<u32, u16, AllocSym,  AllocH, InsertCopySpec>);
+//struct DistanceANSTable<AllocSym:Allocator<u16>, AllocH:Allocator<u32>>(ANSTable<u32, u16, AllocSym,  AllocH, DistanceSpec>);
+//struct InsertCopyANSTable<AllocSym:Allocator<u16>, AllocH:Allocator<u32>>(ANSTable<u32, u16, AllocSym,  AllocH, InsertCopySpec>);
 

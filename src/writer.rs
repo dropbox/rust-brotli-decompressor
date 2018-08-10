@@ -148,8 +148,7 @@ impl<W: Write> DecompressorWriter<W> {
   pub fn new_with_custom_dictionary(w: W, buffer_size: usize, dict: <HeapAllocUninitialized<u8> as Allocator<u8>>::AllocatedMemory) -> Self {
     let mut alloc_u8 = unsafe { HeapAllocUninitialized::<u8>::new() };
     let buffer = alloc_u8.alloc_cell(buffer_size);
-    let mut alloc_u16 = unsafe { HeapAllocUninitialized::<u8>::new() };
-    let buffer = alloc_u16.alloc_cell(buffer_size);
+    let alloc_u16 = unsafe { HeapAllocUninitialized::<u16>::new() };
     let alloc_u32 = unsafe { HeapAllocUninitialized::<u32>::new() };
     let alloc_hc = unsafe { HeapAllocUninitialized::<HuffmanCode>::new() };
     DecompressorWriter::<W>(DecompressorWriterCustomAlloc::<W,
