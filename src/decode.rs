@@ -2036,35 +2036,23 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
    distance_hgroup: &[&[HuffmanCode]; 256])
    -> bool {
   let mut distval: i32;
-  let mut memento = bit_reader::BrotliBitReaderState::default();
+  s.entropy_decoder.set_active();
   let a_memento;
   if (!safe) {
     let preloaded = s.entropy_decoder.preload(distance_hgroup,
                                               &s.distance_ans_table,
                                               s.dist_htree_index as u8,
                                               input);
-    s.distance_code = ReadSymbol(fast!((distance_hgroup)[s.dist_htree_index as usize]),
-                                 s.entropy_decoder.bit_reader(),
-                                 input) as i32;
     a_memento = s.entropy_decoder.placeholder();
     let a_distance_code = s.entropy_decoder.get_preloaded(distance_hgroup,
                                                                &s.distance_ans_table,
                                                                s.dist_htree_index as u8,
                                                                preloaded,
                                                                input);
-    if ANS_READER {
-      s.distance_code = i32::from(a_distance_code);
-    }
+    s.distance_code = i32::from(a_distance_code);
   } else {
     a_memento = s.entropy_decoder.begin_speculative();
     let mut code: u32 = 0;
-    memento = bit_reader::BrotliBitReaderSaveState(s.entropy_decoder.br());
-    if !SafeReadSymbol(fast!((distance_hgroup)[s.dist_htree_index as usize]),
-                       s.entropy_decoder.bit_reader(),
-                       &mut code,
-                       input) {
-      return false;
-    }
     let (a_code, a_result) = s.entropy_decoder.get(distance_hgroup,
                                                    &s.distance_ans_table,
                                                    s.dist_htree_index as u8,
@@ -2072,18 +2060,17 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
                                                    Speculative{});
     if let BrotliResult::NeedsMoreInput = a_result {
       s.entropy_decoder.abort_speculative(a_memento);
+      s.entropy_decoder.set_inactive();
       return false;
     }
-    s.distance_code = code as i32;
-    if ANS_READER {
-      s.distance_code = i32::from(a_code);
-    }
+    s.distance_code = i32::from(a_code);
   }
   // Convert the distance code to the actual distance by possibly
   // looking up past distances from the s.ringbuffer.
   if ((s.distance_code as u64 & 0xfffffffffffffff0) == 0) {
     TakeDistanceFromRingBuffer(s);
     fast_mut!((s.block_type_length_state.block_length)[2]) -= 1;
+    s.entropy_decoder.set_inactive();
     return true;
   }
   distval = s.distance_code - s.num_direct_distance_codes as i32;
@@ -2094,13 +2081,9 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
     if (!safe && (s.distance_postfix_bits == 0)) {
       nbits = (distval as u32 >> 1) + 1;
       offset = ((2 + (distval & 1)) << nbits) - 4;
-      let mut dextra = bit_reader::BrotliReadBits(s.entropy_decoder.bit_reader(), nbits, input);
       let (a_dextra, _) = s.entropy_decoder.get_uniform(nbits as u8, input, Unconditional{});
-      if ANS_READER {
-        dextra = a_dextra;
-      }
       s.distance_code = s.num_direct_distance_codes as i32 + offset +
-                        dextra as i32;
+                        a_dextra as i32;
     } else {
       // This branch also works well when s.distance_postfix_bits == 0
       let mut bits: u32 = 0;
@@ -2108,27 +2091,19 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
       distval >>= s.distance_postfix_bits;
       nbits = (distval as u32 >> 1) + 1;
       if (safe) {
-        if (!SafeReadBits(s.entropy_decoder.bit_reader(), nbits, &mut bits, input)) {
-          s.distance_code = -1; /* Restore precondition. */
-          bit_reader::BrotliBitReaderRestoreState(s.entropy_decoder.bit_reader(), &memento);
-          return false;
-        }
         let (a_bits, a_result) = s.entropy_decoder.get_uniform(nbits as u8, input, Speculative{});
-        if let BrotliResult::NeedsMoreInput = a_result {
+        if let BrotliResult::ResultSuccess = a_result {
+          s.entropy_decoder.commit_speculative();
+          bits = a_bits;
+        } else {
           s.distance_code = -1; /* Restore precondition. */
           s.entropy_decoder.abort_speculative(a_memento);
+          s.entropy_decoder.set_inactive();
           return false;
         }
-        s.entropy_decoder.commit_speculative();
-        if ANS_READER {
-          bits = a_bits;
-        }
       } else {
-        bits = bit_reader::BrotliReadBits(s.entropy_decoder.bit_reader(), nbits, input);
         let (a_bits, _) = s.entropy_decoder.get_uniform(nbits as u8, input, Unconditional{});
-        if ANS_READER {
-          bits = a_bits;
-        }
+        bits = a_bits;
       }
       offset = ((2 + (distval & 1)) << nbits) - 4;
       s.distance_code = s.num_direct_distance_codes as i32 +
@@ -2138,6 +2113,7 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
   }
   s.distance_code = s.distance_code - NUM_DISTANCE_SHORT_CODES as i32 + 1;
   fast_mut!((s.block_type_length_state.block_length)[2]) -= 1;
+  s.entropy_decoder.set_inactive();
   true
 }
 
