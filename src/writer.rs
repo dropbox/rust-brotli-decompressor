@@ -192,7 +192,7 @@ pub struct DecompressorWriterCustomIo<ErrType,
   total_out: usize,
   output: W,
   error_if_invalid_data: Option<ErrType>,
-  state: BrotliState<AllocU8, AllocU16, AllocU32, AllocHC, NopEncoder, HuffmanDecoder>,
+  state: BrotliState<AllocU8, AllocU16, AllocU32, AllocHC, NopEncoder, HuffmanDecoder<AllocU8, AllocU32>>,
 }
 
 

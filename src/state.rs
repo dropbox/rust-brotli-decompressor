@@ -119,7 +119,7 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
                        AllocU16: alloc::Allocator<u16>,
                        AllocU32: alloc::Allocator<u32>,
                        AllocHC: alloc::Allocator<HuffmanCode>,
-                       Encoder:EntropyEncoder+Default, Decoder:EntropyDecoder+Default>
+                       Encoder:EntropyEncoder+Default, Decoder:EntropyDecoder<AllocU8, AllocU32> +Default>
 {
   pub state: BrotliRunningState,
 
@@ -369,7 +369,7 @@ impl <'brotli_state,
       AllocU32 : alloc::Allocator<u32>,
       AllocHC : alloc::Allocator<HuffmanCode>,
       Encoder:EntropyEncoder+Default,
-      Decoder:EntropyDecoder+Default> BrotliState<AllocU8, AllocU16, AllocU32, AllocHC, Encoder, Decoder> {
+      Decoder:EntropyDecoder<AllocU8, AllocU32>+Default> BrotliState<AllocU8, AllocU16, AllocU32, AllocHC, Encoder, Decoder> {
     pub fn new(mut alloc_u8 : AllocU8,
            alloc_u16 : AllocU16,
            mut alloc_u32 : AllocU32,

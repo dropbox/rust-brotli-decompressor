@@ -144,7 +144,7 @@ pub fn decompress_internal<InputType, OutputType>(r: &mut InputType,
                         HeapAllocator<u32>,
                         HeapAllocator<HuffmanCode>,
                         NopEncoder,
-                        HuffmanDecoder>::new(HeapAllocator::<u8> { default_value: 0 },
+                        HuffmanDecoder<HeapAllocator<u8>, HeapAllocator<u32>>>::new(HeapAllocator::<u8> { default_value: 0 },
                        HeapAllocator::<u16> { default_value: 0 },
                        HeapAllocator::<u32> { default_value: 0 },
                        HeapAllocator::<HuffmanCode> { default_value: HuffmanCode::default() });

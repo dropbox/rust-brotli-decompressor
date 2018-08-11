@@ -226,7 +226,11 @@ pub fn BrotliDecompressCustomIoCustomDict<ErrType,
                                        AllocU32,
                                        AllocHC,
                                        NopEncoder,
-                                       HuffmanDecoder>::new_with_custom_dictionary(alloc_u8, alloc_u16, alloc_u32, alloc_hc, custom_dictionary);
+                                       HuffmanDecoder<AllocU8, AllocU32>>::new_with_custom_dictionary(alloc_u8,
+                                                                                                      alloc_u16,
+                                                                                                      alloc_u32,
+                                                                                                      alloc_hc,
+                                                                                                      custom_dictionary);
   assert!(input_buffer.len() != 0);
   assert!(output_buffer.len() != 0);
   let mut available_out: usize = output_buffer.len();
