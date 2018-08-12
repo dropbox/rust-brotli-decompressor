@@ -119,7 +119,8 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
                        AllocU16: alloc::Allocator<u16>,
                        AllocU32: alloc::Allocator<u32>,
                        AllocHC: alloc::Allocator<HuffmanCode>,
-                       Encoder:EntropyEncoder+Default, Decoder:EntropyDecoder<AllocU8, AllocU32> +Default>
+                       Encoder:EntropyEncoder<AllocU8, AllocU32> + Default,
+                       Decoder:EntropyDecoder<AllocU8, AllocU32> + Default>
 {
   pub state: BrotliRunningState,
 
@@ -241,8 +242,8 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub context_map: AllocU8::AllocatedMemory,
   pub context_modes: AllocU8::AllocatedMemory,
   pub trivial_literal_contexts: [u32; 8],
-  pub entropy_encoder: Encoder,
   pub entropy_decoder: Decoder,
+  pub entropy_encoder: Encoder,
 }
 macro_rules! make_brotli_state {
     ($alloc_u8 : expr, $alloc_u16 : expr, $alloc_u32 : expr, $alloc_hc : expr, $custom_dict : expr, $custom_dict_len: expr) => {
@@ -354,9 +355,9 @@ macro_rules! make_brotli_state {
            num_literal_htrees : 0,
            context_map : AllocU8::AllocatedMemory::default(),
            context_modes : AllocU8::AllocatedMemory::default(),
-            trivial_literal_contexts : [0u32; 8],
-            entropy_encoder: Encoder::default(),
-            entropy_decoder: Decoder::default(),
+           trivial_literal_contexts : [0u32; 8],
+           entropy_decoder: Decoder::default(),
+           entropy_encoder: Encoder::default(),
         }
         } else {
             unreachable!();
@@ -368,8 +369,8 @@ impl <'brotli_state,
       AllocU16 : alloc::Allocator<u16>,
       AllocU32 : alloc::Allocator<u32>,
       AllocHC : alloc::Allocator<HuffmanCode>,
-      Encoder:EntropyEncoder+Default,
-      Decoder:EntropyDecoder<AllocU8, AllocU32>+Default> BrotliState<AllocU8, AllocU16, AllocU32, AllocHC, Encoder, Decoder> {
+      Decoder:EntropyDecoder<AllocU8, AllocU32>+Default,
+      Encoder:EntropyEncoder<AllocU8, AllocU32>+Default> BrotliState<AllocU8, AllocU16, AllocU32, AllocHC, Encoder, Decoder> {
     pub fn new(mut alloc_u8 : AllocU8,
            alloc_u16 : AllocU16,
            mut alloc_u32 : AllocU32,
