@@ -100,9 +100,8 @@ impl<AllocU8: Allocator<u8>, AllocU32: Allocator<u32>>  EntropyDecoder<AllocU8, 
                                 prior: u8,
                                 input:&[u8],
                                 _is_speculative: Speculative) -> (Symbol, BrotliResult) {
-    let mut val: u32 = 0;
-    let mut available_bits = bit_reader::BrotliGetAvailableBits(&mut self.br);
-      
+    let mut available_bits;
+    let mut val = 0;
     if bit_reader::BrotliSafeGetBits(&mut self.br, 15, &mut val, input) {
         let mut table_index = val & HUFFMAN_TABLE_MASK;
         let mut table_element = fast!((group[usize::from(prior)])[table_index as usize]);
@@ -117,6 +116,8 @@ impl<AllocU8: Allocator<u8>, AllocU32: Allocator<u32>>  EntropyDecoder<AllocU8, 
         }
         bit_reader::BrotliDropBits(&mut self.br, table_element.bits as u32);
         return (Symbol::cast(table_element.value), BrotliResult::ResultSuccess);
+    } else {
+        available_bits = bit_reader::BrotliGetAvailableBits(&mut self.br);
     }
   
     if (available_bits == 0) {
@@ -185,7 +186,7 @@ impl<AllocU8: Allocator<u8>, AllocU32: Allocator<u32>>  EntropyDecoder<AllocU8, 
         _is_speculative: Speculative,
 ) -> (Symbol, BrotliResult){
     let mut val: u32 = 0;
-    let mut available_bits = bit_reader::BrotliGetAvailableBits(&mut self.br);
+    let mut available_bits;
       
     if bit_reader::BrotliSafeGetBits(&mut self.br, 15, &mut val, input) {
         let mut table_index = val & ((1 << l1numbits) - 1);
@@ -201,6 +202,8 @@ impl<AllocU8: Allocator<u8>, AllocU32: Allocator<u32>>  EntropyDecoder<AllocU8, 
         }
         bit_reader::BrotliDropBits(&mut self.br, table_element.bits as u32);
         return (Symbol::cast(table_element.value), BrotliResult::ResultSuccess);
+    } else {
+        available_bits = bit_reader::BrotliGetAvailableBits(&mut self.br);
     }
   
     if (available_bits == 0) {

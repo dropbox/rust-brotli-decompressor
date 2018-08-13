@@ -2150,7 +2150,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
             break; // return
           }
           BROTLI_LOG!("[ProcessCommandsInternal] pos = %d insert = %d copy = %d distance = %d\n",
-              pos, i, s.copy_length, s.distance_code);
+                      pos, i, s.copy_length, s.distance_code);
           if (i == 0) {
             s.state = BrotliRunningState::BROTLI_STATE_COMMAND_POST_DECODE_LITERALS;
             continue; // goto CommandPostDecodeLiterals;
