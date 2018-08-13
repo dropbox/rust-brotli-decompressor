@@ -107,7 +107,7 @@ impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
                     let count = (index < 256) as u32 * 255 + 1;
                     let sym = code.value;
                     let bits = code.bits;
-                    if sym < Spec::ALPHABET_SIZE as u16 { //code.bits <= 8 {//&& !complete[(index & 0xff)] {
+                    if bits <= 8 { //code.bits <= 8 {//&& !complete[(index & 0xff)] {
                         //assert!(bits <= 8);
                         ret.histogram.slice_mut()[cur_htree as usize * Spec::ALPHABET_SIZE + sym as usize] +=  count;
                         total_count += count;

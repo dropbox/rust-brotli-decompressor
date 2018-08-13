@@ -2867,7 +2867,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
               let old_block_type_ans = mem::replace(&mut s.block_type_length_state.block_type_ans_table[loop_counter],
                                                     ANSTable::default());
               s.block_type_length_state.block_type_ans_table[loop_counter] = ANSTable::new_single_code(&mut s.alloc_u16, &mut s.alloc_u32,
-                                                                                                       new_huffman_table.slice(),
+                                                                                                       &new_huffman_table.slice()[tree_offset as usize..],
                                                                                                        BlockTypeSpec::default(),
                                                                                                        Some(old_block_type_ans));
           }
@@ -2894,7 +2894,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
               let old_block_len_ans = mem::replace(&mut s.block_type_length_state.block_len_ans_table[s.loop_counter as usize],
                                                     ANSTable::default());
               s.block_type_length_state.block_len_ans_table[s.loop_counter as usize] = ANSTable::new_single_code(&mut s.alloc_u8, &mut s.alloc_u32,
-                                                                                     new_huffman_table.slice(),
+                                                                                     &new_huffman_table.slice()[tree_offset as usize..],
                                                                                      BlockLenSpec::default(),
                                                                                      Some(old_block_len_ans));
           }
