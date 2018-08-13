@@ -147,7 +147,6 @@ impl<AllocU8: Allocator<u8>, AllocU32: Allocator<u32>>  EntropyDecoder<AllocU8, 
     if (available_bits < table_sub_element.bits as u32) {
       return (Symbol::from(0), BrotliResult::NeedsMoreInput); /* Not enough bits for the second level. */
     }
-
     bit_reader::BrotliDropBits(&mut self.br, HUFFMAN_TABLE_BITS + table_sub_element.bits as u32);
     (Symbol::cast(table_sub_element.value), BrotliResult::ResultSuccess)
   }
@@ -185,28 +184,55 @@ impl<AllocU8: Allocator<u8>, AllocU32: Allocator<u32>>  EntropyDecoder<AllocU8, 
         input: &[u8],
         _is_speculative: Speculative,
 ) -> (Symbol, BrotliResult){
-    let mut ix: u32 = 0;
-    if !bit_reader::BrotliSafeGetBits(self.bit_reader(), l1numbits.into(), &mut ix, input) {
-      let available_bits: u32 = bit_reader::BrotliGetAvailableBits(self.br());
-      if available_bits != 0 {
-        ix = bit_reader::BrotliGetBitsUnmasked(self.br()) as u32 & ((1 << l1numbits) - 1);
+    let mut val: u32 = 0;
+    let mut available_bits = bit_reader::BrotliGetAvailableBits(&mut self.br);
+      
+    if bit_reader::BrotliSafeGetBits(&mut self.br, 15, &mut val, input) {
+        let mut table_index = val & ((1 << l1numbits) - 1);
+        let mut table_element = fast!((group)[table_index as usize]);
+        if table_element.bits > l1numbits as u8 {
+            let nbits = table_element.bits - l1numbits as u8;
+            bit_reader::BrotliDropBits(&mut self.br, u32::from(l1numbits));
+            table_index += table_element.value as u32;
+            table_element = fast!((group)[(table_index
+                                           + ((val >> l1numbits)
+                                              & bit_reader::BitMask(nbits as u32))) as usize]);
+            
+        }
+        bit_reader::BrotliDropBits(&mut self.br, table_element.bits as u32);
+        return (Symbol::cast(table_element.value), BrotliResult::ResultSuccess);
+    }
+  
+    if (available_bits == 0) {
+      if (fast!((group)[0]).bits == 0) {
+        return (Symbol::cast(fast!((group)[0]).value), BrotliResult::ResultSuccess);
+      }
+      return (Symbol::from(0), BrotliResult::NeedsMoreInput);
+    }
+    let mut val = bit_reader::BrotliGetBitsUnmasked(&mut self.br) as u32;
+    let table_index = (val & ((1 << l1numbits) - 1)) as usize;
+    let table_element = fast!((group)[table_index]);
+    if (table_element.bits <= l1numbits) {
+      if (table_element.bits as u32 <= available_bits) {
+        bit_reader::BrotliDropBits(&mut self.br, table_element.bits as u32);
+        return (Symbol::cast(table_element.value), BrotliResult::ResultSuccess);
       } else {
-        ix = 0;
-      }
-      if group[ix as usize].bits as u32 > available_bits {
         return (Symbol::from(0), BrotliResult::NeedsMoreInput);
       }
     }
-    let entry = group[ix as usize];
-    if (entry.value as usize) < Spec::ALPHABET_SIZE {
-      bit_reader::BrotliDropBits(self.bit_reader(), entry.bits as u32);
-      return (Symbol::cast(entry.value), BrotliResult::ResultSuccess);
+    if (available_bits <= u32::from(l1numbits)) {
+      return (Symbol::from(0), BrotliResult::NeedsMoreInput); /* Not enough bits to move to the second level. */
     }
-    if !bit_reader::BrotliSafeGetBits(self.bit_reader(), entry.bits as u32, &mut ix, input) {
-        return (Symbol::from(0), BrotliResult::NeedsMoreInput);
+
+    // Speculatively drop l1numbits.
+    val = (val & bit_reader::BitMask(table_element.bits as u32)) >> l1numbits;
+    available_bits -= u32::from(l1numbits);
+    let table_sub_element = fast!((group)[table_index + table_element.value as usize + val as usize]);
+    if (available_bits < table_sub_element.bits as u32) {
+      return (Symbol::from(0), BrotliResult::NeedsMoreInput); /* Not enough bits for the second level. */
     }
-    bit_reader::BrotliDropBits(self.bit_reader(), entry.bits as u32);
-    (Symbol::cast(group[ix as usize + entry.value as usize].value), BrotliResult::ResultSuccess)
+    bit_reader::BrotliDropBits(&mut self.br, u32::from(l1numbits) + u32::from(table_sub_element.bits));
+    (Symbol::cast(table_sub_element.value), BrotliResult::ResultSuccess)
   }
   // precondition: input has at least 4 bytes
     fn get_uniform<Speculative:BoolTrait>(
