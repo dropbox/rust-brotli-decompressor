@@ -16,15 +16,18 @@ pub use self::interface::{
 };
 pub mod tee;
 pub mod huffman;
+pub mod billing;
+pub use self::tee::Tee;
 pub use self::huffman::{
   HUFFMAN_TABLE_BITS,
   HUFFMAN_TABLE_MASK,
   HuffmanDecoder,
 };
+pub use self::billing::BillingEncoder;
 #[derive(Default)]
 pub struct NopEncoder {
 }
-
+mod log4096;
 #[allow(unused)]
 impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, AllocU32> for NopEncoder {
   fn put<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec, Speculative:BoolTrait>(

@@ -3181,6 +3181,10 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
               _ => break,
             }
           }
+          let mut buffer=[0u8;4096];
+          while s.entropy_decoder.finish(&mut buffer[..]) != 0 {
+            
+          }
           return result;
         }
       }

@@ -28,6 +28,18 @@ impl<AllocU8:Allocator<u8>, AllocU32:Allocator<u32>,
     }
   }
 }
+impl<AllocU8:Allocator<u8>, AllocU32:Allocator<u32>,
+     Decoder:EntropyDecoder<AllocU8, AllocU32>+Default,
+     Encoder:EntropyEncoder<AllocU8, AllocU32>+Default> Default for Tee<AllocU8, AllocU32, Decoder, Encoder> {
+  fn default() -> Self {
+    Tee{
+      decoder:Decoder::default(),
+      encoder:Encoder::default(),
+      p0:PhantomData::default(),
+      p1:PhantomData::default(),
+    }
+  }
+}
 
 impl<AllocU8:Allocator<u8>, AllocU32:Allocator<u32>,
      Decoder:EntropyDecoder<AllocU8, AllocU32>,

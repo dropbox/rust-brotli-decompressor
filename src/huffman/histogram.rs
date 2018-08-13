@@ -13,7 +13,7 @@ pub type Freq = u16;
 #[allow(unused)]
 const TF_SHIFT: Freq = 12;
 const TOT_FREQ: Freq = 1 << TF_SHIFT;
-const BENCHMARK_NOANS: bool = true;
+const BENCHMARK_NOANS: bool = false;
 #[derive(Copy,Clone,Default)]
 pub struct HistEnt(pub u32);
 
@@ -302,11 +302,14 @@ impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
         }
     }
 }
-impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone+Copy,
+impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
      AllocS: Allocator<Symbol>,
      AllocH: Allocator<u32>, Spec:HistogramSpec> ANSTable<u32, Symbol, AllocS, AllocH, Spec> {
     pub fn new_single_code(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group:&[HuffmanCode], spec: Spec, old_ans: Option<Self>) -> Self {
         Self::new(alloc_u8, alloc_u32, &[0], group, spec, old_ans)
+    }
+    pub fn get_prob(&self, prior: u8, sym: u32) -> HistEnt {
+      HistEnt::from(self.cdf.sym.slice()[usize::from(prior) * Spec::ALPHABET_SIZE + sym as usize])
     }
     pub fn new(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group_count: &[u32], group:&[HuffmanCode], spec: Spec, old_ans: Option<Self>) -> Self {
         let (cdf, old_rev) = match old_ans {
@@ -342,11 +345,11 @@ impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone+Copy,
             let mut notfirst = 0u8;
             
             for start_freq in cdf.sym.slice().split_at(tree_id as usize * Spec::ALPHABET_SIZE).1.split_at(Spec::ALPHABET_SIZE).0 {
-                sym += Symbol::from(notfirst);   
+                sym += Symbol::from(notfirst.clone());   
                 let ent = HistEnt::from(*start_freq);
                 let rev_slice = rev.slice_mut().split_at_mut(tree_id * TOT_FREQ as usize + ent.start() as usize).1;
                 for rev_lk in rev_slice.split_at_mut(ent.freq() as usize).0 {
-                    *rev_lk = sym;
+                    *rev_lk = sym.clone();
                 }
                 notfirst = 1;
             }

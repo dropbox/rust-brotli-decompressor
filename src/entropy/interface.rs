@@ -29,16 +29,23 @@ pub type Unconditional = FalseBoolTrait;
 
 pub trait SymbolCast {
   fn cast(data: u16) -> Self;
+  fn into_u64(&self) -> u64;
 }
 
 impl SymbolCast for u8 {
   fn cast(data:u16) -> Self {
     return data as u8
   }
+  fn into_u64(&self) -> u64 {
+    return u64::from(*self)
+  }
 }
 impl SymbolCast for u16 {
   fn cast(data:u16) -> Self {
     return data
+  }
+  fn into_u64(&self) -> u64 {
+    return u64::from(*self)
   }
 }
 
