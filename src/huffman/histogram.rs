@@ -11,8 +11,8 @@ use super::HuffmanTreeGroup;
 #[allow(unused)]
 pub type Freq = u16;
 #[allow(unused)]
-const TF_SHIFT: Freq = 12;
-const TOT_FREQ: Freq = 1 << TF_SHIFT;
+pub const TF_SHIFT: Freq = 12;
+pub const TOT_FREQ: Freq = 1 << TF_SHIFT;
 const BENCHMARK_NOANS: bool = false;
 #[derive(Copy,Clone,Default)]
 pub struct HistEnt(pub u32);
@@ -287,6 +287,12 @@ impl<AllocH: Allocator<u32>, Spec:HistogramSpec> CDF<u32, AllocH, Spec> {
     }
 
 }
+
+pub struct RationalProb {
+    pub num: u16,
+    pub denom: u16,
+}
+
 pub struct ANSTable<HistEntTrait, Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone, AllocS: Allocator<Symbol>, AllocH: Allocator<HistEntTrait>, Spec:HistogramSpec>
     where HistEnt:From<HistEntTrait> {
     state_lookup:AllocS::AllocatedMemory,
@@ -310,7 +316,18 @@ impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
     }
     pub fn get_prob(&self, prior: u8, sym: u32) -> HistEnt {
       HistEnt::from(self.cdf.sym.slice()[usize::from(prior) * Spec::ALPHABET_SIZE + sym as usize])
-    }
+    }/*
+    pub fn get_b16_prob(&self, prior: u8, sym: u32) -> (u16, RationalProb) {
+        let mut upper_freq_total = 0u16;
+        for lower in 0..16 {
+            upper_freq_total += get_prob(prior, (sym & 0xff00) | lower).freq();
+        }
+        let mut upper_ret = get_prob(prior, (sym & 0xff00));
+        let mut lower_ret = get_prob(prior, sym);
+        upper_ret.set_freq(upper_freq_total);
+        let lower_prob = RationalProb{num:lower_ret.freq(), denom:upper_freq_total};
+        (upper_ret, lower_prob)
+    }*/
     pub fn new(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group_count: &[u32], group:&[HuffmanCode], spec: Spec, old_ans: Option<Self>) -> Self {
         let (cdf, old_rev) = match old_ans {
             Some(old) => {
