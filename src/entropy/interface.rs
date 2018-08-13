@@ -56,7 +56,7 @@ pub trait EntropyEncoder<AllocU8: Allocator<u8>, AllocU32: Allocator<u32>> {
     m8: &mut AllocU8, m32: &mut AllocU32,
     group:&[&[HuffmanCode];256],
     prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
-    prior: u8,
+    prior: (u8, u8, u8),
     symbol: Symbol,
     is_speculative: Speculative);
   fn put_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec, Speculative:BoolTrait>(
@@ -97,7 +97,7 @@ pub trait EntropyDecoder<AllocU8: Allocator<u8>, AllocU32: Allocator<u32>> {
                                  m8: &mut AllocU8, m32: &mut AllocU32,
                                  group:&[&[HuffmanCode];256],
                                  prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
-                                 prior: u8,
+                                 prior: (u8, u8, u8),
                                  input:&[u8]) -> (u32, u32);
   // precondition: input has at least 4 bytes
   fn get_preloaded<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone,
@@ -107,7 +107,7 @@ pub trait EntropyDecoder<AllocU8: Allocator<u8>, AllocU32: Allocator<u32>> {
                                        m8: &mut AllocU8, m32: &mut AllocU32,
                                        group:&[&[HuffmanCode];256],
                                        prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
-                                       prior: u8,
+                                       prior: (u8, u8, u8),
                                        preloaded: (u32, u32),
                                        input:&[u8]) -> Symbol;
   // precondition: input has at least 4 bytes
@@ -119,7 +119,7 @@ pub trait EntropyDecoder<AllocU8: Allocator<u8>, AllocU32: Allocator<u32>> {
                                 m8: &mut AllocU8, m32: &mut AllocU32,
                                 group:&[&[HuffmanCode];256],
                                 prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
-                                prior: u8,
+                                prior: (u8, u8, u8),
                                 input:&[u8],
                                 is_speculative: Speculative) -> (Symbol, BrotliResult);
     fn get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec>(

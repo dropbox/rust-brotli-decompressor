@@ -21,10 +21,10 @@ impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, All
     m8: &mut AllocU8, m32: &mut AllocU32,
     group:&[&[HuffmanCode];256],
     prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
-    prior: u8,
+    prior: (u8, u8, u8),
     mut symbol: Symbol,
     is_speculative: Speculative){
-    let mut hist_ent = prob.get_prob(prior, symbol.into_u64() as u32);
+    let mut hist_ent = prob.get_prob(prior.0, symbol.into_u64() as u32);
     assert!(hist_ent.freq() != 0);
     let val = LOG4096[hist_ent.freq() as usize];
     if Speculative::VALUE {

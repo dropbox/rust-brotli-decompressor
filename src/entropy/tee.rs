@@ -70,7 +70,7 @@ impl<AllocU8:Allocator<u8>, AllocU32:Allocator<u32>,
                                  m8: &mut AllocU8, m32: &mut AllocU32,
                                  group:&[&[HuffmanCode];256],
                                  prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
-                                 prior: u8,
+                                 prior: (u8, u8, u8),
                                  input:&[u8]) -> (u32, u32){
     self.decoder.preload(m8, m32, group, prob, prior, input)
   }
@@ -82,7 +82,7 @@ impl<AllocU8:Allocator<u8>, AllocU32:Allocator<u32>,
                                        m8: &mut AllocU8, m32: &mut AllocU32,
                                        group:&[&[HuffmanCode];256],
                                        prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
-                                       prior: u8,
+                                       prior: (u8, u8, u8),
                                        preloaded: (u32, u32),
                                        input:&[u8]) -> Symbol {
     let ret = self.decoder.get_preloaded(m8, m32, group, prob, prior, preloaded, input);
@@ -98,7 +98,7 @@ impl<AllocU8:Allocator<u8>, AllocU32:Allocator<u32>,
                                 m8: &mut AllocU8, m32: &mut AllocU32,
                                 group:&[&[HuffmanCode];256],
                                 prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
-                                prior: u8,
+                                prior: (u8, u8, u8),
                                 input:&[u8],
                                 is_speculative: Speculative) -> (Symbol, BrotliResult) {
     let (sym, res) = self.decoder.get(m8, m32, group, prob, prior, input, is_speculative);

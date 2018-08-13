@@ -35,7 +35,7 @@ impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, All
     m8: &mut AllocU8, m32: &mut AllocU32,
     group:&[&[HuffmanCode];256],
     prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
-    prior: u8,
+    prior: (u8, u8, u8),
     symbol: Symbol,
     is_speculative: Speculative){
   }

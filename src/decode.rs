@@ -1887,13 +1887,13 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
     let preloaded = s.entropy_decoder.preload(&mut s.alloc_u8, &mut s.alloc_u32,
                                               distance_hgroup,
                                               &s.distance_ans_table,
-                                              s.dist_htree_index as u8,
+                                              (s.dist_htree_index as u8, 0, 0),
                                               input);
     a_memento = s.entropy_decoder.placeholder();
     let a_distance_code = s.entropy_decoder.get_preloaded(&mut s.alloc_u8, &mut s.alloc_u32,
                                                           distance_hgroup,
                                                           &s.distance_ans_table,
-                                                          s.dist_htree_index as u8,
+                                                          (s.dist_htree_index as u8, 0, 0),
                                                           preloaded,
                                                           input);
     s.distance_code = i32::from(a_distance_code);
@@ -1902,7 +1902,7 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
     let (a_code, a_result) = s.entropy_decoder.get(&mut s.alloc_u8, &mut s.alloc_u32,
                                                    distance_hgroup,
                                                    &s.distance_ans_table,
-                                                   s.dist_htree_index as u8,
+                                                   (s.dist_htree_index as u8, 0, 0),
                                                    input,
                                                    Speculative{});
     if let BrotliResult::NeedsMoreInput = a_result {
@@ -1980,12 +1980,12 @@ pub fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
   let a_memento;
   if (!safe) {
     a_memento = s.entropy_decoder.placeholder();
-    let preloaded = s.entropy_decoder.preload(&mut s.alloc_u8, &mut s.alloc_u32, insert_copy_hgroup, &s.insert_copy_ans_table, s.htree_command_index as u8, input); 
-    let a_cc = s.entropy_decoder.get_preloaded(&mut s.alloc_u8, &mut s.alloc_u32, insert_copy_hgroup, &s.insert_copy_ans_table, s.htree_command_index as u8, preloaded, input);
+    let preloaded = s.entropy_decoder.preload(&mut s.alloc_u8, &mut s.alloc_u32, insert_copy_hgroup, &s.insert_copy_ans_table, (s.htree_command_index as u8, 0, 0), input); 
+    let a_cc = s.entropy_decoder.get_preloaded(&mut s.alloc_u8, &mut s.alloc_u32, insert_copy_hgroup, &s.insert_copy_ans_table, (s.htree_command_index as u8, 0, 0), preloaded, input);
     cmd_code = u32::from(a_cc);
   } else {
     a_memento = s.entropy_decoder.begin_speculative();
-    let (a_cmd_code, a_result) = s.entropy_decoder.get(&mut s.alloc_u8, &mut s.alloc_u32, insert_copy_hgroup, &s.insert_copy_ans_table, s.htree_command_index as u8, input, Speculative{});
+    let (a_cmd_code, a_result) = s.entropy_decoder.get(&mut s.alloc_u8, &mut s.alloc_u32, insert_copy_hgroup, &s.insert_copy_ans_table, (s.htree_command_index as u8, 0, 0), input, Speculative{});
     if let BrotliResult::NeedsMoreInput = a_result {
       s.entropy_decoder.abort_speculative(a_memento);
       return false;
@@ -2160,11 +2160,14 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
         }
         BrotliRunningState::BROTLI_STATE_COMMAND_INNER => {
           // Read the literals in the command
+          let mut p1 = fast_slice!((s.ringbuffer)[((pos - 1) & s.ringbuffer_mask) as usize]);
+          let mut p2 = fast_slice!((s.ringbuffer)[((pos - 2) & s.ringbuffer_mask) as usize]);
           if (s.trivial_literal_context != 0) {
             let mut preloaded = if safe {
               (0,0)
             } else {
-              s.entropy_decoder.preload(&mut s.alloc_u8, &mut s.alloc_u32, &literal_hgroup, &s.literal_ans_table, s.literal_htree_index as u8, input)
+                s.entropy_decoder.preload(&mut s.alloc_u8, &mut s.alloc_u32, &literal_hgroup, &s.literal_ans_table,
+                                          (s.literal_htree_index as u8, p1, p2), input)
             };
             let mut inner_return: bool = false;
             let mut inner_continue: bool = false;
@@ -2189,7 +2192,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                   break;
                 }
                 preloaded = if safe {(0,0)} else {s.entropy_decoder.preload(&mut s.alloc_u8, &mut s.alloc_u32,
-                                                                            &literal_hgroup, &s.literal_ans_table, s.literal_htree_index as u8, input)};
+                                                                            &literal_hgroup, &s.literal_ans_table, (s.literal_htree_index as u8, p1, p2), input)};
                 if (s.trivial_literal_context == 0) {
                   s.state = BrotliRunningState::BROTLI_STATE_COMMAND_INNER;
                   inner_continue = true;
@@ -2201,10 +2204,13 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                 fast_mut!((s.ringbuffer.slice_mut())[pos as usize]) =
                   ReadPreloadedSymbol(literal_htree, s.entropy_decoder.bit_reader(), &mut bits, &mut value, input) as u8;
                  */
-                fast_mut!((s.ringbuffer.slice_mut())[pos as usize]) = s.entropy_decoder.get_preloaded(&mut s.alloc_u8, &mut s.alloc_u32,
-                                                                                                      &literal_hgroup, &s.literal_ans_table, s.literal_htree_index as u8, preloaded, input);
+                let lit = s.entropy_decoder.get_preloaded(&mut s.alloc_u8, &mut s.alloc_u32,
+                                                          &literal_hgroup, &s.literal_ans_table, (s.literal_htree_index as u8, p1, p2), preloaded, input);
+                fast_mut!((s.ringbuffer.slice_mut())[pos as usize]) = lit;
                 preloaded = s.entropy_decoder.preload(&mut s.alloc_u8, &mut s.alloc_u32,
-                                                      &literal_hgroup, &s.literal_ans_table, s.literal_htree_index as u8, input);
+                                                      &literal_hgroup, &s.literal_ans_table, (s.literal_htree_index as u8, lit, p1), input);
+                p2 = p1;
+                p1 = lit;
               } else {
                 /*
                 let mut literal: u32 = 0;
@@ -2214,7 +2220,9 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                   break;
                 }*/
                 let (literal, a_result) = s.entropy_decoder.get(&mut s.alloc_u8, &mut s.alloc_u32,
-                                                                &literal_hgroup, &s.literal_ans_table, s.literal_htree_index, input, Unconditional{});
+                                                                &literal_hgroup, &s.literal_ans_table, (s.literal_htree_index, p1, p2), input, Unconditional{});
+                p2 = p1;
+                p1 = literal;
                 if let BrotliResult::ResultSuccess = a_result {
 
                 } else {
@@ -2284,24 +2292,25 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               BROTLI_LOG_UINT!(p2);
               BROTLI_LOG_UINT!(context);
               let context_index = fast_slice!((s.context_map)[s.context_map_slice_index + context as usize]);
-              p2 = p1;
               if (!safe) {
                 let preloaded = s.entropy_decoder.preload(&mut s.alloc_u8, &mut s.alloc_u32,
                                                           &literal_hgroup,
                                                           &s.literal_ans_table,
-                                                          context_index,
+                                                          (context_index, p1, p2),
                                                           input);
-                p1 = s.entropy_decoder.get_preloaded(&mut s.alloc_u8, &mut s.alloc_u32,
+                let literal = s.entropy_decoder.get_preloaded(&mut s.alloc_u8, &mut s.alloc_u32,
                                                      &literal_hgroup,
                                                      &s.literal_ans_table,
-                                                     context_index,
+                                                     (context_index, p1, p2),
                                                      preloaded,
                                                      input);
+                  p2 = p1;
+                  p1 = literal;
               } else {
                 let (literal, a_result) = s.entropy_decoder.get(&mut s.alloc_u8, &mut s.alloc_u32,
                                                                 &literal_hgroup,
                                                                 &s.literal_ans_table,
-                                                                context_index,
+                                                                (context_index, p1, p2),
                                                                 input,
                                                                 Unconditional{});
                 if let BrotliResult::ResultSuccess = a_result {
@@ -2310,6 +2319,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                   inner_return = true;
                   break;
                 }
+                p2 = p1;
                 p1 = literal;
               }
               fast_slice_mut!((s.ringbuffer)[pos as usize]) = p1;
