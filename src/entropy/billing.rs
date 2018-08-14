@@ -8,10 +8,25 @@ use super::super::huffman::histogram::{ANSTable, HistogramSpec, HistEnt, TF_SHIF
 use super::interface::*;
 use core::ops::AddAssign;
 use entropy::log4096::LOG4096;
-#[derive(Default)]
-pub struct BillingEncoder {
+use probability::interface::*;
+use std::vec;
+
+pub struct BillingEncoder<CDF:CDF16+Sized> {
+  ucdf: vec::Vec<CDF>,
+  lcdf: vec::Vec<CDF>,
   total: [f64; 3],
   spec: [f64;3],
+}
+
+impl<CDF:CDF16+Sized> Default for BillingEncoder<CDF> {
+    fn default() -> Self {
+        BillingEncoder {
+            ucdf:vec![CDF::default(); 65536],
+            lcdf:vec![CDF::default(); 65536],
+            total:[0.0;3],
+            spec:[0.0;3],
+        }
+    }
 }
 
 fn approx_freq(denom: HistEnt, num: HistEnt) -> usize {
@@ -31,7 +46,7 @@ fn approx_freq(denom: HistEnt, num: HistEnt) -> usize {
 }
 
 #[allow(unused)]
-impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, AllocU32> for BillingEncoder {
+impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>,CDF:CDF16> EntropyEncoder<AllocU8, AllocU32> for BillingEncoder<CDF> {
     fn put<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec, Speculative:BoolTrait> (
         &mut self,
         m8: &mut AllocU8, m32: &mut AllocU32,
