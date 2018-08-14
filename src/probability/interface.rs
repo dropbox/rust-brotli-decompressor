@@ -304,28 +304,28 @@ impl Speed {
         Speed(0, 1024),
         Speed(2, 1024),
         Speed(1, 128),
-        Speed(1, 16384),
+        Speed(1, 4096),
         Speed(2, 2048),
         Speed(4, 1024),
-        Speed(8, 8192),
+        Speed(8, 4096),
         Speed(16, 48),
-        Speed(16, 8192),// old mud
+        Speed(16, 4096),// old mud
         Speed(32, 4096),
-        Speed(64, 16384),
+        Speed(64, 4096),
         Speed(128, 256),
-        Speed(128, 16384),
-        Speed(512, 16384),
+        Speed(128, 4096),
+        Speed(512, 4096),
         //Speed(1024, 16384),
-        Speed(1664, 16384),
+        Speed(1664, 4096),
         ];
-    pub const GEOLOGIC: Speed = Speed(0x0001, 0x4000);
+    pub const GEOLOGIC: Speed = Speed(0x0001, 0x1000);
     pub const GLACIAL: Speed = Speed(0x0004, 0x0a00);
-    pub const MUD: Speed =   Speed(0x0010, 0x2000);
+    pub const MUD: Speed =   Speed(0x0010, 0x1000);
     pub const SLOW: Speed =  Speed(0x0020, 0x1000);
-    pub const MED: Speed =   Speed(0x0030, 0x4000);
-    pub const FAST: Speed =  Speed(0x0060, 0x4000);
-    pub const PLANE: Speed = Speed(0x0080, 0x4000);
-    pub const ROCKET: Speed =Speed(0x0180, 0x4000);
+    pub const MED: Speed =   Speed(0x0030, 0x1000);
+    pub const FAST: Speed =  Speed(0x0060, 0x1000);
+    pub const PLANE: Speed = Speed(0x0080, 0x1000);
+    pub const ROCKET: Speed =Speed(0x0180, 0x1000);
     pub fn to_f8_tuple(&self) -> (u8, u8) {
         (speed_to_u8(self.inc()), speed_to_u8(self.lim()))
     }
@@ -339,14 +339,14 @@ impl Speed {
     }
     #[inline(always)]
     pub fn new(inc:i16, max: i16) -> Speed {
-        debug_assert!(inc <= 0x4000); // otherwise some sse hax fail
-        debug_assert!(max <= 0x4000); // otherwise some sse hax fail
+        debug_assert!(inc <= 0x1000); // otherwise some sse hax fail
+        debug_assert!(max <= 0x1000); // otherwise some sse hax fail
         Speed(inc, max)
     }
     #[inline(always)]
     pub fn lim(&self) -> i16 {
         let ret = self.1;
-        debug_assert!(ret <= 0x4000); // otherwise some sse hax fail
+        debug_assert!(ret <= 0x1000); // otherwise some sse hax fail
         ret
     }
     #[inline(always)]
@@ -364,12 +364,12 @@ impl Speed {
     }
     #[inline(always)]
     pub fn set_lim(&mut self, lim: i16) {
-        debug_assert!(lim <= 0x4000); // otherwise some sse hax fail
+        debug_assert!(lim <= 0x1000); // otherwise some sse hax fail
         self.1 = lim;
     }
     #[inline(always)]
     pub fn set_inc(&mut self, inc: i16) {
-        debug_assert!(inc <= 0x4000);
+        debug_assert!(inc <= 0x1000);
         self.0 = inc;
     }
 }
@@ -423,10 +423,10 @@ pub trait CDF16: Sized + Default + Copy + BaseCDF {
     fn average(&self, other: &Self, mix_rate: i32) ->Self;
 }
 
-pub const BLEND_FIXED_POINT_PRECISION : i8 = 15;
-pub const CDF_BITS : usize = 15; // 15 bits
+pub const BLEND_FIXED_POINT_PRECISION : i8 = 12;
+pub const CDF_BITS : usize = 12; // 15 bits
 pub const LOG2_SCALE: u32 = CDF_BITS as u32;
-pub const CDF_MAX : Prob = 32_767; // last value is implicitly 32768
+pub const CDF_MAX : Prob = 4_095; // last value is implicitly 32768
 const CDF_LIMIT : i64 = (CDF_MAX as i64) + 1;
 
 
