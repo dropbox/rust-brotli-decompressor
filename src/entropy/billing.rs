@@ -65,8 +65,19 @@ impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>,CDF:CDF16> EntropyEncoder<Al
         let mut hist_ent = prob.get_prob(prior.0, symbol.into_u64() as u32);
         assert!(hist_ent.freq() != 0);
         let val = LOG4096[hist_ent.freq() as usize];
+        let ufreq = b16hist_ent.freq();
+        let lfreq = approx_freq(b16hist_ent, hist_ent);
+        if Spec::ALPHABET_SIZE == 256 {
+            let primary_index = usize::from(prior.0) + usize::from(prior.1) * 256;
+            let u_est_freq = self.ucdf[primary_index].cdf((symbol.into_u64() >> 4) as u8);
+            self.ucdf[primary_index].blend((symbol.into_u64() >> 4) as u8, Speed::MED);
+            let secondary_index = (usize::from(prior.1) & 0xf) + (symbol.into_u64() as usize &0xfff0) + usize::from(prior.0) * 256;
+            let u_est_freq = self.ucdf[secondary_index].cdf(symbol.into_u64() as u8 & 0xf);
+            self.ucdf[primary_index].blend(symbol.into_u64() as u8 & 0xf, Speed::MED);
+            
+        }
         let (val_unib, val_lnib) = if Spec::ALPHABET_SIZE == 256 {
-            (LOG4096[b16hist_ent.freq() as usize], LOG4096[approx_freq(b16hist_ent, hist_ent)])
+            (LOG4096[ufreq as usize], LOG4096[lfreq])
         } else {
             (val, 0.0)
         };
