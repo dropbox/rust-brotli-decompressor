@@ -12,7 +12,7 @@ use super::brotli_decompressor::BrotliState;
 use super::brotli_decompressor::HuffmanCode;
 use super::brotli_decompressor::entropy::{NopEncoder, HuffmanDecoder};
 use super::HeapAllocator;
-
+use brotli_decompressor::FrequentistCDF;
 #[allow(unused_imports)]
 use super::alloc_no_stdlib::{Allocator, SliceWrapper, SliceWrapperMut};
 use std::time::Duration;
@@ -142,11 +142,13 @@ pub fn decompress_internal<InputType, OutputType>(r: &mut InputType,
           BrotliState::<HeapAllocator<u8>,
                         HeapAllocator<u16>,
                         HeapAllocator<u32>,
+                        HeapAllocator<FrequentistCDF>,
                         HeapAllocator<HuffmanCode>,
                         NopEncoder,
                         HuffmanDecoder<HeapAllocator<u8>, HeapAllocator<u32>>>::new(HeapAllocator::<u8> { default_value: 0 },
                        HeapAllocator::<u16> { default_value: 0 },
                        HeapAllocator::<u32> { default_value: 0 },
+                       HeapAllocator::<FrequentistCDF> { default_value: FrequentistCDF::default() },
                        HeapAllocator::<HuffmanCode> { default_value: HuffmanCode::default() });
     let mut input = brotli_state.alloc_u8.alloc_cell(input_buffer_limit);
     let mut output = brotli_state.alloc_u8.alloc_cell(output_buffer_limit);

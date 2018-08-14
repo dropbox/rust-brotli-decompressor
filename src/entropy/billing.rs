@@ -4,7 +4,7 @@ use core::marker::PhantomData;
 use alloc;
 use alloc::Allocator;
 use super::super::{HuffmanCode, HuffmanTreeGroup};
-use super::super::huffman::histogram::{ANSTable, HistogramSpec, HistEnt, TF_SHIFT};
+use super::super::huffman::histogram::{ANSTable, HistogramSpec, HistEnt, TF_SHIFT, FrequentistCDF};
 use super::interface::*;
 use core::ops::AddAssign;
 use entropy::log4096::LOG4096;
@@ -49,11 +49,11 @@ fn approx_freq(denom: HistEnt, num: HistEnt) -> usize {
 
 #[allow(unused)]
 impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, AllocU32> for BillingEncoder {
-    fn put<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec, Speculative:BoolTrait> (
+    fn put<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, AllocCDF : Allocator<FrequentistCDF>, Spec:HistogramSpec, Speculative:BoolTrait> (
         &mut self,
         m8: &mut AllocU8, m32: &mut AllocU32,
         group:&[&[HuffmanCode];256],
-        prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+        prob: &ANSTable<u32, Symbol, AllocS, AllocH, AllocCDF, Spec>,
         prior: (u8, u8, u8),
         mut symbol: Symbol,
         is_speculative: Speculative,
@@ -109,11 +109,11 @@ impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, All
         }
         
     }
-    fn put_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec, Speculative:BoolTrait>(
+    fn put_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, AllocCDF : Allocator<FrequentistCDF>, Spec:HistogramSpec, Speculative:BoolTrait>(
         &mut self,
         m8: &mut AllocU8, m32: &mut AllocU32,
         group:&[HuffmanCode],
-        prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+        prob: &ANSTable<u32, Symbol, AllocS, AllocH, AllocCDF, Spec>,
         l1numbits: u8,
         symbol: Symbol, 
         speculative: Speculative) {

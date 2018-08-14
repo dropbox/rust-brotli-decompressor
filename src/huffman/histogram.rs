@@ -305,6 +305,13 @@ pub struct RationalProb {
 pub struct NibbleANSTable<AllocCDF:Allocator<FrequentistCDF>> {
     cdfs: AllocCDF::AllocatedMemory, // 17 cdfs per htable
 }
+impl<AllocCDF:Allocator<FrequentistCDF>> Default for NibbleANSTable<AllocCDF> {
+    fn default() -> Self {
+        NibbleANSTable{
+            cdfs:AllocCDF::AllocatedMemory::default(),
+        }
+    }
+}
 impl<AllocCDF:Allocator<FrequentistCDF>> NibbleANSTable<AllocCDF> {
     pub fn new<HistEntTrait:Clone,
                AllocH: Allocator<HistEntTrait>,
@@ -376,26 +383,32 @@ impl<AllocCDF:Allocator<FrequentistCDF>> NibbleANSTable<AllocCDF> {
     }
 }
 
-pub struct ANSTable<HistEntTrait:Clone, Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone, AllocS: Allocator<Symbol>, AllocH: Allocator<HistEntTrait>, Spec:HistogramSpec>
+pub struct ANSTable<HistEntTrait:Clone, Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone, AllocS: Allocator<Symbol>, AllocH: Allocator<HistEntTrait>, AllocCDF:Allocator<FrequentistCDF>, Spec:HistogramSpec>
     where HistEnt:From<HistEntTrait> {
     state_lookup:AllocS::AllocatedMemory,
     cdf: CDF<HistEntTrait, AllocH, Spec>,
+    nibble: NibbleANSTable<AllocCDF>,
 }
 impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
      AllocS: Allocator<Symbol>,
-     AllocH: Allocator<u32>, Spec:HistogramSpec> Default for ANSTable<u32, Symbol, AllocS, AllocH, Spec> {
+     AllocH: Allocator<u32>,
+     AllocCDF: Allocator<FrequentistCDF>,
+     Spec:HistogramSpec> Default for ANSTable<u32, Symbol, AllocS, AllocH, AllocCDF, Spec> {
     fn default() -> Self {
-        ANSTable::<u32, Symbol, AllocS, AllocH, Spec> {
+        ANSTable::<u32, Symbol, AllocS, AllocH, AllocCDF, Spec> {
             state_lookup:AllocS::AllocatedMemory::default(),
             cdf:CDF::default(),
+            nibble:NibbleANSTable::default(),
         }
     }
 }
 impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
      AllocS: Allocator<Symbol>,
-     AllocH: Allocator<u32>, Spec:HistogramSpec> ANSTable<u32, Symbol, AllocS, AllocH, Spec> {
-    pub fn new_single_code(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group:&[HuffmanCode], spec: Spec, old_ans: Option<Self>) -> Self {
-        Self::new(alloc_u8, alloc_u32, &[0], group, spec, old_ans)
+     AllocH: Allocator<u32>,
+     AllocCDF: Allocator<FrequentistCDF>,
+     Spec:HistogramSpec,> ANSTable<u32, Symbol, AllocS, AllocH, AllocCDF, Spec> {
+    pub fn new_single_code(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, alloc_cdf: &mut AllocCDF, group:&[HuffmanCode], spec: Spec, old_ans: Option<Self>) -> Self {
+        Self::new(alloc_u8, alloc_u32, alloc_cdf, &[0], group, spec, old_ans)
     }
     pub fn get_prob(&self, prior: u8, sym: u32) -> HistEnt {
       HistEnt::from(self.cdf.sym.slice()[usize::from(prior) * Spec::ALPHABET_SIZE + sym as usize])
@@ -411,13 +424,13 @@ impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
         let lower_prob = RationalProb{num:lower_ret.freq(), denom:upper_freq_total};
         (upper_ret, lower_prob)
     }*/
-    pub fn new(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group_count: &[u32], group:&[HuffmanCode], spec: Spec, old_ans: Option<Self>) -> Self {
-        let (cdf, old_rev) = match old_ans {
+    pub fn new(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, alloc_cdf: &mut AllocCDF, group_count: &[u32], group:&[HuffmanCode], spec: Spec, old_ans: Option<Self>) -> Self {
+        let (mut cdf, old_rev, old_nibble) = match old_ans {
             Some(old) => {
-                (CDF::new(alloc_u32, group_count, group, spec, Some(old.cdf)), Some(old.state_lookup))
+                (CDF::new(alloc_u32, group_count, group, spec, Some(old.cdf)), Some(old.state_lookup), Some(old.nibble))
             }
             None => {
-                (CDF::new(alloc_u32, group_count, group, spec, None), None)
+                (CDF::new(alloc_u32, group_count, group, spec, None), None, None)
             }
         };
         
@@ -435,9 +448,10 @@ impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
             }
         };
         if BENCHMARK_NOANS {
-            return ANSTable::<u32, Symbol, AllocS, AllocH, Spec>{
+            return ANSTable::<u32, Symbol, AllocS, AllocH, AllocCDF, Spec>{
                 state_lookup:rev,
                 cdf:cdf,
+                nibble:NibbleANSTable::default(),
             };
         }
         for tree_id in 0..group_count.len() as usize{
@@ -454,18 +468,26 @@ impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
                 notfirst = 1;
             }
         }
-        ANSTable::<u32, Symbol, AllocS, AllocH, Spec>{
+        let nib =NibbleANSTable::new(alloc_cdf, &mut cdf, old_nibble);
+        ANSTable::<u32, Symbol, AllocS, AllocH, AllocCDF, Spec>{
             state_lookup:rev,
             cdf:cdf,
+            nibble:nib,
         }
         
     }
-    pub fn new_from_group<AllocU32:Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u8: &mut AllocS, alloc_u32: &mut AllocH, group:&HuffmanTreeGroup<AllocU32, AllocHC>, spec: Spec, old_ans: Option<Self>) -> Self {
-        Self::new(alloc_u8, alloc_u32, &group.htrees.slice()[..group.num_htrees as usize], group.codes.slice(), spec, old_ans)
+    pub fn new_from_group<AllocU32:Allocator<u32>, AllocHC:Allocator<HuffmanCode>>(alloc_u8: &mut AllocS,
+                                                                                   alloc_u32: &mut AllocH,
+                                                                                   alloc_cdf: &mut AllocCDF,
+                                                                                   group:&HuffmanTreeGroup<AllocU32, AllocHC>,
+                                                                                   spec: Spec,
+                                                                                   old_ans: Option<Self>) -> Self {
+        Self::new(alloc_u8, alloc_u32, alloc_cdf, &group.htrees.slice()[..group.num_htrees as usize], group.codes.slice(), spec, old_ans)
     }
-    pub fn free(&mut self, ms: &mut AllocS, mh: &mut AllocH) {
+    pub fn free(&mut self, ms: &mut AllocS, mh: &mut AllocH, mc: &mut AllocCDF) {
         ms.free_cell(core::mem::replace(&mut self.state_lookup, AllocS::AllocatedMemory::default()));
         self.cdf.free(mh);
+        self.nibble.free(mc);
     }
 }
 #[derive(Clone,Copy,Default)]

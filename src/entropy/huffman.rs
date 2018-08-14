@@ -4,7 +4,7 @@ use core::marker::PhantomData;
 use alloc;
 use alloc::Allocator;
 use super::super::{HuffmanCode, HuffmanTreeGroup};
-use super::super::huffman::histogram::{ANSTable, HistogramSpec};
+use super::super::huffman::histogram::{ANSTable, HistogramSpec, FrequentistCDF};
 use super::interface::*;
 use core::ops::AddAssign;
 
@@ -51,10 +51,11 @@ impl<AllocU8: Allocator<u8>, AllocU32: Allocator<u32>>  EntropyDecoder<AllocU8, 
   fn preload<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone,
              AllocS:Allocator<Symbol>,
              AllocH: Allocator<u32>,
+             AllocCDF : Allocator<FrequentistCDF>,
              Spec:HistogramSpec>(&mut self,
                                  m8: &mut AllocU8, m32: &mut AllocU32,
                                  group:&[&[HuffmanCode];256],
-                                 _prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+                                 _prob: &ANSTable<u32, Symbol, AllocS, AllocH, AllocCDF, Spec>,
                                  prior: (u8,u8,u8),
                                  input:&[u8]) -> (u32, u32){
     let table_element =
@@ -64,12 +65,13 @@ impl<AllocU8: Allocator<u8>, AllocU32: Allocator<u32>>  EntropyDecoder<AllocU8, 
   }
   // precondition: input has at least 4 bytes
   fn get_preloaded<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone,
-         AllocS:Allocator<Symbol>,
-         AllocH: Allocator<u32>,
-         Spec:HistogramSpec>(&mut self,
+                   AllocS:Allocator<Symbol>,
+                   AllocH: Allocator<u32>,
+                   AllocCDF : Allocator<FrequentistCDF>,
+                   Spec:HistogramSpec>(&mut self,
                                  m8: &mut AllocU8, m32: &mut AllocU32,
                                 group:&[&[HuffmanCode];256],
-                                _prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+                                _prob: &ANSTable<u32, Symbol, AllocS, AllocH, AllocCDF, Spec>,
                                 prior: (u8, u8, u8),
                                 preloaded: (u32, u32),
                                 input:&[u8]) -> Symbol {
@@ -92,11 +94,12 @@ impl<AllocU8: Allocator<u8>, AllocU32: Allocator<u32>>  EntropyDecoder<AllocU8, 
   fn get<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone,
          AllocS:Allocator<Symbol>,
          AllocH: Allocator<u32>,
+         AllocCDF : Allocator<FrequentistCDF>,
          Spec:HistogramSpec,
          Speculative:BoolTrait>(&mut self,
                                  m8: &mut AllocU8, m32: &mut AllocU32,
                                 group:&[&[HuffmanCode];256],
-                                _prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+                                _prob: &ANSTable<u32, Symbol, AllocS, AllocH, AllocCDF, Spec>,
                                 prior: (u8, u8, u8),
                                 input:&[u8],
                                 _is_speculative: Speculative) -> (Symbol, BrotliResult) {
@@ -151,11 +154,11 @@ impl<AllocU8: Allocator<u8>, AllocU32: Allocator<u32>>  EntropyDecoder<AllocU8, 
     bit_reader::BrotliDropBits(&mut self.br, HUFFMAN_TABLE_BITS + table_sub_element.bits as u32);
     (Symbol::cast(table_sub_element.value), BrotliResult::ResultSuccess)
   }
-  fn get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec>(
+  fn get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, AllocCDF : Allocator<FrequentistCDF>, Spec:HistogramSpec>(
       &mut self,
       m8: &mut AllocU8, m32: &mut AllocU32,
       table:&[HuffmanCode],
-      _prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+      _prob: &ANSTable<u32, Symbol, AllocS, AllocH, AllocCDF, Spec>,
       l1numbits: u8,
       input: &[u8],
 ) -> Symbol {
@@ -176,11 +179,11 @@ impl<AllocU8: Allocator<u8>, AllocU32: Allocator<u32>>  EntropyDecoder<AllocU8, 
 
   }
   // precondition: input has at least 4 bytes
-    fn safe_get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec, Speculative:BoolTrait>(
+    fn safe_get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, AllocCDF : Allocator<FrequentistCDF>, Spec:HistogramSpec, Speculative:BoolTrait>(
         &mut self,
         m8: &mut AllocU8, m32: &mut AllocU32,
         group:&[HuffmanCode],
-        _prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+        _prob: &ANSTable<u32, Symbol, AllocS, AllocH, AllocCDF, Spec>,
         l1numbits: u8,
         input: &[u8],
         _is_speculative: Speculative,

@@ -1,5 +1,5 @@
 use super::super::{HuffmanCode, HuffmanTreeGroup};
-use super::super::huffman::histogram::{ANSTable, HistogramSpec};
+use super::super::huffman::histogram::{ANSTable, HistogramSpec, FrequentistCDF};
 use super::super::BrotliResult;
 use super::super::bit_reader;
 use core::ops::AddAssign;
@@ -51,19 +51,19 @@ impl SymbolCast for u16 {
 
 
 pub trait EntropyEncoder<AllocU8: Allocator<u8>, AllocU32: Allocator<u32>> {
-  fn put<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec, Speculative:BoolTrait>(
+  fn put<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, AllocCDF : Allocator<FrequentistCDF>, Spec:HistogramSpec, Speculative:BoolTrait>(
     &mut self,
     m8: &mut AllocU8, m32: &mut AllocU32,
     group:&[&[HuffmanCode];256],
-    prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+    prob: &ANSTable<u32, Symbol, AllocS, AllocH, AllocCDF, Spec>,
     prior: (u8, u8, u8),
     symbol: Symbol,
     is_speculative: Speculative);
-  fn put_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec, Speculative:BoolTrait>(
+  fn put_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, AllocCDF : Allocator<FrequentistCDF>, Spec:HistogramSpec, Speculative:BoolTrait>(
     &mut self,
     m8: &mut AllocU8, m32: &mut AllocU32,
     group:&[HuffmanCode],
-    prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+    prob: &ANSTable<u32, Symbol, AllocS, AllocH, AllocCDF, Spec>,
     l1numbits: u8,
     symbol: Symbol,
     speculative: Speculative);
@@ -93,20 +93,22 @@ pub trait EntropyDecoder<AllocU8: Allocator<u8>, AllocU32: Allocator<u32>> {
   fn preload<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone,
              AllocS:Allocator<Symbol>,
              AllocH: Allocator<u32>,
+             AllocCDF : Allocator<FrequentistCDF>,
              Spec:HistogramSpec>(&mut self,
                                  m8: &mut AllocU8, m32: &mut AllocU32,
                                  group:&[&[HuffmanCode];256],
-                                 prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+                                 prob: &ANSTable<u32, Symbol, AllocS, AllocH, AllocCDF, Spec>,
                                  prior: (u8, u8, u8),
                                  input:&[u8]) -> (u32, u32);
   // precondition: input has at least 4 bytes
   fn get_preloaded<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone,
                    AllocS:Allocator<Symbol>,
                    AllocH: Allocator<u32>,
+                   AllocCDF : Allocator<FrequentistCDF>,
                    Spec:HistogramSpec>(&mut self,
                                        m8: &mut AllocU8, m32: &mut AllocU32,
                                        group:&[&[HuffmanCode];256],
-                                       prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+                                       prob: &ANSTable<u32, Symbol, AllocS, AllocH, AllocCDF, Spec>,
                                        prior: (u8, u8, u8),
                                        preloaded: (u32, u32),
                                        input:&[u8]) -> Symbol;
@@ -114,27 +116,28 @@ pub trait EntropyDecoder<AllocU8: Allocator<u8>, AllocU32: Allocator<u32>> {
   fn get<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone,
          AllocS:Allocator<Symbol>,
          AllocH: Allocator<u32>,
+         AllocCDF : Allocator<FrequentistCDF>,
          Spec:HistogramSpec,
          Speculative:BoolTrait>(&mut self,
                                 m8: &mut AllocU8, m32: &mut AllocU32,
                                 group:&[&[HuffmanCode];256],
-                                prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+                                prob: &ANSTable<u32, Symbol, AllocS, AllocH, AllocCDF, Spec>,
                                 prior: (u8, u8, u8),
                                 input:&[u8],
                                 is_speculative: Speculative) -> (Symbol, BrotliResult);
-    fn get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec>(
+    fn get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, AllocCDF : Allocator<FrequentistCDF>, Spec:HistogramSpec>(
         &mut self,
         m8: &mut AllocU8, m32: &mut AllocU32,
         group:&[HuffmanCode],
-        prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+        prob: &ANSTable<u32, Symbol, AllocS, AllocH, AllocCDF, Spec>,
         l1numbits: u8,
         input:&[u8]) -> Symbol;
   // precondition: input has at least 4 bytes
-    fn safe_get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, Spec:HistogramSpec, Speculative:BoolTrait>(
+    fn safe_get_stationary<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, AllocCDF : Allocator<FrequentistCDF>, Spec:HistogramSpec, Speculative:BoolTrait>(
         &mut self,
         m8: &mut AllocU8, m32: &mut AllocU32,
         group:&[HuffmanCode],
-        prob: &ANSTable<u32, Symbol, AllocS, AllocH, Spec>,
+        prob: &ANSTable<u32, Symbol, AllocS, AllocH, AllocCDF, Spec>,
         l1numbits: u8,
         input: &[u8],
         is_speculative: Speculative) -> (Symbol, BrotliResult);

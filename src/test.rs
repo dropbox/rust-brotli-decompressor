@@ -11,8 +11,9 @@ use core::ops;
 
 use super::entropy::{EntropyEncoder, EntropyDecoder, NopEncoder, HuffmanDecoder};
 pub use super::{BrotliDecompressStream, BrotliResult, BrotliState, HuffmanCode};
-
+use super::FrequentistCDF;
 declare_stack_allocator_struct!(MemPool, 4096, stack);
+declare_stack_allocator_struct!(SmlMemPool, 512, stack);
 
 
 
@@ -21,15 +22,20 @@ fn oneshot(input: &mut [u8], mut output: &mut [u8]) -> (BrotliResult, usize, usi
   let mut stack_u8_buffer = define_allocator_memory_pool!(4096, u8, [0; 300 * 1024], stack);
   let mut stack_u16_buffer = define_allocator_memory_pool!(128, u16, [0; 8 * 1024], stack);
   let mut stack_u32_buffer = define_allocator_memory_pool!(4096, u32, [0; 12 * 1024], stack);
-  let mut stack_hc_buffer = define_allocator_memory_pool!(4096,
+  let mut stack_hc_buffer = define_allocator_memory_pool!(512,
                                                           super::HuffmanCode,
                                                           [HuffmanCode::default(); 18 * 1024],
+                                                          stack);
+  let mut stack_cdf_buffer = define_allocator_memory_pool!(512,
+                                                          super::FrequentistCDF,
+                                                          [FrequentistCDF::default(); 2 * 1024],
                                                           stack);
 
   let stack_u8_allocator = MemPool::<u8>::new_allocator(&mut stack_u8_buffer, bzero);
   let stack_u16_allocator = MemPool::<u16>::new_allocator(&mut stack_u16_buffer, bzero);
   let stack_u32_allocator = MemPool::<u32>::new_allocator(&mut stack_u32_buffer, bzero);
-  let stack_hc_allocator = MemPool::<HuffmanCode>::new_allocator(&mut stack_hc_buffer, bzero);
+  let stack_hc_allocator = SmlMemPool::<HuffmanCode>::new_allocator(&mut stack_hc_buffer, bzero);
+  let stack_cdf_allocator = SmlMemPool::<FrequentistCDF>::new_allocator(&mut stack_cdf_buffer, bzero);
   let mut available_in: usize = input.len();
   let mut input_offset: usize = 0;
   let mut output_offset: usize = 0;
@@ -38,9 +44,10 @@ fn oneshot(input: &mut [u8], mut output: &mut [u8]) -> (BrotliResult, usize, usi
      BrotliState::<StackAllocator<u8, MemPool<u8>>,
                       StackAllocator<u16, MemPool<u16>>,
                       StackAllocator<u32, MemPool<u32>>,
-                      StackAllocator<HuffmanCode, MemPool<HuffmanCode>>,
+                      StackAllocator<FrequentistCDF, SmlMemPool<FrequentistCDF>>,
+                      StackAllocator<HuffmanCode, SmlMemPool<HuffmanCode>>,
                   NopEncoder,
-                  HuffmanDecoder<StackAllocator<u8, MemPool<u8>>, StackAllocator<u32, MemPool<u32>>>>::new(stack_u8_allocator, stack_u16_allocator, stack_u32_allocator, stack_hc_allocator);
+                  HuffmanDecoder<StackAllocator<u8, MemPool<u8>>, StackAllocator<u32, MemPool<u32>>>>::new(stack_u8_allocator, stack_u16_allocator, stack_u32_allocator, stack_cdf_allocator, stack_hc_allocator);
   let result = BrotliDecompressStream(&mut available_in,
                                       &mut input_offset,
                                       &input[..],
@@ -55,7 +62,7 @@ fn oneshot(input: &mut [u8], mut output: &mut [u8]) -> (BrotliResult, usize, usi
 
 #[test]
 fn test_10x10y() {
-  const BUFFER_SIZE: usize = 2048;
+  const BUFFER_SIZE: usize = 4096;
   let mut input: [u8; 12] = [0x1b, 0x13, 0x00, 0x00, 0xa4, 0xb0, 0xb2, 0xea, 0x81, 0x47, 0x02,
                              0x8a];
   let mut output = [0u8; BUFFER_SIZE];

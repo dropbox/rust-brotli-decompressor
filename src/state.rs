@@ -12,8 +12,9 @@ use huffman::{BROTLI_HUFFMAN_MAX_CODE_LENGTH, BROTLI_HUFFMAN_MAX_CODE_LENGTHS_SI
               BROTLI_HUFFMAN_MAX_TABLE_SIZE, HuffmanCode, HuffmanTreeGroup};
 use alloc::SliceWrapper;
 use super::entropy::{EntropyEncoder, EntropyDecoder};
+
 #[allow(unused)]
-use huffman::histogram::{HistEnt,ANSTable, CodeLengthPrefixSpec, HistogramSpec, LiteralSpec, DistanceSpec, BlockLengthSpec, InsertCopySpec, ContextMapSpec, BlockTypeSpec, BlockLenSpec, CodeLengthSymbolSpec};
+use huffman::histogram::{HistEnt,ANSTable, CodeLengthPrefixSpec, HistogramSpec, LiteralSpec, DistanceSpec, BlockLengthSpec, InsertCopySpec, ContextMapSpec, BlockTypeSpec, BlockLenSpec, CodeLengthSymbolSpec, FrequentistCDF};
 
 #[allow(dead_code)]
 pub enum WhichTreeGroup {
@@ -103,6 +104,7 @@ pub const kLiteralContextBits: usize = 6;
 pub struct BlockTypeAndLengthState<AllocU8: alloc::Allocator<u8>,
                        AllocU16: alloc::Allocator<u16>,
                        AllocU32: alloc::Allocator<u32>,
+                       AllocCDF: alloc::Allocator<FrequentistCDF>,
                        AllocHC: alloc::Allocator<HuffmanCode>> {
   pub substate_read_block_length: BrotliRunningReadBlockLengthState,
   pub num_block_types: [u32; 3],
@@ -110,14 +112,15 @@ pub struct BlockTypeAndLengthState<AllocU8: alloc::Allocator<u8>,
   pub block_length: [u32; 3],
   pub block_type_trees: AllocHC::AllocatedMemory,
   pub block_len_trees: AllocHC::AllocatedMemory,
-  pub block_type_ans_table: [ANSTable<u32, u16, AllocU16, AllocU32, BlockTypeSpec>;3],
-  pub block_len_ans_table: [ANSTable<u32, u8, AllocU8, AllocU32, BlockLenSpec>;3],
+  pub block_type_ans_table: [ANSTable<u32, u16, AllocU16, AllocU32, AllocCDF, BlockTypeSpec>;3],
+  pub block_len_ans_table: [ANSTable<u32, u8, AllocU8, AllocU32, AllocCDF, BlockLenSpec>;3],
   pub block_type_rb: [u32; 6],
 }
 
 pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
                        AllocU16: alloc::Allocator<u16>,
                        AllocU32: alloc::Allocator<u32>,
+                       AllocCDF: alloc::Allocator<FrequentistCDF>,
                        AllocHC: alloc::Allocator<HuffmanCode>,
                        Encoder:EntropyEncoder<AllocU8, AllocU32> + Default,
                        Decoder:EntropyDecoder<AllocU8, AllocU32> + Default>
@@ -129,6 +132,7 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub alloc_u8: AllocU8,
   pub alloc_u16: AllocU16,
   pub alloc_u32: AllocU32,
+  pub alloc_cdf: AllocCDF,
   pub alloc_hc: AllocHC,
   // void* memory_manager_opaque,
   pub buffer: [u8; 8],
@@ -155,20 +159,20 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub literal_hgroup: HuffmanTreeGroup<AllocU32, AllocHC>,
   pub insert_copy_hgroup: HuffmanTreeGroup<AllocU32, AllocHC>,
   pub distance_hgroup: HuffmanTreeGroup<AllocU32, AllocHC>,
-  pub code_length_ans_table: ANSTable<u32, u8, AllocU8, AllocU32, CodeLengthPrefixSpec>,
-  pub literal_ans_table: ANSTable<u32, u8, AllocU8, AllocU32, LiteralSpec>,
-  pub insert_copy_ans_table: ANSTable<u32, u16, AllocU16, AllocU32, InsertCopySpec>,
-  pub distance_ans_table: ANSTable<u32, u16, AllocU16, AllocU32, DistanceSpec>,
-  pub context_map_ans_table: ANSTable<u32, u8, AllocU8, AllocU32, ContextMapSpec>,
+  pub code_length_ans_table: ANSTable<u32, u8, AllocU8, AllocU32, AllocCDF, CodeLengthPrefixSpec>,
+  pub literal_ans_table: ANSTable<u32, u8, AllocU8, AllocU32, AllocCDF, LiteralSpec>,
+  pub insert_copy_ans_table: ANSTable<u32, u16, AllocU16, AllocU32, AllocCDF, InsertCopySpec>,
+  pub distance_ans_table: ANSTable<u32, u16, AllocU16, AllocU32, AllocCDF, DistanceSpec>,
+  pub context_map_ans_table: ANSTable<u32, u8, AllocU8, AllocU32, AllocCDF, ContextMapSpec>,
   // used for storing the ANS table of the complex prefix code symbol codes (symbols from [0,16) and 16 and 17 as complex values)
-  pub complex_ans_table: ANSTable<u32, u8, AllocU8, AllocU32, CodeLengthSymbolSpec>,
+  pub complex_ans_table: ANSTable<u32, u8, AllocU8, AllocU32, AllocCDF, CodeLengthSymbolSpec>,
 
   // This is true if the literal context map histogram type always matches the
   // block type. It is then not needed to keep the context (faster decoding).
   pub trivial_literal_context: i32,
   pub distance_context: i32,
   pub meta_block_remaining_len: i32,
-  pub block_type_length_state: BlockTypeAndLengthState<AllocU8, AllocU16, AllocU32, AllocHC>,
+  pub block_type_length_state: BlockTypeAndLengthState<AllocU8, AllocU16, AllocU32, AllocCDF, AllocHC>,
   pub distance_postfix_bits: u32,
   pub num_direct_distance_codes: u32,
   pub distance_postfix_mask: i32,
@@ -246,14 +250,15 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub entropy_encoder: Encoder,
 }
 macro_rules! make_brotli_state {
-    ($alloc_u8 : expr, $alloc_u16 : expr, $alloc_u32 : expr, $alloc_hc : expr, $custom_dict : expr, $custom_dict_len: expr) => {
-        if let Some(code_length_ans_table) = Some(ANSTable::new_single_code(&mut $alloc_u8, &mut $alloc_u32, &kCodeLengthPrefixCode, CodeLengthPrefixSpec::default(), None)) {
-        BrotliState::<AllocU8, AllocU16, AllocU32, AllocHC, Encoder, Decoder>{
+    ($alloc_u8 : expr, $alloc_u16 : expr, $alloc_u32 : expr, $alloc_cdf: expr, $alloc_hc : expr, $custom_dict : expr, $custom_dict_len: expr) => {
+        if let Some(code_length_ans_table) = Some(ANSTable::new_single_code(&mut $alloc_u8, &mut $alloc_u32, &mut $alloc_cdf, &kCodeLengthPrefixCode, CodeLengthPrefixSpec::default(), None)) {
+        BrotliState::<AllocU8, AllocU16, AllocU32, AllocCDF, AllocHC, Encoder, Decoder>{
             state : BrotliRunningState::BROTLI_STATE_UNINITED,
             loop_counter : 0,
             alloc_u8 : $alloc_u8,
             alloc_u16 : $alloc_u16,
             alloc_u32 : $alloc_u32,
+            alloc_cdf : $alloc_cdf,
             alloc_hc : $alloc_hc,
             buffer : [0u8; 8],
             buffer_length : 0,
@@ -283,7 +288,7 @@ macro_rules! make_brotli_state {
             trivial_literal_context : 0,
             distance_context : 0,
             meta_block_remaining_len : 0,
-            block_type_length_state : BlockTypeAndLengthState::<AllocU8, AllocU16, AllocU32, AllocHC> {
+            block_type_length_state : BlockTypeAndLengthState::<AllocU8, AllocU16, AllocU32, AllocCDF, AllocHC> {
               block_length_index : 0,
               block_length : [0; 3],
               num_block_types : [0;3],
@@ -368,14 +373,16 @@ impl <'brotli_state,
       AllocU8 : alloc::Allocator<u8>,
       AllocU16 : alloc::Allocator<u16>,
       AllocU32 : alloc::Allocator<u32>,
+      AllocCDF : alloc::Allocator<FrequentistCDF>,
       AllocHC : alloc::Allocator<HuffmanCode>,
       Decoder:EntropyDecoder<AllocU8, AllocU32>+Default,
-      Encoder:EntropyEncoder<AllocU8, AllocU32>+Default> BrotliState<AllocU8, AllocU16, AllocU32, AllocHC, Encoder, Decoder> {
+      Encoder:EntropyEncoder<AllocU8, AllocU32>+Default> BrotliState<AllocU8, AllocU16, AllocU32, AllocCDF, AllocHC, Encoder, Decoder> {
     pub fn new(mut alloc_u8 : AllocU8,
-           alloc_u16 : AllocU16,
-           mut alloc_u32 : AllocU32,
-           alloc_hc : AllocHC) -> Self{
-        let mut retval = make_brotli_state!(alloc_u8, alloc_u16, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default(), 0);
+               alloc_u16 : AllocU16,
+               mut alloc_u32 : AllocU32,
+               mut alloc_cdf: AllocCDF,
+               alloc_hc : AllocHC) -> Self{
+        let mut retval = make_brotli_state!(alloc_u8, alloc_u16, alloc_u32, alloc_cdf, alloc_hc, AllocU8::AllocatedMemory::default(), 0);
         retval.large_window = true;
         retval.context_map_table = retval.alloc_hc.alloc_cell(
           BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
@@ -385,10 +392,11 @@ impl <'brotli_state,
     pub fn new_with_custom_dictionary(mut alloc_u8 : AllocU8,
            alloc_u16 : AllocU16,
            mut alloc_u32 : AllocU32,
-           alloc_hc : AllocHC,
+           mut alloc_cdf: AllocCDF,
+                                      alloc_hc : AllocHC,
            custom_dict: AllocU8::AllocatedMemory) -> Self{
         let custom_dict_len = custom_dict.slice().len();
-        let mut retval = make_brotli_state!(alloc_u8, alloc_u16, alloc_u32, alloc_hc, custom_dict, custom_dict_len);
+        let mut retval = make_brotli_state!(alloc_u8, alloc_u16, alloc_u32, alloc_cdf, alloc_hc, custom_dict, custom_dict_len);
         retval.context_map_table = retval.alloc_hc.alloc_cell(
           BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
         retval.large_window =  true;
@@ -397,9 +405,10 @@ impl <'brotli_state,
     }
     pub fn new_strict(mut alloc_u8 : AllocU8,
            alloc_u16 : AllocU16,
-           mut alloc_u32 : AllocU32,
+                      mut alloc_u32 : AllocU32,
+                      mut alloc_cdf: AllocCDF,
            alloc_hc : AllocHC) -> Self{
-        let mut retval = make_brotli_state!(alloc_u8, alloc_u16, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default(), 0);
+        let mut retval = make_brotli_state!(alloc_u8, alloc_u16, alloc_u32, alloc_cdf, alloc_hc, AllocU8::AllocatedMemory::default(), 0);
         retval.context_map_table = retval.alloc_hc.alloc_cell(
           BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
         retval.large_window =  false;
@@ -461,16 +470,16 @@ impl <'brotli_state,
                               AllocHC::AllocatedMemory::default()));
       self.alloc_u8.free_cell(core::mem::replace(&mut self.custom_dict,
                               AllocU8::AllocatedMemory::default()));
-      self.code_length_ans_table.free(&mut self.alloc_u8, &mut self.alloc_u32);
-      self.literal_ans_table.free(&mut self.alloc_u8, &mut self.alloc_u32);
-      self.insert_copy_ans_table.free(&mut self.alloc_u16, &mut self.alloc_u32);
-      self.distance_ans_table.free(&mut self.alloc_u16, &mut self.alloc_u32);
-      self.context_map_ans_table.free(&mut self.alloc_u8, &mut self.alloc_u32);
+      self.code_length_ans_table.free(&mut self.alloc_u8, &mut self.alloc_u32, &mut self.alloc_cdf);
+      self.literal_ans_table.free(&mut self.alloc_u8, &mut self.alloc_u32, &mut self.alloc_cdf);
+      self.insert_copy_ans_table.free(&mut self.alloc_u16, &mut self.alloc_u32, &mut self.alloc_cdf);
+      self.distance_ans_table.free(&mut self.alloc_u16, &mut self.alloc_u32, &mut self.alloc_cdf);
+      self.context_map_ans_table.free(&mut self.alloc_u8, &mut self.alloc_u32, &mut self.alloc_cdf);
       for type_index in 0..3 {
-        self.block_type_length_state.block_type_ans_table[type_index].free(&mut self.alloc_u16, &mut self.alloc_u32);
-        self.block_type_length_state.block_len_ans_table[type_index].free(&mut self.alloc_u8, &mut self.alloc_u32);
+        self.block_type_length_state.block_type_ans_table[type_index].free(&mut self.alloc_u16, &mut self.alloc_u32, &mut self.alloc_cdf);
+        self.block_type_length_state.block_len_ans_table[type_index].free(&mut self.alloc_u8, &mut self.alloc_u32, &mut self.alloc_cdf);
       }
-      self.complex_ans_table.free(&mut self.alloc_u8, &mut self.alloc_u32);
+      self.complex_ans_table.free(&mut self.alloc_u8, &mut self.alloc_u32, &mut self.alloc_cdf);
       //FIXME??  BROTLI_FREE(s, s->legacy_input_buffer);
       //FIXME??  BROTLI_FREE(s, s->legacy_output_buffer);
     }

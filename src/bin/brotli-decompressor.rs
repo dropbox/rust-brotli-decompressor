@@ -82,6 +82,7 @@ impl<T: core::clone::Clone> alloc_no_stdlib::Allocator<T> for HeapAllocator<T> {
 #[allow(unused_imports)]
 use alloc_no_stdlib::{SliceWrapper,SliceWrapperMut, StackAllocator, AllocatedStackMemory, Allocator, bzero};
 use brotli_decompressor::HuffmanCode;
+use brotli_decompressor::FrequentistCDF;
 
 use std::io::{self, Error, ErrorKind, Read, Write};
 
@@ -184,6 +185,7 @@ pub fn decompress<InputType, OutputType>(r: &mut InputType,
                                           alloc_u8,
                                           HeapAllocator::<u16> { default_value: 0 },
                                           HeapAllocator::<u32> { default_value: 0 },
+                                          HeapAllocator::<FrequentistCDF> { default_value: FrequentistCDF::default() },
                                           HeapAllocator::<HuffmanCode> {
                                             default_value: HuffmanCode::default(),
                                           },
@@ -252,6 +254,7 @@ pub struct BrotliDecompressor<R: Read>(brotli_decompressor::DecompressorCustomIo
                                                                     HeapAllocator<u8>,
                                                                     HeapAllocator<u16>,
                                                                     HeapAllocator<u32>,
+                                                                    HeapAllocator<FrequentistCDF>,
                                                                     HeapAllocator<HuffmanCode>>);
 
 
@@ -262,15 +265,16 @@ impl<R: Read> BrotliDecompressor<R> {
     let buffer = alloc_u8.alloc_cell(buffer_size);
     let alloc_u16 = HeapAllocator::<u16> { default_value: 0 };
     let alloc_u32 = HeapAllocator::<u32> { default_value: 0 };
+    let alloc_cdf = HeapAllocator::<FrequentistCDF> { default_value: FrequentistCDF::default() };
     let alloc_hc = HeapAllocator::<HuffmanCode> { default_value: HuffmanCode::default() };
     BrotliDecompressor::<R>(
           brotli_decompressor::DecompressorCustomIo::<Error,
                                  IntoIoReader<R>,
                                  Rebox<u8>,
-                                 HeapAllocator<u8>, HeapAllocator<u16>, HeapAllocator<u32>, HeapAllocator<HuffmanCode> >
+                                 HeapAllocator<u8>, HeapAllocator<u16>, HeapAllocator<u32>, HeapAllocator<FrequentistCDF>, HeapAllocator<HuffmanCode> >
                                  ::new(IntoIoReader::<R>(r),
                                                          buffer,
-                                                         alloc_u8, alloc_u16, alloc_u32, alloc_hc,
+                                                         alloc_u8, alloc_u16, alloc_u32, alloc_cdf, alloc_hc,
                                                          io::Error::new(ErrorKind::InvalidData,
                                                                         "Invalid Data")))
   }
