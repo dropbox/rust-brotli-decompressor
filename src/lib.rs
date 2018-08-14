@@ -33,6 +33,7 @@ mod prefix;
 mod context;
 pub mod transform;
 pub mod entropy;
+pub mod probability;
 mod test;
 mod decode;
 pub mod io_wrappers;

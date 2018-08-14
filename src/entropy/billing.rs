@@ -10,8 +10,8 @@ use core::ops::AddAssign;
 use entropy::log4096::LOG4096;
 #[derive(Default)]
 pub struct BillingEncoder {
-  total: [f64; 2],
-  spec: [f64;2],
+  total: [f64; 3],
+  spec: [f64;3],
 }
 
 fn approx_freq(denom: HistEnt, num: HistEnt) -> usize {
@@ -50,8 +50,11 @@ impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, All
         let mut hist_ent = prob.get_prob(prior.0, symbol.into_u64() as u32);
         assert!(hist_ent.freq() != 0);
         let val = LOG4096[hist_ent.freq() as usize];
-        let val_unib = LOG4096[b16hist_ent.freq() as usize];
-        let val_lnib = LOG4096[approx_freq(b16hist_ent, hist_ent)];
+        let (val_unib, val_lnib) = if Spec::ALPHABET_SIZE == 256 {
+            (LOG4096[b16hist_ent.freq() as usize], LOG4096[approx_freq(b16hist_ent, hist_ent)])
+        } else {
+            (val, 0.0)
+        };
         if Speculative::VALUE {
             self.spec[0] -= val;
             self.spec[1] -= val_unib;
