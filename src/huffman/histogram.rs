@@ -8,6 +8,11 @@ use alloc::SliceWrapper;
 use alloc::SliceWrapperMut;
 use super::HuffmanCode;
 use super::HuffmanTreeGroup;
+use probability::frequentist_cdf::FrequentistCDF16;
+use probability::interface::CDF16;
+
+pub type FrequentistCDF = FrequentistCDF16;
+
 #[allow(unused)]
 pub type Freq = u16;
 #[allow(unused)]
@@ -54,6 +59,11 @@ impl Into<u32> for HistEnt {
 
 pub trait HistogramSpec:Default {
     const ALPHABET_SIZE:usize;
+    #[inline(always)]
+    fn alphabet_size(&self) -> usize {
+        Self::ALPHABET_SIZE
+    }
+        
 }
 
 struct Histogram<AllocU32:Allocator<u32>, Spec:HistogramSpec> {
@@ -222,12 +232,12 @@ impl<AllocH:Allocator<u32>, Spec:HistogramSpec> Histogram<AllocH, Spec> {
     }
 }
 #[allow(unused)]
-pub struct CDF<HistEntTrait, AllocH: Allocator<HistEntTrait>, Spec:HistogramSpec> {
+pub struct CDF<HistEntTrait:Clone, AllocH: Allocator<HistEntTrait>, Spec:HistogramSpec> {
     sym:AllocH::AllocatedMemory,
     num_htrees: u16,
     spec: Spec,
 }
-impl<HistEntTrait, AllocH: Allocator<HistEntTrait>, Spec:HistogramSpec> Default for CDF<HistEntTrait, AllocH, Spec> {
+impl<HistEntTrait:Clone, AllocH: Allocator<HistEntTrait>, Spec:HistogramSpec> Default for CDF<HistEntTrait, AllocH, Spec> {
     fn default() -> Self {
         CDF {
             sym:AllocH::AllocatedMemory::default(),
@@ -292,8 +302,81 @@ pub struct RationalProb {
     pub num: u16,
     pub denom: u16,
 }
+pub struct NibbleANSTable<AllocCDF:Allocator<FrequentistCDF>> {
+    cdfs: AllocCDF::AllocatedMemory, // 17 cdfs per htable
+}
+impl<AllocCDF:Allocator<FrequentistCDF>> NibbleANSTable<AllocCDF> {
+    pub fn new<HistEntTrait:Clone,
+               AllocH: Allocator<HistEntTrait>,
+               Spec:HistogramSpec,
+           >(mcdf: &mut AllocCDF,
+             table: &mut CDF<HistEntTrait, AllocH, Spec>,
+             old: Option<NibbleANSTable<AllocCDF>>,
+    ) -> Self where HistEnt:From<HistEntTrait> {
+        if table.spec.alphabet_size() != 256 {
+            return NibbleANSTable {
+                cdfs:AllocCDF::AllocatedMemory::default(),
+            };
+        }
+        let desired_num_items = table.num_htrees as usize * 17;
+        let mut ret = NibbleANSTable {
+            cdfs: if let Some(last_alloc) = old {
+                if last_alloc.cdfs.len() >= desired_num_items {
+                    last_alloc.cdfs
+                } else {
+                    mcdf.free_cell(last_alloc.cdfs);
+                    mcdf.alloc_cell(desired_num_items)
+                }
+            } else {
+                mcdf.alloc_cell(desired_num_items)
+            },
+        };
+        
+        for index in 0..table.num_htrees as usize {
+            let mut pdf = [0i16;16];
+            let mut lpdf = [[0i16;16];16];
+            for sym in 0..table.spec.alphabet_size() as usize{
+                let freq = HistEnt::from(table.sym.slice()[(index << 8) | sym].clone()).freq();
+                pdf[sym >> 4] += freq as i16;
+                lpdf[sym>>4][sym&0xf] = freq as i16;
+            }
+            let mut running_sum = 0;
+            for item in pdf.iter_mut() {
+                running_sum += *item;
+                *item = running_sum;
+            }
+            for lower in lpdf.iter_mut() {
+                let mut running_sum = 0;
+                for item in lower.iter_mut() {
+                    running_sum += *item;
+                    *item = running_sum;
+                }
+            }
+            *ret.high_nibble_mut(index) = FrequentistCDF::new(pdf);
+            for lower in 0..16 {
+                ret.low_nibble_mut(index)[lower] = FrequentistCDF::new(lpdf[lower]);
+            }
+        }
+        ret
+    }
+    pub fn high_nibble(&self, prior: usize) -> &FrequentistCDF{
+        return &self.cdfs.slice()[prior * 17]
+    }
+    pub fn high_nibble_mut(&mut self, prior: usize) -> &mut FrequentistCDF{
+        return &mut self.cdfs.slice_mut()[prior * 17]
+    }
+    pub fn low_nibble(&self, prior: usize) -> &[FrequentistCDF]{
+        return &self.cdfs.slice()[prior * 17 + 1..]
+    }
+    pub fn low_nibble_mut(&mut self, prior: usize) -> &mut [FrequentistCDF] {
+        return &mut self.cdfs.slice_mut()[prior * 17 + 1..]
+    }
+    pub fn free(&mut self, mcdf: &mut AllocCDF){
+        mcdf.free_cell(core::mem::replace(&mut self.cdfs, AllocCDF::AllocatedMemory::default()));
+    }
+}
 
-pub struct ANSTable<HistEntTrait, Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone, AllocS: Allocator<Symbol>, AllocH: Allocator<HistEntTrait>, Spec:HistogramSpec>
+pub struct ANSTable<HistEntTrait:Clone, Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone, AllocS: Allocator<Symbol>, AllocH: Allocator<HistEntTrait>, Spec:HistogramSpec>
     where HistEnt:From<HistEntTrait> {
     state_lookup:AllocS::AllocatedMemory,
     cdf: CDF<HistEntTrait, AllocH, Spec>,

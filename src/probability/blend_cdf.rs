@@ -178,6 +178,9 @@ impl BaseCDF for BlendCDF16 {
 }
 
 impl CDF16 for BlendCDF16 {
+    fn new(data:[i16;16]) -> Self {
+        unimplemented!();
+    }
     fn average(&self, other: &Self, mix_rate: i32) ->Self {
         let mut retval = *self;
         retval.blend_internal(other.cdf, mix_rate);

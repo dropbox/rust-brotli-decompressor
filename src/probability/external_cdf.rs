@@ -90,6 +90,9 @@ impl BaseCDF for ExternalProbCDF16 {
 }
 
 impl CDF16 for ExternalProbCDF16 {
+    fn new(data:[i16;16]) -> Self {
+        unimplemented!();
+    }
     fn average(&self, other:&Self, mix_rate:i32) -> Self {
         if self.max() < 64 && other.max() > 64 {
              //return other.clone();

@@ -419,6 +419,7 @@ impl core::str::FromStr for Speed {
 }
 
 pub trait CDF16: Sized + Default + Copy + BaseCDF {
+    fn new([i16;16]) -> Self;
     fn blend(&mut self, symbol: u8, dyn:Speed);
     fn average(&self, other: &Self, mix_rate: i32) ->Self;
 }

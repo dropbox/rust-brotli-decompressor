@@ -108,6 +108,9 @@ fn k16bit_length(d:i16) -> u8 {
 const LOG_MAX_NUMERATOR: usize = LOG2_SCALE as usize + CDF_BITS;
 
 impl CDF16 for OptFrequentistCDF16 {
+    fn new(data:[i16;16]) ->Self {
+        OptFrequentistCDF16::new(FrequentistCDF16::new(data))
+    }
     fn average(&self, other:&Self, mix_rate:i32) -> Self {
         let ret = self.cdf.average(&other.cdf, mix_rate);
         Self::new(ret)

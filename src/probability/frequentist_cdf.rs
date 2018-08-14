@@ -13,7 +13,6 @@ fn to_bit_i32(val: i32, shift_val: u8) -> u32 {
 pub struct FrequentistCDF16 {
     pub cdf: [Prob; 16]
 }
-
 impl Default for FrequentistCDF16 {
     fn default() -> Self {
         FrequentistCDF16 {
@@ -54,6 +53,11 @@ impl BaseCDF for FrequentistCDF16 {
 }
 
 impl CDF16 for FrequentistCDF16 {
+    fn new(data:[i16;16]) -> Self {
+        FrequentistCDF16{
+            cdf:data,
+        }
+    }
     #[inline(always)]
     fn average(&self, other:&Self, mix_rate:i32) -> Self {
         let mut retval = *self;
