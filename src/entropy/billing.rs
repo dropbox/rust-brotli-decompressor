@@ -16,8 +16,8 @@ type CDF = FrequentistCDF16;
 pub struct BillingEncoder {
   ucdf: vec::Vec<CDF>,
   lcdf: vec::Vec<CDF>,
-  total: [f64; 3],
-  spec: [f64;3],
+  total: [f64; 4],
+  spec: [f64;4],
 }
 
 impl Default for BillingEncoder {
@@ -25,8 +25,8 @@ impl Default for BillingEncoder {
         BillingEncoder {
             ucdf:vec![CDF::default(); 65536],
             lcdf:vec![CDF::default(); 65536],
-            total:[0.0;3],
-            spec:[0.0;3],
+            total:[0.0;4],
+            spec:[0.0;4],
         }
     }
 }
@@ -74,6 +74,18 @@ impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, All
         } else {
           (val, 0.0)
         };
+        
+        let (cdf_val_unib, cdf_val_lnib) = if Spec::ALPHABET_SIZE == 256 {
+            let upper_nibble = (symbol.into_u64() as usize & 0xf0) >> 4;
+            let lower_nibble = (symbol.into_u64() as usize & 0xf);
+            let hcdf = prob.nibble.high_nibble(usize::from(prior.0));
+            let lcdf = prob.nibble.low_nibble(usize::from(prior.0))[upper_nibble];
+            ((hcdf.pdf(upper_nibble as u8) as f64 / hcdf.max() as f64).log2(),
+             (lcdf.pdf(lower_nibble as u8) as f64 / lcdf.max() as f64).log2())
+        } else {
+            (val, 0.0)
+        };
+
 
         if Spec::ALPHABET_SIZE == 256 {
           let primary_index = usize::from(prior.0) + usize::from(prior.1) * 256;
@@ -89,7 +101,7 @@ impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, All
             } else {
                 self.total[1] -= u_entropy + l_entropy;
             }
-        } else if false {
+        } else {
           if Speculative::VALUE {
             self.spec[1] -= val_unib;
             self.spec[1] -= val_lnib;
@@ -102,10 +114,14 @@ impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, All
             self.spec[0] -= val;
             self.spec[2] -= val_unib;
             self.spec[2] -= val_lnib;
+            self.spec[3] -= cdf_val_unib;
+            self.spec[3] -= cdf_val_lnib;
         } else {
             self.total[0] -= val;
             self.total[2] -= val_unib;
             self.total[2] -= val_lnib;
+            self.total[3] -= cdf_val_unib;
+            self.total[3] -= cdf_val_lnib;
         }
         
     }
@@ -122,9 +138,9 @@ impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, All
         let val = LOG4096[hist_ent.freq() as usize];
         for index in 0..self.total.len() {
             if Speculative::VALUE {
-              //self.spec[index] -= val;
+              self.spec[index] -= val;
             } else {
-              //self.total[index] -= val;
+              self.total[index] -= val;
             }
         }
     }
@@ -136,9 +152,9 @@ impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, All
         is_speculative: Speculative) {
         for index in 0..self.total.len() {
             if Speculative::VALUE {
-                //self.spec[index] += nbits as f64;
+                self.spec[index] += nbits as f64;
             } else {
-                //self.total[index] += nbits as f64;
+                self.total[index] += nbits as f64;
             }    
         }
     }
@@ -158,7 +174,8 @@ impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, All
   fn finish(&mut self, out_data:&mut [u8]) -> usize {
       eprintln!("Total: {} bits, {} bytes\nAdapt: {} bits, {} bytes", self.total[0], self.total[0] / 8.0,
                 self.total[1], self.total[1] / 8.0);
-      eprintln!("Mixin: {} bits, {} bytes", self.total[2], self.total[2] / 8.0);
+      eprintln!("Mixin: {} bits, {} bytes\nCDFMixing {} {}", self.total[2], self.total[2] / 8.0,
+                self.total[3], self.total[3] / 8.0);
     0
   }
 }

@@ -387,7 +387,7 @@ pub struct ANSTable<HistEntTrait:Clone, Symbol:Sized+Ord+AddAssign<Symbol>+From<
     where HistEnt:From<HistEntTrait> {
     state_lookup:AllocS::AllocatedMemory,
     cdf: CDF<HistEntTrait, AllocH, Spec>,
-    nibble: NibbleANSTable<AllocCDF>,
+    pub nibble: NibbleANSTable<AllocCDF>,
 }
 impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
      AllocS: Allocator<Symbol>,
