@@ -7,17 +7,19 @@ use super::super::{HuffmanCode, HuffmanTreeGroup};
 use super::super::huffman::histogram::{ANSTable, HistogramSpec, HistEnt, TF_SHIFT, FrequentistCDF};
 use super::interface::*;
 use core::ops::AddAssign;
+use core::cmp::max;
 use entropy::log4096::LOG4096;
 use probability::interface::{CDF16,CDF_MAX, LOG2_SCALE, Speed, BaseCDF, BLEND_FIXED_POINT_PRECISION};
 use probability::frequentist_cdf::{FrequentistCDF16};
 use std::vec;
 type CDF = FrequentistCDF16;
-
+use probability::weights::Weights;
 pub struct BillingEncoder {
-  ucdf: vec::Vec<CDF>,
-  lcdf: vec::Vec<CDF>,
-  total: [f64; 4],
-  spec: [f64;4],
+    ucdf: vec::Vec<CDF>,
+    lcdf: vec::Vec<CDF>,
+    total: [f64; 4],
+    spec: [f64;4],
+    weights: [Weights;2]
 }
 
 impl Default for BillingEncoder {
@@ -27,6 +29,7 @@ impl Default for BillingEncoder {
             lcdf:vec![CDF::default(); 65536],
             total:[0.0;4],
             spec:[0.0;4],
+            weights:[Weights::new(), Weights::new()],
         }
     }
 }
@@ -46,7 +49,10 @@ fn approx_freq(denom: HistEnt, num: HistEnt) -> usize {
     assert!((1 + ret) * u32::from(denom_u16) >= num_u32);
     ret as usize
 }
-
+#[no_mangle]
+fn dosomething() {
+    eprintln!("SOMETHING");
+}
 #[allow(unused)]
 impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, AllocU32> for BillingEncoder {
     fn put<Symbol: Sized+Ord+AddAssign<Symbol>+From<u8>+SymbolCast + Clone, AllocS:Allocator<Symbol>, AllocH: Allocator<u32>, AllocCDF : Allocator<FrequentistCDF>, Spec:HistogramSpec, Speculative:BoolTrait> (
@@ -93,13 +99,14 @@ impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, All
             let lower_nibble = (symbol.into_u64() as usize & 0xf);
             let hcdf = prob.nibble.high_nibble(usize::from(prior.0));
             let lcdf = prob.nibble.low_nibble(usize::from(prior.0))[upper_nibble];
-            
+            let h_baseline_freq = hcdf.sym_to_start_and_freq(upper_nibble as u8);
+            let l_baseline_freq = lcdf.sym_to_start_and_freq(lower_nibble as u8);
             let primary_index = usize::from(prior.0) + usize::from(prior.1) * 256;
             let u_est_freq = self.ucdf[primary_index].sym_to_start_and_freq(upper_nibble as u8);
             let secondary_index = usize::from(prior.1) + ((symbol.into_u64() as usize &0xfff0) << 4);
             let l_est_freq = self.ucdf[secondary_index].sym_to_start_and_freq(lower_nibble as u8 & 0xf);
-            let upper_avg = self.ucdf[primary_index].average(&hcdf, 1 << (BLEND_FIXED_POINT_PRECISION - 1));
-            let lower_avg = self.ucdf[secondary_index].average(&lcdf, 1<< (BLEND_FIXED_POINT_PRECISION -1));
+            let upper_avg = self.ucdf[primary_index].average(&hcdf, self.weights[0].norm_weight().into());
+            let lower_avg = self.ucdf[secondary_index].average(&lcdf, self.weights[1].norm_weight().into());
             let u_blend_freq = upper_avg.sym_to_start_and_freq(upper_nibble as u8);
             let l_blend_freq = lower_avg.sym_to_start_and_freq(lower_nibble as u8);            
             self.ucdf[primary_index].blend((symbol.into_u64() >> 4) as u8, Speed::new(32,4096));
@@ -108,6 +115,16 @@ impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, All
             let l_entropy = (l_est_freq.range.freq as  f64 / (CDF_MAX as f64)).log2();
             let u_blend_entropy = (u_blend_freq.range.freq as  f64 / (CDF_MAX as f64)).log2();
             let l_blend_entropy = (l_blend_freq.range.freq as  f64 / (CDF_MAX as f64)).log2();
+            if !(u_blend_entropy == u_blend_entropy) {
+                dosomething();
+                let upper_avg2 = self.ucdf[primary_index].average(&hcdf, self.weights[0].norm_weight().into());
+            }
+            if !(l_blend_entropy == l_blend_entropy) {
+                dosomething();
+                let lower_avg2 = self.ucdf[secondary_index].average(&lcdf, self.weights[1].norm_weight().into());
+            }
+            self.weights[0].update([u_est_freq.range.freq,max(1,h_baseline_freq.range.freq)], max(u_blend_freq.range.freq,1));
+            self.weights[1].update([l_est_freq.range.freq,max(1,l_baseline_freq.range.freq)], max(l_blend_freq.range.freq,1));
             if Speculative::VALUE {
                 self.spec[1] -= u_entropy + l_entropy;
                 self.spec[2] -= u_blend_entropy + l_blend_entropy;

@@ -101,7 +101,7 @@ pub trait BaseCDF {
         let freq = cdf_sym - cdf_prev;
         SymStartFreq {
             range: ProbRange {start: cdf_prev as Prob + 1, // major hax
-                              freq:  freq as Prob - 1, // don't want rounding errors to work out unfavorably
+                              freq:  (freq as Prob).wrapping_sub(1), // don't want rounding errors to work out unfavorably
             },
             sym: sym,
         }
