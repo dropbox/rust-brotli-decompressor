@@ -72,7 +72,17 @@ impl CDF16 for FrequentistCDF16 {
           let rescaled_other = (i32::from(*o) * ourmax) >> desired_shift;
           *s = ((rescaled_self * mix_rate + rescaled_other * inv_mix_rate + 1) >> BLEND_FIXED_POINT_PRECISION) as Prob;
         }
-        retval
+        let mut retval2 = retval;
+        let mut last_val = 0;
+        for index in 0..16 {
+            if other.pdf(index) == 0 {
+                retval2.cdf[usize::from(index)] = last_val;
+            } else {
+                last_val += retval.pdf(index);
+                retval2.cdf[usize::from(index)] = last_val;
+            }
+        }
+        retval2
     }
     #[inline(always)]
     fn blend(&mut self, symbol: u8, speed: Speed) {
