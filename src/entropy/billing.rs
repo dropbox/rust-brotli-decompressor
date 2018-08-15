@@ -8,7 +8,7 @@ use super::super::huffman::histogram::{ANSTable, HistogramSpec, HistEnt, TF_SHIF
 use super::interface::*;
 use core::ops::AddAssign;
 use entropy::log4096::LOG4096;
-use probability::interface::{CDF16,CDF_MAX, LOG2_SCALE, Speed, BaseCDF};
+use probability::interface::{CDF16,CDF_MAX, LOG2_SCALE, Speed, BaseCDF, BLEND_FIXED_POINT_PRECISION};
 use probability::frequentist_cdf::{FrequentistCDF16};
 use std::vec;
 type CDF = FrequentistCDF16;
@@ -80,6 +80,7 @@ impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, All
             let lower_nibble = (symbol.into_u64() as usize & 0xf);
             let hcdf = prob.nibble.high_nibble(usize::from(prior.0));
             let lcdf = prob.nibble.low_nibble(usize::from(prior.0))[upper_nibble];
+            
             ((hcdf.pdf(upper_nibble as u8) as f64 / hcdf.max() as f64).log2(),
              (lcdf.pdf(lower_nibble as u8) as f64 / lcdf.max() as f64).log2())
         } else {
@@ -88,38 +89,49 @@ impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, All
 
 
         if Spec::ALPHABET_SIZE == 256 {
-          let primary_index = usize::from(prior.0) + usize::from(prior.1) * 256;
-            let u_est_freq = self.ucdf[primary_index].sym_to_start_and_freq((symbol.into_u64() >> 4) as u8);
-          self.ucdf[primary_index].blend((symbol.into_u64() >> 4) as u8, Speed::new(32,4096));
-          let secondary_index = usize::from(prior.1) + ((symbol.into_u64() as usize &0xfff0) << 4);
-            let l_est_freq = self.ucdf[secondary_index].sym_to_start_and_freq(symbol.into_u64() as u8 & 0xf);
+            let upper_nibble = (symbol.into_u64() as usize & 0xf0) >> 4;
+            let lower_nibble = (symbol.into_u64() as usize & 0xf);
+            let hcdf = prob.nibble.high_nibble(usize::from(prior.0));
+            let lcdf = prob.nibble.low_nibble(usize::from(prior.0))[upper_nibble];
+            
+            let primary_index = usize::from(prior.0) + usize::from(prior.1) * 256;
+            let u_est_freq = self.ucdf[primary_index].sym_to_start_and_freq(upper_nibble as u8);
+            let secondary_index = usize::from(prior.1) + ((symbol.into_u64() as usize &0xfff0) << 4);
+            let l_est_freq = self.ucdf[secondary_index].sym_to_start_and_freq(lower_nibble as u8 & 0xf);
+            let upper_avg = self.ucdf[primary_index].average(&hcdf, 1 << (BLEND_FIXED_POINT_PRECISION - 1));
+            let lower_avg = self.ucdf[secondary_index].average(&lcdf, 1<< (BLEND_FIXED_POINT_PRECISION -1));
+            let u_blend_freq = upper_avg.sym_to_start_and_freq(upper_nibble as u8);
+            let l_blend_freq = lower_avg.sym_to_start_and_freq(lower_nibble as u8);            
+            self.ucdf[primary_index].blend((symbol.into_u64() >> 4) as u8, Speed::new(32,4096));
             self.ucdf[secondary_index].blend(symbol.into_u64() as u8 & 0xf, Speed::new(32,4096));
             let u_entropy = (u_est_freq.range.freq as  f64 / (CDF_MAX as f64)).log2();
             let l_entropy = (l_est_freq.range.freq as  f64 / (CDF_MAX as f64)).log2();
+            let u_blend_entropy = (u_blend_freq.range.freq as  f64 / (CDF_MAX as f64)).log2();
+            let l_blend_entropy = (l_blend_freq.range.freq as  f64 / (CDF_MAX as f64)).log2();
             if Speculative::VALUE {
                 self.spec[1] -= u_entropy + l_entropy;
+                self.spec[2] -= u_blend_entropy + l_blend_entropy;
             } else {
                 self.total[1] -= u_entropy + l_entropy;
+                self.total[2] -= u_blend_entropy + l_blend_entropy;
             }
         } else {
           if Speculative::VALUE {
             self.spec[1] -= val_unib;
             self.spec[1] -= val_lnib;
+            self.spec[2] -= val;
           } else {
             self.total[1] -= val_unib;
             self.total[1] -= val_lnib;
+            self.spec[2] -= val;
           }
         }
         if Speculative::VALUE {
             self.spec[0] -= val;
-            self.spec[2] -= val_unib;
-            self.spec[2] -= val_lnib;
             self.spec[3] -= cdf_val_unib;
             self.spec[3] -= cdf_val_lnib;
         } else {
             self.total[0] -= val;
-            self.total[2] -= val_unib;
-            self.total[2] -= val_lnib;
             self.total[3] -= cdf_val_unib;
             self.total[3] -= cdf_val_lnib;
         }
