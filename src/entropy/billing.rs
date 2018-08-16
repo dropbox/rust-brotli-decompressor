@@ -14,12 +14,30 @@ use probability::frequentist_cdf::{FrequentistCDF16};
 use std::vec;
 type CDF = FrequentistCDF16;
 use probability::weights::Weights;
+
+#[derive(Clone, Copy)]
+struct LiteCDF {
+    samples: [i32;256],
+    count: usize,
+}
+impl Default for LiteCDF {
+    fn default() -> Self {
+        LiteCDF {
+            samples:[0i32;256],
+            count:0,
+        }
+    }
+}
 pub struct BillingEncoder {
     ucdf: vec::Vec<CDF>,
     lcdf: vec::Vec<CDF>,
-    total: [f64; 4],
-    spec: [f64;4],
-    weights: [Weights;2]
+    total: [f64; 6],
+    spec: [f64;6],
+    weights: [Weights;2],
+    adaptive: vec::Vec<LiteCDF>,
+    adaptive_snap: vec::Vec<LiteCDF>,
+    semi_adaptive: vec::Vec<LiteCDF>,
+    semi_adaptive_snap: vec::Vec<LiteCDF>,
 }
 
 impl Default for BillingEncoder {
@@ -27,9 +45,13 @@ impl Default for BillingEncoder {
         BillingEncoder {
             ucdf:vec![CDF::default(); 65536],
             lcdf:vec![CDF::default(); 65536],
-            total:[0.0;4],
-            spec:[0.0;4],
+            total:[0.0;6],
+            spec:[0.0;6],
             weights:[Weights::new(), Weights::new()],
+            adaptive:vec::Vec::new(),
+            adaptive_snap:vec::Vec::new(),
+            semi_adaptive:vec![LiteCDF{samples:[1i32;256],count:256};65536],
+            semi_adaptive_snap:vec![LiteCDF{samples:[1i32;256],count:256};65536],
         }
     }
 }
@@ -92,7 +114,47 @@ impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, All
         } else {
             (val, 0.0)
         };
+        if Spec::ALPHABET_SIZE == 256 {
+            if self.adaptive.len() == 0 {
+                self.adaptive = vec![LiteCDF::default();65536];
+                for prior in 0..prob.num_htrees() as usize {
+                    for prev_byte in 0..256 {
+                        let sub_cdf = &mut self.adaptive[(prior << 8) | prev_byte];
+                        let count = prob.copy_freq(&mut sub_cdf.samples, prior as u8);
+                        sub_cdf.count = count;
+                    }
+                }
+                self.adaptive_snap = self.adaptive.clone();
+            } // try occasionally-updated stats
+            let prior_index = (usize::from(prior.0) << 8) | usize::from(prior.1);
+            let inc = 16;
+            let adaptive_prob = self.adaptive_snap[prior_index].samples[symbol.into_u64() as usize] as f64 /self.adaptive_snap[prior_index].count as f64;
+            self.adaptive[prior_index].samples[symbol.into_u64() as usize] += inc;
+            self.adaptive[prior_index].count += inc as usize;
+            let semi_count_thresh = 8192;
+            let semi_adaptive_prob = if self.semi_adaptive_snap[prior_index].count >= semi_count_thresh {
+                self.semi_adaptive_snap[prior_index].samples[symbol.into_u64() as usize] as f64 /self.semi_adaptive_snap[prior_index].count as f64
+            } else {
+                hist_ent.freq() as f64 / 4096.0
+            };
 
+            self.semi_adaptive[prior_index].samples[symbol.into_u64() as usize] += inc;
+            self.semi_adaptive[prior_index].count += inc as usize;
+            let snap_period = 64;
+            if self.semi_adaptive[prior_index].count % snap_period == 0 {
+                self.semi_adaptive_snap[prior_index] = self.semi_adaptive[prior_index];
+            }
+            if self.adaptive[prior_index].count % snap_period == 0 {
+                self.adaptive_snap[prior_index] = self.adaptive[prior_index];
+            }
+            if Speculative::VALUE {
+                self.spec[4] -= adaptive_prob.log2();
+                self.spec[5] -= semi_adaptive_prob.log2();
+            } else {
+                self.total[4] -= adaptive_prob.log2();
+                self.total[5] -= semi_adaptive_prob.log2();
+            }
+        }
 
         if Spec::ALPHABET_SIZE == 256 {
             let upper_nibble = (symbol.into_u64() as usize & 0xf0) >> 4;
@@ -134,13 +196,17 @@ impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, All
             }
         } else {
           if Speculative::VALUE {
-            self.spec[1] -= val_unib;
-            self.spec[1] -= val_lnib;
-            self.spec[2] -= val;
+              self.spec[1] -= val_unib;
+              self.spec[1] -= val_lnib;
+              self.spec[2] -= val;
+              self.spec[4] -= val;
+              self.spec[5] -= val;
           } else {
-            self.total[1] -= val_unib;
-            self.total[1] -= val_lnib;
-            self.spec[2] -= val;
+              self.total[1] -= val_unib;
+              self.total[1] -= val_lnib;
+              self.total[2] -= val;
+              self.total[4] -= val;
+              self.total[5] -= val;
           }
         }
         if Speculative::VALUE {
@@ -205,6 +271,8 @@ impl<AllocU8:Allocator<u8>,AllocU32: Allocator<u32>> EntropyEncoder<AllocU8, All
                 self.total[1], self.total[1] / 8.0);
       eprintln!("Mixin: {} bits, {} bytes\nCDFMixing {} {}", self.total[2], self.total[2] / 8.0,
                 self.total[3], self.total[3] / 8.0);
+      eprintln!("Snap0: {} bits, {} bytes\nCDFSemiSnap {} {}", self.total[4], self.total[4] / 8.0,
+                self.total[5], self.total[5] / 8.0);
     0
   }
 }

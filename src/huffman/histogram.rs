@@ -412,7 +412,20 @@ impl<Symbol:Sized+Ord+AddAssign<Symbol>+From<u8>+Clone,
     }
     pub fn get_prob(&self, prior: u8, sym: u32) -> HistEnt {
       HistEnt::from(self.cdf.sym.slice()[usize::from(prior) * Spec::ALPHABET_SIZE + sym as usize])
-    }/*
+    }
+    pub fn num_htrees(&self) -> u16 {
+        self.cdf.num_htrees
+    }
+    pub fn copy_freq<T:From<Freq>>(&self, output:&mut [T], prior: u8) -> usize {
+        let mut count = 0;
+        for (out_item, item) in output.iter_mut().zip(self.cdf.sym.slice().split_at(prior as usize * Spec::ALPHABET_SIZE).1.split_at(Spec::ALPHABET_SIZE).0.iter()) {
+            let freq = HistEnt(*item).freq();
+            *out_item = freq.into();
+            count += freq as usize;
+        }
+        count
+    }
+    /*
     pub fn get_b16_prob(&self, prior: u8, sym: u32) -> (u16, RationalProb) {
         let mut upper_freq_total = 0u16;
         for lower in 0..16 {
