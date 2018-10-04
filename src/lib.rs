@@ -39,7 +39,7 @@ pub mod reader;
 pub mod writer;
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
 pub use state::BrotliState;
-
+pub mod ffi;
 pub use reader::{DecompressorCustomIo};
 
 #[cfg(not(feature="no-stdlib"))]

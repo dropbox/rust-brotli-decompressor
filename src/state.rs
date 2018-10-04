@@ -462,3 +462,12 @@ impl <'brotli_state,
         }
     }
 }
+
+impl <'brotli_state,
+      AllocU8 : alloc::Allocator<u8>,
+      AllocU32 : alloc::Allocator<u32>,
+      AllocHC : alloc::Allocator<HuffmanCode> > Drop for BrotliState<AllocU8, AllocU32, AllocHC> {
+    fn drop(&mut self) {
+        self.BrotliStateCleanup();
+    }
+}
