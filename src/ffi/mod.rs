@@ -69,12 +69,7 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
 pub unsafe extern fn BrotliDecoderSetParameter(state_ptr: *mut BrotliDecoderState,
                                        _selector: BrotliDecoderParameter,
                                        _value: u32) {
-    match state_ptr.as_mut() {
-        None => panic!("Set Option On Null"),
-        Some(_state_ref) => {
-            // currently ignored
-        }
-    }
+  // not implemented
 }
      
 #[cfg(not(feature="no-stdlib"))] // this requires a default allocator
