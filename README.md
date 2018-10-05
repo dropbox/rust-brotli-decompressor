@@ -23,6 +23,22 @@ the system also enables all syscalls to be "frontloaded" in the initial generati
 of a memory pool for the allocator. Afterwards, SECCOMP can be activated or
 other mechanisms can be used to secure the application, if desired
 
+## Linking rust-brotli-decompressor with C code using the zero-cost rust FFI abstraction
+
+This library has FFI exports which comply with the original C interfaces.
+To build them, enter the c directory and just type make there.
+That will build a small example program and the cdylib with the appropriate ffi in place to link against
+
+the example, called c/main.c shows how to decompress a program using the streaming interface and the nonstreaming interface.
+
+If a nostdlib version is desired, then an unstable rust must be used (to enable the custom panic handler)
+and then the BrotliDecoderDecompress function is deactivated since that has no facilities for specifying a custom malloc
+
+a customized malloc must be used if a nostdlib build is chosen and additionally the no-stdlib-ffi-binding cargo feature must be set
+eg
+
+cargo build --features='no-stdlib no-stdlib-ffi-binding' --release
+
 
 ## Usage
 

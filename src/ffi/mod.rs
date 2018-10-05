@@ -76,9 +76,33 @@ pub unsafe extern fn BrotliDecoderSetParameter(state_ptr: *mut BrotliDecoderStat
     }
 }
      
-
-
-
+#[cfg(not(feature="no-stdlib"))] // this requires a default allocator
+#[no_mangle]
+pub unsafe extern fn BrotliDecoderDecompress(
+  encoded_size: usize,
+  encoded_buffer: *const u8,
+  decoded_size: *mut usize,
+  decoded_buffer: *mut u8) -> BrotliDecoderResult {
+  let mut total_out = 0;
+  let mut available_in = encoded_size;
+  let mut next_in = encoded_buffer;
+  let mut available_out = *decoded_size;
+  let mut next_out = decoded_buffer;
+  let s = BrotliDecoderCreateInstance(
+    None,
+    None,
+    core::ptr::null_mut(),
+  );
+  let result = BrotliDecoderDecompressStream(
+    s, &mut available_in, &mut next_in, &mut available_out, &mut next_out, &mut total_out);
+  *decoded_size = total_out;
+  BrotliDecoderDestroyInstance(s);
+  if let BrotliDecoderResult::BROTLI_DECODER_RESULT_SUCCESS = result {
+    BrotliDecoderResult::BROTLI_DECODER_RESULT_SUCCESS
+  } else {
+    BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR
+  }
+}
 
 #[no_mangle]
 pub unsafe extern fn BrotliDecoderDecompressStream(
