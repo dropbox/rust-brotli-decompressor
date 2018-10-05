@@ -108,7 +108,6 @@ impl<Ty:Sized+Default+Clone> alloc::Allocator<Ty> for SubclassableAllocator<Ty> 
 #[cfg(feature="no-stdlib")]
 static mut G_SLICE:&'static mut[u8] = &mut[];
 #[cfg(feature="no-stdlib")]
-#[derive(Debug)]
 pub struct MemoryBlock<Ty:Sized+Default>(*mut[Ty]);
 #[cfg(feature="no-stdlib")]
 impl<Ty:Sized+Default> Default for MemoryBlock<Ty> {
