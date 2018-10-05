@@ -7,7 +7,6 @@ use std::vec::Vec;
 pub use std::boxed::Box;
 
 #[cfg(not(feature="no-stdlib"))]
-#[derive(Debug)]
 pub struct MemoryBlock<Ty:Sized+Default>(Box<[Ty]>);
 #[cfg(not(feature="no-stdlib"))]
 impl<Ty:Sized+Default> Default for MemoryBlock<Ty> {
