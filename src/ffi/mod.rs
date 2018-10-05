@@ -13,10 +13,9 @@ use ::BrotliResult;
 #[no_mangle]
 pub struct BrotliDecoderState {
     pub custom_allocator: CAllocator,
-    pub decompressor: ::BrotliState<
-                                           SubclassableAllocator<u8>,
-                                           SubclassableAllocator<u32>,
-                                           SubclassableAllocator<::HuffmanCode>>,
+    pub decompressor: ::BrotliState<SubclassableAllocator,
+                                    SubclassableAllocator,
+                                    SubclassableAllocator>,
 }
 
 #[cfg(feature="no-stdlib")]
@@ -42,13 +41,13 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
         free_func:free_func,
         opaque:opaque,
     };
-    let custom_dictionary = <SubclassableAllocator<u8> as Allocator<u8>>::AllocatedMemory::default();
+    let custom_dictionary = <SubclassableAllocator as Allocator<u8>>::AllocatedMemory::default();
     let to_box = BrotliDecoderState {
         custom_allocator: allocators.clone(),
         decompressor: ::BrotliState::new_with_custom_dictionary(
-            SubclassableAllocator::<u8>::new(allocators.clone()),
-            SubclassableAllocator::<u32>::new(allocators.clone()),
-            SubclassableAllocator::<::HuffmanCode>::new(allocators.clone()),
+            SubclassableAllocator::new(allocators.clone()),
+            SubclassableAllocator::new(allocators.clone()),
+            SubclassableAllocator::new(allocators.clone()),
             custom_dictionary,
         ),
     };
@@ -66,7 +65,7 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
 }
 
 #[no_mangle]
-pub unsafe extern fn BrotliDecoderSetParameter(state_ptr: *mut BrotliDecoderState,
+pub unsafe extern fn BrotliDecoderSetParameter(_state_ptr: *mut BrotliDecoderState,
                                        _selector: BrotliDecoderParameter,
                                        _value: u32) {
   // not implemented

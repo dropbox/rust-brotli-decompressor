@@ -51,22 +51,20 @@ impl<Ty:Sized+Default> Drop for MemoryBlock<Ty> {
         }
     }
 }
-pub struct SubclassableAllocator<Ty:Sized+Default> {
-    _ty: core::marker::PhantomData<Ty>,
+pub struct SubclassableAllocator {
     alloc: CAllocator
     // have alternative ty here
 }
 
-impl<Ty:Sized+Default+Clone> SubclassableAllocator<Ty> {
+impl SubclassableAllocator {
     pub fn new(sub_alloc:CAllocator) -> Self {
-        SubclassableAllocator::<Ty>{
-            _ty:core::marker::PhantomData::<Ty>::default(),
+        SubclassableAllocator{
             alloc:sub_alloc,
         }
     }
 }
 #[cfg(not(feature="no-stdlib"))]
-impl<Ty:Sized+Default+Clone> alloc::Allocator<Ty> for SubclassableAllocator<Ty> {
+impl<Ty:Sized+Default+Clone> alloc::Allocator<Ty> for SubclassableAllocator {
     type AllocatedMemory = MemoryBlock<Ty>;
     fn alloc_cell(&mut self, size:usize) ->MemoryBlock<Ty>{
         if let Some(alloc_fn) = self.alloc.alloc_func {
