@@ -139,13 +139,13 @@ impl<Ty:Sized+Default> alloc::SliceWrapperMut<Ty> for MemoryBlock<Ty> {
 }
 
 #[cfg(feature="no-stdlib")]
-#[cfg(not(feature="no-stdlib-rust-binding"))]
-#[lang="panic_fmt"]
-extern fn panic_fmt(_: ::core::fmt::Arguments, _: &'static str, _: u32) -> ! {
+#[cfg(feature="no-stdlib-ffi-binding")]
+#[panic_handler]
+extern fn panic_impl(_: &::core::panic::PanicInfo) -> ! {
     loop {}
 }
 #[cfg(feature="no-stdlib")]
-#[cfg(not(feature="no-stdlib-rust-binding"))]
+#[cfg(feature="no-stdlib-ffi-binding")]
 #[lang = "eh_personality"]
 extern "C" fn eh_personality() {
 }

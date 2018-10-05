@@ -5,6 +5,9 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(non_upper_case_globals)]
+#![cfg_attr(feature="no-stdlib-ffi-binding",cfg_attr(feature="no-stdlib", feature(lang_items)))]
+#![cfg_attr(feature="no-stdlib-ffi-binding",cfg_attr(feature="no-stdlib", feature(panic_handler)))]
+
 
 #[macro_use]
 // <-- for debugging, remove xprintln from bit_reader and replace with println
