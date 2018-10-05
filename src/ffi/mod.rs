@@ -65,6 +65,7 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
     }
 }
 
+#[no_mangle]
 pub unsafe extern fn BrotliDecoderSetParameter(state_ptr: *mut BrotliDecoderState,
                                        _selector: BrotliDecoderParameter,
                                        _value: u32) {
