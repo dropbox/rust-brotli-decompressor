@@ -17,6 +17,53 @@ pub enum WhichTreeGroup {
   INSERT_COPY,
   DISTANCE,
 }
+#[repr(C)]
+#[derive(Clone,Copy)]
+#[no_mangle]
+pub enum BrotliDecoderErrorCode{
+  BROTLI_DECODER_NO_ERROR = 0,
+  /* Same as BrotliDecoderResult values */
+  BROTLI_DECODER_SUCCESS = 1,
+  BROTLI_DECODER_NEEDS_MORE_INPUT = 2,
+  BROTLI_DECODER_NEEDS_MORE_OUTPUT = 3,
+
+  /* Errors caused by invalid input */
+  BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE = -1,
+  BROTLI_DECODER_ERROR_FORMAT_RESERVED = -2,
+  BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE = -3,
+  BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET = -4,
+  BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME = -5,
+  BROTLI_DECODER_ERROR_FORMAT_CL_SPACE = -6,
+  BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE = -7,
+  BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT = -8,
+  BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1 = -9,
+  BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2 = -10,
+  BROTLI_DECODER_ERROR_FORMAT_TRANSFORM = -11,
+  BROTLI_DECODER_ERROR_FORMAT_DICTIONARY = -12,
+  BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS = -13,
+  BROTLI_DECODER_ERROR_FORMAT_PADDING_1 = -14,
+  BROTLI_DECODER_ERROR_FORMAT_PADDING_2 = -15,
+  BROTLI_DECODER_ERROR_FORMAT_DISTANCE = -16,
+
+  /* -17..-18 codes are reserved */
+
+  BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET = -19,
+  BROTLI_DECODER_ERROR_INVALID_ARGUMENTS = -20,
+
+  /* Memory allocation problems */
+  BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES = -21,
+  /* Literal = insert and distance trees together */
+  BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS = -22,
+  /* -23..-24 codes are reserved for distinct tree groups */
+  BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP = -25,
+  BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1 = -26,
+  BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2 = -27,
+  /* -28..-29 codes are reserved for dynamic ring-buffer allocation */
+  BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES = -30,
+
+  /* "Impossible" states */
+  BROTLI_DECODER_ERROR_UNREACHABLE = -31,
+}
 
 pub enum BrotliRunningState {
   BROTLI_STATE_UNINITED,
@@ -158,6 +205,7 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub literal_htree_index: u8,
   pub dist_htree_index: u8,
   pub large_window: bool,
+  pub error_code: BrotliDecoderErrorCode,
   pub repeat_code_len: u32,
   pub prev_code_len: u32,
 
@@ -320,6 +368,7 @@ macro_rules! make_brotli_state {
            size_nibbles : 0,
            window_bits : 0,
            large_window: false,
+           error_code: BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS,
            num_literal_htrees : 0,
            context_map : AllocU8::AllocatedMemory::default(),
            context_modes : AllocU8::AllocatedMemory::default(),

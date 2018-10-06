@@ -70,7 +70,18 @@ pub unsafe extern fn BrotliDecoderSetParameter(_state_ptr: *mut BrotliDecoderSta
                                        _value: u32) {
   // not implemented
 }
-     
+
+#[cfg(feature="no-stdlib")] // error always since no default allocator
+#[no_mangle]
+pub unsafe extern fn BrotliDecoderDecompress(
+  _encoded_size: usize,
+  _encoded_buffer: *const u8,
+  _decoded_size: *mut usize,
+  _decoded_buffer: *mut u8,
+) -> BrotliDecoderResult {
+  BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR // no allocator
+}
+
 #[cfg(not(feature="no-stdlib"))] // this requires a default allocator
 #[no_mangle]
 pub unsafe extern fn BrotliDecoderDecompress(
