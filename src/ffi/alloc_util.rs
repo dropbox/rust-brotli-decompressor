@@ -162,7 +162,7 @@ impl<Ty:Sized+Default> core::ops::IndexMut<usize> for MemoryBlock<Ty> {
 }
 
 #[cfg(feature="no-stdlib")]
-impl<Ty:Sized+Default+Clone> alloc::Allocator<Ty> for SubclassableAllocator<Ty> {
+impl<Ty:Sized+Default+Clone> alloc::Allocator<Ty> for SubclassableAllocator {
     type AllocatedMemory = MemoryBlock<Ty>;
     fn alloc_cell(&mut self, size:usize) ->MemoryBlock<Ty>{
         if let Some(alloc_fn) = self.alloc.alloc_func {
