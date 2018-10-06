@@ -9,7 +9,7 @@ use self::alloc_util::SubclassableAllocator;
 use alloc::Allocator;
 use self::interface::{CAllocator, c_void, BrotliDecoderParameter, BrotliDecoderResult, brotli_alloc_func, brotli_free_func};
 use ::BrotliResult;
-use super::state::BrotliDecoderErrorCode;
+pub use super::state::BrotliDecoderErrorCode;
 #[repr(C)]
 #[no_mangle]
 pub struct BrotliDecoderState {
@@ -118,9 +118,13 @@ pub unsafe extern fn BrotliDecoderDecompressStream(
     input_buf_ptr: *mut*const u8,
     available_out: *mut usize,
     output_buf_ptr: *mut*mut u8,
-    total_out: *mut usize) -> BrotliDecoderResult {
+    mut total_out: *mut usize) -> BrotliDecoderResult {
     let mut input_offset = 0usize;
     let mut output_offset = 0usize;
+    let mut fallback_total_out = 0usize;
+    if total_out.is_null() {
+        total_out = &mut fallback_total_out;
+    }
     let result;
     {
         let input_buf = slice::from_raw_parts(*input_buf_ptr, *available_in);
