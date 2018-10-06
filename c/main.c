@@ -28,9 +28,27 @@ void simple_test() {
     assert(output[sizeof(key) - 1] == '\n');
 #endif
 }
+void negative_test() {
+    BrotliDecoderState * state = BrotliDecoderCreateInstance(custom_alloc, custom_free, &custom_alloc_data);
+    const unsigned char brotli_file[] = {0x1b, 0x30, 0x00, 0xe0, 0x8d, 0xd4, 0x59, 0x2d, 0x39, 0xff, 0xb5, 0x02,
+                                   0x48, 0x10, 0x95, 0x2a, 0x9a, 0xea, 0x42, 0x0e, 0x51, 0xa4, 0x16, 0xb9,
+                                   0xcb, 0xf5, 0xf8, 0x5c, 0x64, 0xb9, 0x2f, 0xc9, 0x6a, 0x3f, 0xb1, 0xdc,
+                                   0xa8, 0xe0, 0x35, 0x07};
+    size_t avail_in = sizeof(brotli_file);
+    size_t avail_out = 0;
+    unsigned char obuffer[4096];
+    size_t total_out = 0;
+    const unsigned char *i_ptr = &brotli_file[0];
+
+    unsigned char *o_ptr = &obuffer[0];
+    BrotliDecoderResult rest = BrotliDecoderDecompressStream(state, &avail_in, &i_ptr, &avail_out, &o_ptr, &total_out);
+    assert(rest ==  BROTLI_DECODER_RESULT_ERROR);
+    assert(strcmp(BrotliDecoderErrorString(BrotliDecoderGetErrorCode(state)), "ERROR_FORMAT_CONTEXT_MAP_REPEAT") == 0);
+}
 
 int main() {
     simple_test();
+    negative_test();
     BrotliDecoderState * state = BrotliDecoderCreateInstance(custom_alloc, custom_free, &custom_alloc_data);
     unsigned char ibuffer[4096];
     unsigned char obuffer[4096];
