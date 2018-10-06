@@ -67,7 +67,7 @@ pub use io_wrappers::{IntoIoReader, IoReaderWrapper, IntoIoWriter, IoWriterWrapp
 //                               mut total_out: &mut usize,
 //                               mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>);
 
-pub use decode::{BrotliDecompressStream, BrotliResult};
+pub use decode::{BrotliDecompressStream, BrotliResult, BrotliDecoderHasMoreOutput};
 
 
 

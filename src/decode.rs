@@ -1633,33 +1633,45 @@ fn SafeDecodeDistanceBlockSwitch<AllocU8: alloc::Allocator<u8>,
   DecodeDistanceBlockSwitchInternal(true, s, input)
 }
 
-fn WriteRingBuffer<AllocU8: alloc::Allocator<u8>,
-                   AllocU32: alloc::Allocator<u32>,
-                   AllocHC: alloc::Allocator<HuffmanCode>>
-  (available_out: &mut usize,
-   output: &mut [u8],
-   output_offset: &mut usize,
-   total_out: &mut usize,
-   s: &mut BrotliState<AllocU8, AllocU32, AllocHC>)
-   -> BrotliDecoderErrorCode {
-  let pos = if s.pos > s.ringbuffer_size {
+fn UnwrittenBytes<AllocU8: alloc::Allocator<u8>,
+                  AllocU32: alloc::Allocator<u32>,
+                  AllocHC: alloc::Allocator<HuffmanCode>> (
+  s: &BrotliState<AllocU8, AllocU32, AllocHC>,
+  wrap: bool,
+)  -> usize {
+  let pos = if wrap && s.pos > s.ringbuffer_size {
     s.ringbuffer_size as usize
   } else {
     s.pos as usize
   };
   let partial_pos_rb = (s.rb_roundtrips as usize * s.ringbuffer_size as usize) + pos as usize;
-  let to_write = (partial_pos_rb - s.partial_pos_out) as usize;
+  (partial_pos_rb - s.partial_pos_out) as usize
+}
+fn WriteRingBuffer<'a,
+                   AllocU8: alloc::Allocator<u8>,
+                   AllocU32: alloc::Allocator<u32>,
+                   AllocHC: alloc::Allocator<HuffmanCode>>(
+  available_out: &mut usize,
+  opt_output: Option<&mut [u8]>,
+  output_offset: &mut usize,
+  total_out: &mut usize,
+  force: bool,
+  s: &'a mut BrotliState<AllocU8, AllocU32, AllocHC>,
+) -> (BrotliDecoderErrorCode, &'a [u8]) {
+  let to_write = UnwrittenBytes(s, true);
   let mut num_written = *available_out as usize;
   if (num_written > to_write) {
     num_written = to_write;
   }
   if (s.meta_block_remaining_len < 0) {
-    return BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1;
+    return (BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1, &[]);
   }
   let start_index = (s.partial_pos_out & s.ringbuffer_mask as usize) as usize;
   let start = fast_slice!((s.ringbuffer)[start_index ; start_index + num_written as usize]);
-  fast_mut!((output)[*output_offset ; *output_offset + num_written as usize])
-    .clone_from_slice(start);
+  if let Some(output) = opt_output {
+    fast_mut!((output)[*output_offset ; *output_offset + num_written as usize])
+      .clone_from_slice(start);
+  }
   *output_offset += num_written;
   *available_out -= num_written;
   BROTLI_LOG_UINT!(to_write);
@@ -1667,9 +1679,33 @@ fn WriteRingBuffer<AllocU8: alloc::Allocator<u8>,
   s.partial_pos_out += num_written as usize;
   *total_out = s.partial_pos_out;
   if (num_written < to_write) {
-    return BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_OUTPUT;
+    if s.ringbuffer_size == (1 << s.window_bits) || force {
+      return (BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_OUTPUT, &[]);
+    } else {
+      return (BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS, start);
+    }
   }
-  BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS
+  if (s.ringbuffer_size == (1 << s.window_bits) &&
+      s.pos >= s.ringbuffer_size) {
+    s.pos -= s.ringbuffer_size;
+    s.rb_roundtrips += 1;
+    s.should_wrap_ringbuffer = s.pos != 0;
+  }
+  (BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS, start)
+ }
+
+fn WrapRingBuffer<AllocU8: alloc::Allocator<u8>,
+                   AllocU32: alloc::Allocator<u32>,
+                   AllocHC: alloc::Allocator<HuffmanCode>>(
+  s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+) {
+  if s.should_wrap_ringbuffer {
+    let (ring_buffer_start, ring_buffer_end) = s.ringbuffer.slice_mut().split_at_mut(s.ringbuffer_size as usize);
+    let pos = s.pos as usize;
+    ring_buffer_start.split_at_mut(pos).0.clone_from_slice(ring_buffer_end.split_at(pos).0);
+    s.should_wrap_ringbuffer = false;
+  }
+
 }
 
 fn CopyUncompressedBlockToOutput<AllocU8: alloc::Allocator<u8>,
@@ -1711,18 +1747,19 @@ fn CopyUncompressedBlockToOutput<AllocU8: alloc::Allocator<u8>,
         // No break, continue to next state by going aroudn the loop
       }
       BrotliRunningUncompressedState::BROTLI_STATE_UNCOMPRESSED_WRITE => {
-        let result = WriteRingBuffer(&mut available_out,
-                                     &mut output,
-                                     &mut output_offset,
-                                     &mut total_out,
-                                     &mut s);
+        let (result, _) = WriteRingBuffer(&mut available_out,
+                                          Some(&mut output),
+                                          &mut output_offset,
+                                          &mut total_out,
+                                          false,
+                                          &mut s);
         match result {
           BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS => {}
           _ => return result,
         }
-        s.pos = 0;
-        s.rb_roundtrips += 1;
-        s.max_distance = s.max_backward_distance;
+        if s.ringbuffer_size == 1 << s.window_bits {
+          s.max_distance = s.max_backward_distance;
+        }
         s.substate_uncompressed = BrotliRunningUncompressedState::BROTLI_STATE_UNCOMPRESSED_NONE;
       }
     }
@@ -2055,6 +2092,82 @@ fn memcpy_within_slice(data: &mut [u8], off_dst: usize, off_src: usize, size: us
     let src = ptr.offset(off_src as isize);
     core::ptr::copy_nonoverlapping(src, dst, size);
   }
+}
+
+pub fn BrotliDecoderHasMoreOutput<AllocU8: alloc::Allocator<u8>,
+                           AllocU32: alloc::Allocator<u32>,
+                           AllocHC: alloc::Allocator<HuffmanCode>>
+  (s: &BrotliState<AllocU8, AllocU32, AllocHC>) -> bool {
+  /* After unrecoverable error remaining output is considered nonsensical. */
+  if is_fatal(s.error_code) {
+    return false;
+  }
+  s.ringbuffer.len() != 0 && UnwrittenBytes(s, false) != 0
+}
+pub fn BrotliDecoderTakeOutput<'a,
+                               AllocU8: alloc::Allocator<u8>,
+                               AllocU32: alloc::Allocator<u32>,
+                               AllocHC: alloc::Allocator<HuffmanCode>>(
+  s: &'a mut BrotliState<AllocU8, AllocU32, AllocHC>,
+  size: &mut usize,
+) -> &'a [u8] {
+  let one:usize = 1;
+  let mut available_out = if *size != 0 { *size } else { one << 24 };
+  let requested_out = available_out;
+  if (s.ringbuffer.len() == 0) || is_fatal(s.error_code) {
+    *size = 0;
+    return &[];
+  }
+  WrapRingBuffer(s);
+  let mut ign = 0usize;
+  let mut ign2 = 0usize;
+  let (status, result) = WriteRingBuffer(&mut available_out, None, &mut ign,&mut ign2, true, s);
+  // Either WriteRingBuffer returns those "success" codes...
+  match status {
+    BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS |  BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_OUTPUT => {
+      *size = requested_out - available_out;
+    },
+    _ => {
+      // ... or stream is broken. Normally this should be caught by
+      //   BrotliDecoderDecompressStream, this is just a safeguard.
+      if is_fatal(status) {
+        // SaveErrorCode!(s, status); //borrow checker doesn't like this
+        // but since it's a safeguard--ignore
+      }
+      *size = 0;
+      return &[];
+    }
+  }
+  return result;
+}
+
+pub fn BrotliDecoderIsUsed<AllocU8: alloc::Allocator<u8>,
+                           AllocU32: alloc::Allocator<u32>,
+                           AllocHC: alloc::Allocator<HuffmanCode>>(
+  s: &BrotliState<AllocU8, AllocU32, AllocHC>) -> bool {
+  if let BrotliRunningState::BROTLI_STATE_UNINITED = s.state {
+    false
+  } else {
+    bit_reader::BrotliGetAvailableBits(&s.br) != 0
+  }
+}
+
+pub fn BrotliDecoderIsFinished<AllocU8: alloc::Allocator<u8>,
+                               AllocU32: alloc::Allocator<u32>,
+                               AllocHC: alloc::Allocator<HuffmanCode>>(
+  s: &BrotliState<AllocU8, AllocU32, AllocHC>) -> bool {
+  if let BrotliRunningState::BROTLI_STATE_DONE = s.state {
+    !BrotliDecoderHasMoreOutput(s)
+  } else {
+    false
+  }
+}
+
+pub fn BrotliDecoderGetErrorCode<AllocU8: alloc::Allocator<u8>,
+                               AllocU32: alloc::Allocator<u32>,
+                               AllocHC: alloc::Allocator<HuffmanCode>>(
+  s: &BrotliState<AllocU8, AllocU32, AllocHC>) -> BrotliDecoderErrorCode {
+  s.error_code
 }
 
 fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
@@ -2537,11 +2650,12 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
         match result {
           BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT => {
             if s.ringbuffer.slice().len() != 0 {
-              let intermediate_result = WriteRingBuffer(available_out,
-                                            &mut output,
-                                            &mut output_offset,
-                                            &mut total_out,
-                                                        &mut s);
+              let (intermediate_result, _) = WriteRingBuffer(available_out,
+                                                             Some(&mut output),
+                                                             &mut output_offset,
+                                                             &mut total_out,
+                                                             true,
+                                                             &mut s);
               if is_fatal(intermediate_result) {
                 result = intermediate_result;
                 break;
@@ -2998,18 +3112,21 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
         BrotliRunningState::BROTLI_STATE_COMMAND_INNER_WRITE |
         BrotliRunningState::BROTLI_STATE_COMMAND_POST_WRITE_1 |
         BrotliRunningState::BROTLI_STATE_COMMAND_POST_WRITE_2 => {
-          result = WriteRingBuffer(&mut available_out,
-                                   &mut output,
-                                   &mut output_offset,
-                                   &mut total_out,
-                                   &mut s);
+          let (xresult, _) = WriteRingBuffer(&mut available_out,
+                                             Some(&mut output),
+                                             &mut output_offset,
+                                             &mut total_out,
+                                             false,
+                                             &mut s);
+          result = xresult;
           match result {
             BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS => {}
             _ => break,
           }
-          s.pos -= s.ringbuffer_size;
-          s.rb_roundtrips += 1;
-          s.max_distance = s.max_backward_distance;
+          WrapRingBuffer(s);
+          if s.ringbuffer_size == 1 << s.window_bits {
+            s.max_distance = s.max_backward_distance;
+          }
           match s.state {
             BrotliRunningState::BROTLI_STATE_COMMAND_POST_WRITE_1 => {
               /* FIXME
@@ -3073,11 +3190,13 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
         }
         BrotliRunningState::BROTLI_STATE_DONE => {
           if (s.ringbuffer.slice().len() != 0) {
-            result = WriteRingBuffer(&mut available_out,
-                                     &mut output,
-                                     &mut output_offset,
-                                     &mut total_out,
-                                     &mut s);
+            let (xresult, _) = WriteRingBuffer(&mut available_out,
+                                               Some(&mut output),
+                                               &mut output_offset,
+                                               &mut total_out,
+                                               true,
+                                               &mut s);
+            result = xresult;
             match result {
               BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS => {}
               _ => break,

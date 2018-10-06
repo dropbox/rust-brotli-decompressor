@@ -205,6 +205,7 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub literal_htree_index: u8,
   pub dist_htree_index: u8,
   pub large_window: bool,
+  pub should_wrap_ringbuffer: bool,
   pub error_code: BrotliDecoderErrorCode,
   pub repeat_code_len: u32,
   pub prev_code_len: u32,
@@ -368,6 +369,7 @@ macro_rules! make_brotli_state {
            size_nibbles : 0,
            window_bits : 0,
            large_window: false,
+           should_wrap_ringbuffer: false,
            error_code: BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS,
            num_literal_htrees : 0,
            context_map : AllocU8::AllocatedMemory::default(),
@@ -520,3 +522,6 @@ impl <'brotli_state,
         self.BrotliStateCleanup();
     }
 }
+
+
+
