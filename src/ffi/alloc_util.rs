@@ -57,7 +57,7 @@ pub struct SubclassableAllocator {
 }
 
 impl SubclassableAllocator {
-    pub fn new(sub_alloc:CAllocator) -> Self {
+    pub unsafe fn new(sub_alloc:CAllocator) -> Self {
         SubclassableAllocator{
             alloc:sub_alloc,
         }
@@ -67,6 +67,9 @@ impl SubclassableAllocator {
 impl<Ty:Sized+Default+Clone> alloc::Allocator<Ty> for SubclassableAllocator {
     type AllocatedMemory = MemoryBlock<Ty>;
     fn alloc_cell(&mut self, size:usize) ->MemoryBlock<Ty>{
+        if size == 0 {
+            return MemoryBlock::<Ty>::default();
+        }
         if let Some(alloc_fn) = self.alloc.alloc_func {
             let ptr = alloc_fn(self.alloc.opaque, size * core::mem::size_of::<Ty>());
             let typed_ptr = unsafe {core::mem::transmute::<*mut c_void, *mut Ty>(ptr)};
@@ -165,6 +168,9 @@ impl<Ty:Sized+Default> core::ops::IndexMut<usize> for MemoryBlock<Ty> {
 impl<Ty:Sized+Default+Clone> alloc::Allocator<Ty> for SubclassableAllocator {
     type AllocatedMemory = MemoryBlock<Ty>;
     fn alloc_cell(&mut self, size:usize) ->MemoryBlock<Ty>{
+        if size == 0 {
+            return MemoryBlock::<Ty>::default();
+        }
         if let Some(alloc_fn) = self.alloc.alloc_func {
             let ptr = alloc_fn(self.alloc.opaque, size * core::mem::size_of::<Ty>());
             let typed_ptr = unsafe {core::mem::transmute::<*mut c_void, *mut Ty>(ptr)};
