@@ -3,9 +3,15 @@
 [![crates.io](http://meritbadge.herokuapp.com/brotli-decompressor)](https://crates.io/crates/brotli)
 [![Build Status](https://travis-ci.org/dropbox/rust-brotli-decompressor.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli-decompressor)
 
+## What's new in version 2.0.0
+
+* Legacy Custom dictionaries (mostly useful for testing multithreaded brotli encoding and experimentation)
+* New mechanism to request that the library should only depend on custom allocations: the --no-default-features flag since --features=std is on by default.
+* Fully compatible C FFI to match the https://github.com/google/brotli C API and become a drop-in replacement
+
 ## Project Requirements
 
-Direct no-stdlib port of the C brotli decompressor to Rust
+Direct no-stdlib port of the C brotli decompressor to Rust if --no-default-features is passed into the build
 
 no dependency on the Rust stdlib: this library would be ideal for decompressing within a rust kernel among other things.
 

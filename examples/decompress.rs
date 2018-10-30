@@ -1,9 +1,9 @@
 extern crate brotli_decompressor;
-#[cfg(feature="no-stdlib")]
+#[cfg(not(feature="std"))]
 fn main() {
     panic!("For no-stdlib examples please see the tests")
 }
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 fn main() {
     use std::io;
     let stdin = &mut io::stdin();

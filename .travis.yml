@@ -12,7 +12,7 @@ os:
 script:
   - cargo test
   - cargo test --features=unsafe --release
-  - cargo test --features=no-stdlib
+  - cargo test --no-default-features
   - cargo test --release
 
 matrix:

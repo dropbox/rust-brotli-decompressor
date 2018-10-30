@@ -243,7 +243,7 @@ pub fn decompress<InputType, OutputType>(r: &mut InputType,
 
 
 
-// This decompressor is defined unconditionally on whether no-stdlib is defined
+// This decompressor is defined unconditionally on whether std is defined
 // so we can exercise the code in any case
 pub struct BrotliDecompressor<R: Read>(brotli_decompressor::DecompressorCustomIo<io::Error,
                                                                     IntoIoReader<R>,

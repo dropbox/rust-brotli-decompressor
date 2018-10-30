@@ -1,4 +1,4 @@
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 use std::io::{self, ErrorKind, Read, Write};
 
 /// this trait does not allow for transient errors: they must be retried in the underlying layer
@@ -29,21 +29,21 @@ pub fn write_all<ErrType, OutputType>(w: &mut OutputType, buf: &[u8]) -> Result<
   Ok(())
 }
 
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 pub struct IntoIoReader<InputType: Read>(pub InputType);
 
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 pub struct IntoIoWriter<InputType: Write>(pub InputType);
 
 
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 pub struct IoWriterWrapper<'a, OutputType: Write + 'a>(pub &'a mut OutputType);
 
 
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 pub struct IoReaderWrapper<'a, OutputType: Read + 'a>(pub &'a mut OutputType);
 
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 impl<'a, OutputType: Write> CustomWrite<io::Error> for IoWriterWrapper<'a, OutputType> {
   fn write(self: &mut Self, buf: &[u8]) -> Result<usize, io::Error> {
     loop {
@@ -74,7 +74,7 @@ impl<'a, OutputType: Write> CustomWrite<io::Error> for IoWriterWrapper<'a, Outpu
 }
 
 
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 impl<'a, InputType: Read> CustomRead<io::Error> for IoReaderWrapper<'a, InputType> {
   fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize, io::Error> {
     loop {
@@ -91,7 +91,7 @@ impl<'a, InputType: Read> CustomRead<io::Error> for IoReaderWrapper<'a, InputTyp
   }
 }
 
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 impl<InputType: Read> CustomRead<io::Error> for IntoIoReader<InputType> {
   fn read(self: &mut Self, buf: &mut [u8]) -> Result<usize, io::Error> {
     loop {
@@ -108,7 +108,7 @@ impl<InputType: Read> CustomRead<io::Error> for IntoIoReader<InputType> {
   }
 }
 
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 impl<InputType: Write> CustomWrite<io::Error> for IntoIoWriter<InputType> {
   fn flush(self: &mut Self) -> Result<(), io::Error> {
     loop {

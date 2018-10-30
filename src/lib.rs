@@ -5,25 +5,26 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(non_upper_case_globals)]
-#![cfg_attr(feature="no-stdlib-ffi-binding",cfg_attr(feature="no-stdlib", feature(lang_items)))]
-#![cfg_attr(feature="no-stdlib-ffi-binding",cfg_attr(feature="no-stdlib", feature(panic_handler)))]
+#![cfg_attr(feature="no-stdlib-ffi-binding",cfg_attr(not(feature="std"), feature(lang_items)))]
+#![cfg_attr(feature="no-stdlib-ffi-binding",cfg_attr(not(feature="std"), feature(panic_handler)))]
 
 
 #[macro_use]
 // <-- for debugging, remove xprintln from bit_reader and replace with println
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 extern crate std;
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 use std::io::{self, Error, ErrorKind, Read, Write};
-
+#[cfg(feature="std")]
+extern crate alloc_stdlib;
 #[macro_use]
 extern crate alloc_no_stdlib as alloc;
 pub use alloc::{AllocatedStackMemory, Allocator, SliceWrapper, SliceWrapperMut, StackAllocator};
 
-#[cfg(not(feature="no-stdlib"))]
-pub use alloc::HeapAlloc;
-#[cfg(all(feature="unsafe",not(feature="no-stdlib")))]
-pub use alloc::HeapAllocUninitialized;
+#[cfg(feature="std")]
+pub use alloc_stdlib::StandardAlloc;
+#[cfg(all(feature="unsafe",feature="std"))]
+pub use alloc_stdlib::HeapAllocUninitialized;
 #[macro_use]
 mod memory;
 pub mod dictionary;
@@ -45,16 +46,16 @@ pub use state::BrotliState;
 pub mod ffi;
 pub use reader::{DecompressorCustomIo};
 
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 pub use reader::{Decompressor};
 
 pub use writer::{DecompressorWriterCustomIo};
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 pub use writer::{DecompressorWriter};
 
 // use io_wrappers::write_all;
 pub use io_wrappers::{CustomRead, CustomWrite};
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 pub use io_wrappers::{IntoIoReader, IoReaderWrapper, IntoIoWriter, IoWriterWrapper};
 
 // interface
@@ -72,7 +73,7 @@ pub use decode::{BrotliDecompressStream, BrotliResult, BrotliDecoderHasMoreOutpu
 
 
 
-#[cfg(not(any(feature="unsafe", feature="no-stdlib")))]
+#[cfg(not(any(feature="unsafe", not(feature="std"))))]
 pub fn BrotliDecompress<InputType, OutputType>(r: &mut InputType,
                                                w: &mut OutputType)
                                                -> Result<(), io::Error>
@@ -85,14 +86,13 @@ pub fn BrotliDecompress<InputType, OutputType>(r: &mut InputType,
                               w,
                               &mut input_buffer[..],
                               &mut output_buffer[..],
-                              HeapAlloc::<u8> { default_value: 0 },
-                              HeapAlloc::<u32> { default_value: 0 },
-                              HeapAlloc::<HuffmanCode> {
-                                default_value: HuffmanCode::default(),
-                              })
+                              StandardAlloc::default(),
+                              StandardAlloc::default(),
+                              StandardAlloc::default(),
+  )
 }
 
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 pub fn BrotliDecompressCustomDict<InputType, OutputType>(r: &mut InputType,
                                                          w: &mut OutputType,
                                                          input_buffer:&mut [u8],
@@ -129,7 +129,7 @@ pub fn BrotliDecompressCustomDict<InputType, OutputType>(r: &mut InputType,
   }
 }
 
-#[cfg(all(feature="unsafe",not(feature="no-stdlib")))]
+#[cfg(all(feature="unsafe",feature="std"))]
 pub fn BrotliDecompress<InputType, OutputType>(r: &mut InputType,
                                                w: &mut OutputType)
                                                -> Result<(), io::Error>
@@ -148,7 +148,7 @@ pub fn BrotliDecompress<InputType, OutputType>(r: &mut InputType,
 }
 
 
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 pub fn BrotliDecompressCustomAlloc<InputType,
                                    OutputType,
                                    AllocU8: Allocator<u8>,
@@ -285,7 +285,7 @@ pub fn BrotliDecompressCustomIoCustomDict<ErrType,
 }
 
 
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 pub fn copy_from_to<R: io::Read, W: io::Write>(mut r: R, mut w: W) -> io::Result<usize> {
   let mut buffer: [u8; 65536] = [0; 65536];
   let mut out_size: usize = 0;

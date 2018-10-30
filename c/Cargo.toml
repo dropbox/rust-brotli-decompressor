@@ -1,6 +1,6 @@
 [package]
 name = "brotli-decompressor"
-version = "1.4.0"
+version = "2.0.0"
 authors = ["Daniel Reiter Horn <danielrh@dropbox.com>", "The Brotli Authors"]
 description = "A brotli decompressor that with an interface avoiding the rust stdlib. This makes it suitable for embedded devices and kernels. It is designed with a pluggable allocator so that the standard lib's allocator may be employed. The default build also includes a stdlib allocator and stream interface. Disable this with --features=no-stdlib. Alternatively, --features=unsafe turns off array bounds checks and memory initialization but provides a safe interface for the caller.  Without adding the --features=unsafe argument, all included code is safe. For compression in addition to this library, download https://github.com/dropbox/rust-brotli "
 license = "BSD-3-Clause/MIT"
@@ -9,7 +9,7 @@ homepage = "https://github.com/dropbox/rust-brotli-decompressor"
 repository = "https://github.com/dropbox/rust-brotli-decompressor"
 keywords = ["brotli", "decompression", "lz77", "huffman", "nostd"]
 readme = "README.md"
-exclude = ["src/bin/testdata/*"]
+exclude = ["testdata/*"]
 autobins = false
 
 [lib]
@@ -20,13 +20,14 @@ path="../src/lib.rs"
 lto=true
 
 [dependencies]
-"alloc-no-stdlib" = "~1.3"
+"alloc-no-stdlib" = {version="~2.0"}
+"alloc-stdlib" = {version="~0.2", optional=true}
+
 
 [features]
-#default=["no-stdlib", "no-stdlib-ffi-binding"]
-seccomp = []
-no-stdlib = ["alloc-no-stdlib/no-stdlib"]
+default=["std"]
+std = ["alloc-stdlib"]
+unsafe = ["alloc-no-stdlib/unsafe", "alloc-stdlib/unsafe"]
 no-stdlib-ffi-binding = []
-unsafe = ["alloc-no-stdlib/unsafe"]
 disable-timer = []
 benchmark = []

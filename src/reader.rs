@@ -1,19 +1,19 @@
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 use std::io::{self, Error, ErrorKind, Read};
-#[cfg(not(feature="no-stdlib"))]
-pub use alloc::HeapAlloc;
-#[cfg(all(feature="unsafe",not(feature="no-stdlib")))]
-pub use alloc::HeapAllocUninitialized;
+#[cfg(feature="std")]
+pub use alloc_stdlib::StandardAlloc;
+#[cfg(all(feature="unsafe",feature="std"))]
+pub use alloc_stdlib::HeapAllocUninitialized;
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
 pub use state::BrotliState;
 // use io_wrappers::write_all;
 pub use io_wrappers::{CustomRead, CustomWrite};
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 pub use io_wrappers::{IntoIoReader, IoReaderWrapper, IoWriterWrapper};
 pub use super::decode::{BrotliDecompressStream, BrotliResult};
 pub use alloc::{AllocatedStackMemory, Allocator, SliceWrapper, SliceWrapperMut, StackAllocator};
 
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 pub struct DecompressorCustomAlloc<R: Read,
      BufferType : SliceWrapperMut<u8>,
      AllocU8 : Allocator<u8>,
@@ -24,7 +24,7 @@ pub struct DecompressorCustomAlloc<R: Read,
                                                              AllocU8, AllocU32, AllocHC>);
 
 
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 impl<R: Read,
      BufferType : SliceWrapperMut<u8>,
      AllocU8,
@@ -68,7 +68,7 @@ impl<R: Read,
       &mut self.0.get_mut().0
     }
 }
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 impl<R: Read,
      BufferType : SliceWrapperMut<u8>,
      AllocU8 : Allocator<u8>,
@@ -84,36 +84,34 @@ impl<R: Read,
 }
 
 
-#[cfg(not(any(feature="unsafe", feature="no-stdlib")))]
+#[cfg(not(any(feature="unsafe", not(feature="std"))))]
 pub struct Decompressor<R: Read>(DecompressorCustomAlloc<R,
-                                                         <HeapAlloc<u8>
+                                                         <StandardAlloc
                                                           as Allocator<u8>>::AllocatedMemory,
-                                                         HeapAlloc<u8>,
-                                                         HeapAlloc<u32>,
-                                                         HeapAlloc<HuffmanCode> >);
+                                                         StandardAlloc,
+                                                         StandardAlloc,
+                                                         StandardAlloc>);
 
 
-#[cfg(not(any(feature="unsafe", feature="no-stdlib")))]
+#[cfg(not(any(feature="unsafe", not(feature="std"))))]
 impl<R: Read> Decompressor<R> {
   pub fn new(r: R, buffer_size: usize) -> Self {
-     let dict = <HeapAlloc<u8> as Allocator<u8>>::AllocatedMemory::default();
+     let dict = <StandardAlloc as Allocator<u8>>::AllocatedMemory::default();
      Self::new_with_custom_dict(r, buffer_size, dict)
   }
-  pub fn new_with_custom_dict(r: R, buffer_size: usize, dict: <HeapAlloc<u8> as Allocator<u8>>::AllocatedMemory) -> Self {
-    let mut alloc_u8 = HeapAlloc::<u8> { default_value: 0 };
-    let buffer = alloc_u8.alloc_cell(if buffer_size == 0 {4096} else {buffer_size});
-    let alloc_u32 = HeapAlloc::<u32> { default_value: 0 };
-    let alloc_hc = HeapAlloc::<HuffmanCode> { default_value: HuffmanCode::default() };
+  pub fn new_with_custom_dict(r: R, buffer_size: usize, dict: <StandardAlloc as Allocator<u8>>::AllocatedMemory) -> Self {
+    let mut alloc = StandardAlloc::default();
+    let buffer = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, if buffer_size == 0 {4096} else {buffer_size});
     Decompressor::<R>(DecompressorCustomAlloc::<R,
-                                                <HeapAlloc<u8>
+                                                <StandardAlloc
                                                  as Allocator<u8>>::AllocatedMemory,
-                                                HeapAlloc<u8>,
-                                                HeapAlloc<u32>,
-                                                HeapAlloc<HuffmanCode> >::new_with_custom_dictionary(r,
+                                                StandardAlloc,
+                                                StandardAlloc,
+                                                StandardAlloc>::new_with_custom_dictionary(r,
                                                                               buffer,
-                                                                              alloc_u8,
-                                                                              alloc_u32,
-                                                                              alloc_hc,
+                                                                              alloc,
+                                                                              StandardAlloc::default(),
+                                                                              StandardAlloc::default(),
                                                                               dict))
   }
 
@@ -126,7 +124,7 @@ impl<R: Read> Decompressor<R> {
 }
 
 
-#[cfg(all(feature="unsafe", not(feature="no-stdlib")))]
+#[cfg(all(feature="unsafe", feature="std"))]
 pub struct Decompressor<R: Read>(DecompressorCustomAlloc<R,
                                                          <HeapAllocUninitialized<u8>
                                                           as Allocator<u8>>::AllocatedMemory,
@@ -135,7 +133,7 @@ pub struct Decompressor<R: Read>(DecompressorCustomAlloc<R,
                                                          HeapAllocUninitialized<HuffmanCode> >);
 
 
-#[cfg(all(feature="unsafe", not(feature="no-stdlib")))]
+#[cfg(all(feature="unsafe", feature="std"))]
 impl<R: Read> Decompressor<R> {
   pub fn new(r: R, buffer_size: usize) -> Self {
      let dict = <HeapAllocUninitialized<u8> as Allocator<u8>>::AllocatedMemory::default();
@@ -165,7 +163,7 @@ impl<R: Read> Decompressor<R> {
 }
 
 
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 impl<R: Read> Read for Decompressor<R> {
   fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
     self.0.read(buf)

@@ -19,12 +19,12 @@ pub struct BrotliDecoderState {
                                     SubclassableAllocator>,
 }
 
-#[cfg(feature="no-stdlib")]
+#[cfg(not(feature="std"))]
 fn brotli_new_decompressor_without_custom_alloc(_to_box: BrotliDecoderState) -> *mut BrotliDecoderState{
-    panic!("Must supply allocators if calling divans when compiled with features=no-stdlib");
+    panic!("Must supply allocators if calling divans when compiled without features=std");
 }
 
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 fn brotli_new_decompressor_without_custom_alloc(to_box: BrotliDecoderState) -> *mut BrotliDecoderState{
     alloc_util::Box::<BrotliDecoderState>::into_raw(
         alloc_util::Box::<BrotliDecoderState>::new(to_box))
@@ -72,7 +72,7 @@ pub unsafe extern fn BrotliDecoderSetParameter(_state_ptr: *mut BrotliDecoderSta
   // not implemented
 }
 
-#[cfg(feature="no-stdlib")] // error always since no default allocator
+#[cfg(not(feature="std"))] // error always since no default allocator
 #[no_mangle]
 pub unsafe extern fn BrotliDecoderDecompress(
   _encoded_size: usize,
@@ -83,7 +83,7 @@ pub unsafe extern fn BrotliDecoderDecompress(
   BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR // no allocator
 }
 
-#[cfg(not(feature="no-stdlib"))] // this requires a default allocator
+#[cfg(feature="std")] // this requires a default allocator
 #[no_mangle]
 pub unsafe extern fn BrotliDecoderDecompress(
   encoded_size: usize,
@@ -150,12 +150,12 @@ pub unsafe extern fn BrotliDecoderDecompressStream(
     return result;
 }
 
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 unsafe fn free_decompressor_no_custom_alloc(state_ptr: *mut BrotliDecoderState) {
     let _state = alloc_util::Box::from_raw(state_ptr);
 }
 
-#[cfg(feature="no-stdlib")]
+#[cfg(not(feature="std"))]
 unsafe fn free_decompressor_no_custom_alloc(_state_ptr: *mut BrotliDecoderState) {
     unreachable!();
 }

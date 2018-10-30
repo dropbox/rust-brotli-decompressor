@@ -2,9 +2,9 @@
 
 extern crate alloc_no_stdlib as alloc;
 use alloc::{AllocatedStackMemory, Allocator, SliceWrapper, SliceWrapperMut, StackAllocator, bzero};
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 use std::vec::Vec;
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 use std::io;
 
 use core::ops;
@@ -129,12 +129,12 @@ fn test_quickfox_repeated() {
 }
 
 
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 struct Buffer {
   data: Vec<u8>,
   read_offset: usize,
 }
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 impl Buffer {
   pub fn new(buf: &[u8]) -> Buffer {
     let mut ret = Buffer {
@@ -145,7 +145,7 @@ impl Buffer {
     return ret;
   }
 }
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 impl io::Read for Buffer {
   fn read(self: &mut Self, buf: &mut [u8]) -> io::Result<usize> {
     let bytes_to_read = ::core::cmp::min(buf.len(), self.data.len() - self.read_offset);
@@ -157,7 +157,7 @@ impl io::Read for Buffer {
     return Ok(bytes_to_read);
   }
 }
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 impl io::Write for Buffer {
   fn write(self: &mut Self, buf: &[u8]) -> io::Result<usize> {
     self.data.extend(buf);
@@ -170,7 +170,7 @@ impl io::Write for Buffer {
 
 
 #[test]
-#[cfg(not(feature="no-stdlib"))]
+#[cfg(feature="std")]
 fn test_reader_quickfox_repeated() {
   let in_buf: [u8; 58] = [0x5B, 0xFF, 0xAF, 0x02, 0xC0, 0x22, 0x79, 0x5C, 0xFB, 0x5A, 0x8C, 0x42,
                           0x3B, 0xF4, 0x25, 0x55, 0x19, 0x5A, 0x92, 0x99, 0xB1, 0x35, 0xC8, 0x19,
