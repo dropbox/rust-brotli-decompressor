@@ -120,33 +120,33 @@ pub unsafe extern fn BrotliDecoderDecompress(
   }
 }
 
-#[cfg(feature="std")]
+#[cfg(all(feature="std", not(feature="pass-through-ffi-panics")))]
 fn catch_panic<F:FnOnce()->BrotliDecoderResult+panic::UnwindSafe>(f: F) -> thread::Result<BrotliDecoderResult> {
     panic::catch_unwind(f)
 }
 
-#[cfg(feature="std")]
+#[cfg(all(feature="std", not(feature="pass-through-ffi-panics")))]
 fn catch_panic_state<F:FnOnce()->*mut BrotliDecoderState+panic::UnwindSafe>(f: F) -> thread::Result<*mut BrotliDecoderState> {
     panic::catch_unwind(f)
 }
 
-#[cfg(feature="std")]
+#[cfg(all(feature="std", not(feature="pass-through-ffi-panics")))]
 fn error_print<Err:core::fmt::Debug>(err: Err) {
     let _ign = writeln!(&mut io::stderr(), "Internal Error {:?}", err);
 }
 
 // can't catch panics in a reliable way without std:: configure with panic=abort. These shouldn't happen
-#[cfg(not(feature="std"))]
+#[cfg(any(not(feature="std"), feature="pass-through-ffi-panics"))]
 fn catch_panic<F:FnOnce()->BrotliDecoderResult>(f: F) -> Result<BrotliDecoderResult, ()> {
     Ok(f())
 }
 
-#[cfg(not(feature="std"))]
+#[cfg(any(not(feature="std"), feature="pass-through-ffi-panics"))]
 fn catch_panic_state<F:FnOnce()->*mut BrotliDecoderState>(f: F) -> Result<*mut BrotliDecoderState, ()> {
     Ok(f())
 }
 
-#[cfg(not(feature="std"))]
+#[cfg(any(not(feature="std"), feature="pass-through-ffi-panics"))]
 fn error_print<Err>(_err: Err) {
 }
 

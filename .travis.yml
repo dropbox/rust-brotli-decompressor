@@ -3,7 +3,6 @@ rust:
   - nightly
   - stable
   - 1.12.0
-  - 1.8.0
 
 os:
   - linux
@@ -14,8 +13,3 @@ script:
   - cargo test --features=unsafe --release
   - cargo test --no-default-features
   - cargo test --release
-
-matrix:
-  exclude:
-    - rust: 1.8.0
-      os: osx
