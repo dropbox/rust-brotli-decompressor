@@ -2,7 +2,9 @@
 
 #[no_mangle]
 #[cfg(feature="std")]
-use std::{thread,panic};
+use std::{thread,panic, io};
+#[cfg(feature="std")]
+use std::io::Write;
 use core;
 use core::slice;
 pub mod interface;
@@ -130,7 +132,7 @@ fn catch_panic_state<F:FnOnce()->*mut BrotliDecoderState+panic::UnwindSafe>(f: F
 
 #[cfg(feature="std")]
 fn error_print<Err:core::fmt::Debug>(err: Err) {
-    eprintln!("Internal Error {:?}", err);
+    let _ign = writeln!(&mut io::stderr(), "Internal Error {:?}", err);
 }
 
 // can't catch panics in a reliable way without std:: configure with panic=abort. These shouldn't happen
