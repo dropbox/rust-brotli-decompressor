@@ -1736,7 +1736,7 @@ fn CopyUncompressedBlockToOutput<AllocU8: alloc::Allocator<u8>,
                                     input);
         s.pos += nbytes;
         s.meta_block_remaining_len -= nbytes;
-        if (s.pos < s.ringbuffer_size) {
+        if s.pos < (1 << s.window_bits) {
           if (s.meta_block_remaining_len == 0) {
             return BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS;
           }

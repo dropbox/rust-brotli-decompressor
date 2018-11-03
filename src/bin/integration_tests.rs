@@ -485,6 +485,21 @@ fn test_64x() {
 }
 
 #[test]
+fn test_random1024() {
+  assert_decompressed_input_matches_output(include_bytes!("../../testdata/random1024.br"),
+                                           include_bytes!("../../testdata/random1024"),
+                                           65536,
+                                           65536);
+}
+#[test]
+fn test_random1024small_buffer() {
+  assert_decompressed_input_matches_output(include_bytes!("../../testdata/random1024.br"),
+                                           include_bytes!("../../testdata/random1024"),
+                                           1024,
+                                           1024);
+}
+
+#[test]
 fn test_as_you_like_it() {
   assert_decompressed_input_matches_output(include_bytes!("../../testdata/asyoulik.txt.compressed"),
                                            include_bytes!("../../testdata/asyoulik.txt"),
