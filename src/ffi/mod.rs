@@ -1,6 +1,8 @@
 #![cfg(not(feature="safe"))]
 
 #[no_mangle]
+#[cfg(feature="std")]
+use std::{thread,panic};
 use core;
 use core::slice;
 pub mod interface;
@@ -37,32 +39,34 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
     free_func: brotli_free_func,
     opaque: *mut c_void,
 ) -> *mut BrotliDecoderState {
-    let allocators = CAllocator {
+    catch_panic_state(|| {
+      let allocators = CAllocator {
         alloc_func:alloc_func,
         free_func:free_func,
         opaque:opaque,
-    };
-    let custom_dictionary = <SubclassableAllocator as Allocator<u8>>::AllocatedMemory::default();
-    let to_box = BrotliDecoderState {
+      };
+      let custom_dictionary = <SubclassableAllocator as Allocator<u8>>::AllocatedMemory::default();
+      let to_box = BrotliDecoderState {
         custom_allocator: allocators.clone(),
         decompressor: ::BrotliState::new_with_custom_dictionary(
-            SubclassableAllocator::new(allocators.clone()),
-            SubclassableAllocator::new(allocators.clone()),
-            SubclassableAllocator::new(allocators.clone()),
-            custom_dictionary,
+          SubclassableAllocator::new(allocators.clone()),
+          SubclassableAllocator::new(allocators.clone()),
+          SubclassableAllocator::new(allocators.clone()),
+          custom_dictionary,
         ),
-    };
-    if let Some(alloc) = alloc_func {
+      };
+      if let Some(alloc) = alloc_func {
         if free_func.is_none() {
             panic!("either both alloc and free must exist or neither");
         }
-       let ptr = alloc(allocators.opaque, core::mem::size_of::<BrotliDecoderState>());
+        let ptr = alloc(allocators.opaque, core::mem::size_of::<BrotliDecoderState>());
         let brotli_decoder_state_ptr = core::mem::transmute::<*mut c_void, *mut BrotliDecoderState>(ptr);
         core::ptr::write(brotli_decoder_state_ptr, to_box);
         brotli_decoder_state_ptr
-    } else {
+      } else {
         brotli_new_decompressor_without_custom_alloc(to_box)
-    }
+      }
+    }).unwrap_or(core::ptr::null_mut())
 }
 
 #[no_mangle]
@@ -100,6 +104,9 @@ pub unsafe extern fn BrotliDecoderDecompress(
     None,
     core::ptr::null_mut(),
   );
+  if s.is_null() { // if the allocation failed
+      return BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR;
+  }
   let result = BrotliDecoderDecompressStream(
     s, &mut available_in, &mut next_in, &mut available_out, &mut next_out, &mut total_out);
   *decoded_size = total_out;
@@ -111,6 +118,36 @@ pub unsafe extern fn BrotliDecoderDecompress(
   }
 }
 
+#[cfg(feature="std")]
+fn catch_panic<F:FnOnce()->BrotliDecoderResult+panic::UnwindSafe>(f: F) -> thread::Result<BrotliDecoderResult> {
+    panic::catch_unwind(f)
+}
+
+#[cfg(feature="std")]
+fn catch_panic_state<F:FnOnce()->*mut BrotliDecoderState+panic::UnwindSafe>(f: F) -> thread::Result<*mut BrotliDecoderState> {
+    panic::catch_unwind(f)
+}
+
+#[cfg(feature="std")]
+fn error_print<Err:core::fmt::Debug>(err: Err) {
+    eprintln!("Internal Error {:?}", err);
+}
+
+// can't catch panics in a reliable way without std:: configure with panic=abort. These shouldn't happen
+#[cfg(not(feature="std"))]
+fn catch_panic<F:FnOnce()->BrotliDecoderResult>(f: F) -> Result<BrotliDecoderResult, ()> {
+    Ok(f())
+}
+
+#[cfg(not(feature="std"))]
+fn catch_panic_state<F:FnOnce()->*mut BrotliDecoderState>(f: F) -> Result<*mut BrotliDecoderState, ()> {
+    Ok(f())
+}
+
+#[cfg(not(feature="std"))]
+fn error_print<Err>(_err: Err) {
+}
+
 #[no_mangle]
 pub unsafe extern fn BrotliDecoderDecompressStream(
     state_ptr: *mut BrotliDecoderState,
@@ -119,6 +156,7 @@ pub unsafe extern fn BrotliDecoderDecompressStream(
     available_out: *mut usize,
     output_buf_ptr: *mut*mut u8,
     mut total_out: *mut usize) -> BrotliDecoderResult {
+    match catch_panic(move || {
     let mut input_offset = 0usize;
     let mut output_offset = 0usize;
     let mut fallback_total_out = 0usize;
@@ -129,25 +167,33 @@ pub unsafe extern fn BrotliDecoderDecompressStream(
     {
         let input_buf = slice::from_raw_parts(*input_buf_ptr, *available_in);
         let output_buf = slice::from_raw_parts_mut(*output_buf_ptr, *available_out);
-        result = match super::decode::BrotliDecompressStream(
-            &mut *available_in,
-            &mut input_offset,
-            input_buf,
-            &mut *available_out,
-            &mut output_offset,
-            output_buf,
-            &mut *total_out,
-            &mut (*state_ptr).decompressor,
-        ) {
-            BrotliResult::ResultSuccess => BrotliDecoderResult::BROTLI_DECODER_RESULT_SUCCESS,
-            BrotliResult::ResultFailure => BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR,
-            BrotliResult::NeedsMoreInput => BrotliDecoderResult::BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT ,
-            BrotliResult::NeedsMoreOutput => BrotliDecoderResult::BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT ,
-        };
+            result = match super::decode::BrotliDecompressStream(
+                &mut *available_in,
+                &mut input_offset,
+                input_buf,
+                &mut *available_out,
+                &mut output_offset,
+                output_buf,
+                &mut *total_out,
+                &mut (*state_ptr).decompressor,
+            ) {
+                BrotliResult::ResultSuccess => BrotliDecoderResult::BROTLI_DECODER_RESULT_SUCCESS,
+                BrotliResult::ResultFailure => BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR,
+                BrotliResult::NeedsMoreInput => BrotliDecoderResult::BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT ,
+                BrotliResult::NeedsMoreOutput => BrotliDecoderResult::BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT ,
+            };
     }
     *input_buf_ptr = (*input_buf_ptr).offset(input_offset as isize);
     *output_buf_ptr = (*output_buf_ptr).offset(output_offset as isize);
-    return result;
+                                           result
+    }) {
+        Ok(ret) => ret,
+        Err(readable_err) => { // if we panic (completely unexpected) then we should report it back to C and print
+            error_print(readable_err);
+            (*state_ptr).decompressor.error_code = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_UNREACHABLE;
+            BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR
+        }
+    }
 }
 
 #[cfg(feature="std")]

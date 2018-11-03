@@ -1,4 +1,6 @@
 use core;
+#[cfg(feature="std")]
+use std;
 use ::alloc;
 use super::interface::{c_void, CAllocator};
 #[cfg(feature="std")]
@@ -216,8 +218,10 @@ pub unsafe fn free_stdlib<T>(ptr: *mut T, size: usize) {
 }
 #[cfg(feature="std")]
 pub fn alloc_stdlib<T:Sized+Default+Copy+Clone>(size: usize) -> *mut T {
-    let mut newly_allocated = vec![T::default();size].into_boxed_slice();
-    let slice_ptr = newly_allocated.as_mut_ptr();
-    let _box_ptr = Box::into_raw(newly_allocated);
-    slice_ptr
+    std::panic::catch_unwind(|| {
+        let mut newly_allocated = vec![T::default();size].into_boxed_slice();
+        let slice_ptr = newly_allocated.as_mut_ptr();
+        let _box_ptr = Box::into_raw(newly_allocated);
+        slice_ptr
+    }).unwrap_or(core::ptr::null_mut())
 }
