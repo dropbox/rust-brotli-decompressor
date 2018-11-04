@@ -41,7 +41,7 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
     free_func: brotli_free_func,
     opaque: *mut c_void,
 ) -> *mut BrotliDecoderState {
-    catch_panic_state(|| {
+    match catch_panic_state(|| {
       let allocators = CAllocator {
         alloc_func:alloc_func,
         free_func:free_func,
@@ -68,7 +68,13 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
       } else {
         brotli_new_decompressor_without_custom_alloc(to_box)
       }
-    }).unwrap_or(core::ptr::null_mut())
+    }) {
+        Ok(ret) => ret,
+        Err(e) => {
+            error_print(e);
+            core::ptr::null_mut()
+        },
+    }
 }
 
 #[no_mangle]
