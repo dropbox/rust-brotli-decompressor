@@ -193,6 +193,8 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   // This is true if the literal context map histogram type always matches the
   // block type. It is then not needed to keep the context (faster decoding).
   pub trivial_literal_context: i32,
+  // Distance context is actual after command is decoded and before distance
+  // is computed. After distance computation it is used as a temporary variable
   pub distance_context: i32,
   pub meta_block_remaining_len: i32,
   pub block_type_length_state: BlockTypeAndLengthState<AllocHC>,

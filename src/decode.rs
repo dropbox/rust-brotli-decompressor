@@ -1865,6 +1865,7 @@ pub fn TakeDistanceFromRingBuffer<AllocU8: alloc::Allocator<u8>,
   if (s.distance_code == 0) {
     s.dist_rb_idx -= 1;
     s.distance_code = fast!((s.dist_rb)[(s.dist_rb_idx & 3) as usize]);
+    s.distance_context = 1;
   } else {
     let distance_code = s.distance_code << 1;
     // kDistanceShortCodeIndexOffset has 2-bit values from LSB:
@@ -1932,6 +1933,7 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
   }
   // Convert the distance code to the actual distance by possibly
   // looking up past distances from the s.ringbuffer.
+  s.distance_context = 0;
   if ((s.distance_code as u64 & 0xfffffffffffffff0) == 0) {
     TakeDistanceFromRingBuffer(s);
     fast_mut!((s.block_type_length_state.block_length)[2]) -= 1;
@@ -2379,6 +2381,8 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
         }
         BrotliRunningState::BROTLI_STATE_COMMAND_POST_DECODE_LITERALS => {
           if s.distance_code >= 0 {
+            let not_distance_code = if s.distance_code != 0 { 0 } else { 1 };
+            s.distance_context = not_distance_code;
             s.dist_rb_idx -= 1;
             s.distance_code = fast!((s.dist_rb)[(s.dist_rb_idx & 3) as usize]);
             // goto postReadDistance
@@ -2421,6 +2425,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               let mask = bit_reader::BitMask(shift as u32) as i32;
               let word_idx = word_id & mask;
               let transform_idx = word_id >> shift;
+              s.dist_rb_idx += s.distance_context;
               offset += word_idx * i;
               if (transform_idx < kNumTransforms) {
                 let mut len = i;

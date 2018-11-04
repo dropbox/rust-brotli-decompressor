@@ -843,6 +843,51 @@ fn test_metablock_reset() {
 }
 
 #[test]
+fn test_metablock_section_4_distance_symbol_0() {
+  assert_decompressed_input_matches_output(include_bytes!("../../testdata/fuzz502.compressed"),
+                                           include_bytes!("../../testdata/fuzz502"),
+                                           65536,
+                                           65536);
+}
+
+#[test]
+fn test_intact_distance_ring_buffer0() {
+  static BR:&'static[u8] = &[0x1b, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x80, 0xe3, 0xb4, 0x0d, 0x00, 0x00,
+                            0x07, 0x5b, 0x26, 0x31, 0x40, 0x02, 0x00, 0xe0, 0x4e, 0x1b, 0xa1, 0x80,
+                            0x20, 0x00];
+  static OUT:&'static[u8] = b"himselfself";
+  assert_decompressed_input_matches_output(BR,
+                                           OUT,
+                                           65536,
+                                           65536);
+}
+
+#[test]
+fn test_intact_distance_ring_buffer1() {
+  static BR:&'static[u8] = &[0x1b, 0x09, 0x00, 0x00, 0x00, 0x00, 0x80, 0xe3, 0xb4, 0x0d, 0x00, 0x00,
+    0x07, 0x5b, 0x26, 0x31, 0x40, 0x02, 0x00, 0xe0, 0x4e, 0x1b, 0x21, 0xa0,
+    0x20, 0x00
+  ];
+  static OUT:&'static[u8] = b"scrollroll";
+  assert_decompressed_input_matches_output(BR,
+                                           OUT,
+                                           65536,
+                                           65536);
+}
+
+#[test]
+fn test_intact_distance_ring_buffer2() {
+  static BR:&'static[u8] = &[0x1b, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x80, 0xe3, 0xb4, 0x0d, 0x00, 0x00,
+    0x07, 0x5b, 0x26, 0x31, 0x40, 0x02, 0x00, 0xe0, 0x4e, 0x1b, 0x41, 0x80,
+    0x20, 0x50, 0x10, 0x24, 0x08, 0x06];
+  static OUT:&'static[u8] = b"leftdatadataleft";
+  assert_decompressed_input_matches_output(BR,
+                                           OUT,
+                                           65536,
+                                           65536);
+}
+
+#[test]
 fn test_metablock_reset1_65536() {
   assert_decompressed_input_matches_output(include_bytes!("../../testdata/metablock_reset.compressed"),
                                            include_bytes!("../../testdata/metablock_reset"),
