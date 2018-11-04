@@ -186,7 +186,7 @@ fn catch_panic_state<F:FnOnce()->*mut BrotliDecoderState>(f: F) -> Result<*mut B
 }
 
 #[cfg(any(not(feature="std"), feature="pass-through-ffi-panics"))]
-fn error_print<Err: BrotliAdditionalErrorData>(_state_ptr: *mut BrotliDecoderState, _err: &mut Err) {
+fn error_print(_state_ptr: *mut BrotliDecoderState, _err: &mut BrotliAdditionalErrorData) {
 }
 
 #[no_mangle]
