@@ -325,10 +325,10 @@ pub unsafe extern fn BrotliDecoderGetErrorCode(state_ptr: *const BrotliDecoderSt
 #[no_mangle]
 pub unsafe extern fn BrotliDecoderGetErrorString(state_ptr: *const BrotliDecoderState) -> *const u8 {
   if !state_ptr.is_null() {
-    if let Err(ref msg) = &(*state_ptr).decompressor.mtf_or_error_string {
+    if let &Err(ref msg) = &(*state_ptr).decompressor.mtf_or_error_string {
       // important: this must be a ref
       // so stack memory is not returned
-     return msg.as_ptr();
+      return msg.as_ptr();
     }
   }
   BrotliDecoderErrorString(super::decode::BrotliDecoderGetErrorCode(&(*state_ptr).decompressor))
