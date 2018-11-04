@@ -3134,22 +3134,6 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           }
           match s.state {
             BrotliRunningState::BROTLI_STATE_COMMAND_POST_WRITE_1 => {
-              /* FIXME
-              if s.pos > 0 {
-                let mut pos = s.pos as usize;
-                // hopefully the following is a hint that the while loop below is safe
-                let _last_item = s.ringbuffer.slice()[s.ringbuffer_size as usize + pos - 1];
-                while pos > 0 {
-                  pos -= 1; // FIXME: probably super slow.. maybe compiler can bound only once?
-                  s.ringbuffer.slice_mut()[pos] = s.ringbuffer.slice()[s.ringbuffer_size as usize
-                                                                       + pos];
-                }
-              } */
-              memcpy_within_slice(s.ringbuffer.slice_mut(),
-                                  0,
-                                  s.ringbuffer_size as usize,
-                                  s.pos as usize);
-              //s.ringbuffer memcpy(s->ringbuffer, s->ringbuffer_end, (size_t)s->pos);
               if (s.meta_block_remaining_len <= 0) {
                 // Next metablock, if any
                 s.state = BrotliRunningState::BROTLI_STATE_METABLOCK_DONE;
