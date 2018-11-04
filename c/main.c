@@ -41,9 +41,11 @@ void negative_test() {
     const unsigned char *i_ptr = &brotli_file[0];
 
     unsigned char *o_ptr = &obuffer[0];
+    const char * to_be_printed;
     BrotliDecoderResult rest = BrotliDecoderDecompressStream(state, &avail_in, &i_ptr, &avail_out, &o_ptr, &total_out);
     assert(rest ==  BROTLI_DECODER_RESULT_ERROR);
-    assert(strcmp(BrotliDecoderErrorString(BrotliDecoderGetErrorCode(state)), "ERROR_FORMAT_CONTEXT_MAP_REPEAT") == 0);
+    to_be_printed = BrotliDecoderGetErrorString(state);
+    assert(strcmp(to_be_printed, "ERROR_FORMAT_CONTEXT_MAP_REPEAT") == 0);
 }
 
 int main() {

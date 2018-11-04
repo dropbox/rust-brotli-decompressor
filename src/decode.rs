@@ -1091,7 +1091,7 @@ macro_rules! SafeReadBlockLength (
 //
 fn InverseMoveToFrontTransform(v: &mut [u8],
                                v_len: u32,
-                               mtf: &mut [u8],
+                               mtf: &mut [u8;256],
                                mtf_upper_bound: &mut u32) {
   // Reinitialize elements that could have been changed.
   let mut upper_bound: u32 = *mtf_upper_bound;
@@ -1371,10 +1371,15 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
           return BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;
         }
         if (bits != 0) {
-          InverseMoveToFrontTransform(context_map_arg.slice_mut(),
-                                      context_map_size,
-                                      &mut s.mtf,
-                                      &mut s.mtf_upper_bound);
+          if let Ok(ref mut mtf) = s.mtf_or_error_string {
+            InverseMoveToFrontTransform(context_map_arg.slice_mut(),
+                                        context_map_size,
+                                        mtf,
+                                        &mut s.mtf_upper_bound);
+          } else {
+            // the error state is stored here--we can't make it this deep with an active error
+            return BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_UNREACHABLE;
+          }
         }
         s.substate_context_map = BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_NONE;
         return BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS;

@@ -2,7 +2,7 @@
 
 #[no_mangle]
 #[cfg(feature="std")]
-use std::{thread,panic, io};
+use std::{thread,panic, io, boxed, any, string};
 #[cfg(feature="std")]
 use std::io::Write;
 use core;
@@ -14,6 +14,12 @@ use alloc::Allocator;
 use self::interface::{CAllocator, c_void, BrotliDecoderParameter, BrotliDecoderResult, brotli_alloc_func, brotli_free_func};
 use ::BrotliResult;
 pub use super::state::BrotliDecoderErrorCode;
+
+#[cfg(feature="std")]
+type BrotliAdditionalErrorData = boxed::Box<any::Any + Send + 'static>;
+#[cfg(not(feature="std"))]
+type BrotliAdditionalErrorData = ();
+
 #[repr(C)]
 #[no_mangle]
 pub struct BrotliDecoderState {
@@ -70,8 +76,8 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
       }
     }) {
         Ok(ret) => ret,
-        Err(e) => {
-            error_print(e);
+        Err(mut e) => {
+            error_print(core::ptr::null_mut(), &mut e);
             core::ptr::null_mut()
         },
     }
@@ -137,23 +143,50 @@ fn catch_panic_state<F:FnOnce()->*mut BrotliDecoderState+panic::UnwindSafe>(f: F
 }
 
 #[cfg(all(feature="std", not(feature="pass-through-ffi-panics")))]
-fn error_print<Err:core::fmt::Debug>(err: Err) {
-    let _ign = writeln!(&mut io::stderr(), "Internal Error {:?}", err);
+unsafe fn error_print(state_ptr: *mut BrotliDecoderState, err: &mut BrotliAdditionalErrorData) {
+    if let Some(st) = err.downcast_ref::<&str>() {
+        if !state_ptr.is_null() {
+          let mut str_cpy = [0u8;256];
+          let src:&[u8] = st.as_ref();
+          let xlen = core::cmp::min(src.len(), str_cpy.len() - 1);
+          str_cpy.split_at_mut(xlen).0.clone_from_slice(
+                src.split_at(xlen).0);
+          str_cpy[xlen] = 0; // null terminate
+          (*state_ptr).decompressor.mtf_or_error_string = Err(str_cpy);
+        }
+        let _ign = writeln!(&mut io::stderr(), "panic: {}", st);
+    } else {
+        if let Some(st) = err.downcast_ref::<string::String>() {
+
+          if !state_ptr.is_null() {
+            let mut str_cpy = [0u8;256];
+            let src: &[u8] = st.as_ref();
+            let xlen = core::cmp::min(src.len(), str_cpy.len() - 1);
+            str_cpy.split_at_mut(xlen).0.clone_from_slice(
+                src.split_at(xlen).0);
+            str_cpy[xlen] = 0; // null terminate
+            (*state_ptr).decompressor.mtf_or_error_string = Err(str_cpy);
+          }
+          let _ign = writeln!(&mut io::stderr(), "Internal Error {:?}", st);
+        } else {
+            let _ign = writeln!(&mut io::stderr(), "Internal Error {:?}", err);
+        }
+    }
 }
 
 // can't catch panics in a reliable way without std:: configure with panic=abort. These shouldn't happen
 #[cfg(any(not(feature="std"), feature="pass-through-ffi-panics"))]
-fn catch_panic<F:FnOnce()->BrotliDecoderResult>(f: F) -> Result<BrotliDecoderResult, ()> {
+fn catch_panic<F:FnOnce()->BrotliDecoderResult>(f: F) -> Result<BrotliDecoderResult, BrotliAdditionalErrorData> {
     Ok(f())
 }
 
 #[cfg(any(not(feature="std"), feature="pass-through-ffi-panics"))]
-fn catch_panic_state<F:FnOnce()->*mut BrotliDecoderState>(f: F) -> Result<*mut BrotliDecoderState, ()> {
+fn catch_panic_state<F:FnOnce()->*mut BrotliDecoderState>(f: F) -> Result<*mut BrotliDecoderState, BrotliAdditionalErrorData> {
     Ok(f())
 }
 
 #[cfg(any(not(feature="std"), feature="pass-through-ffi-panics"))]
-fn error_print<Err>(_err: Err) {
+fn error_print<Err: BrotliAdditionalErrorData>(_state_ptr: *mut BrotliDecoderState, _err: &mut Err) {
 }
 
 #[no_mangle]
@@ -196,8 +229,8 @@ pub unsafe extern fn BrotliDecoderDecompressStream(
                                            result
     }) {
         Ok(ret) => ret,
-        Err(readable_err) => { // if we panic (completely unexpected) then we should report it back to C and print
-            error_print(readable_err);
+        Err(mut readable_err) => { // if we panic (completely unexpected) then we should report it back to C and print
+            error_print(state_ptr, &mut readable_err);
             (*state_ptr).decompressor.error_code = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_UNREACHABLE;
             BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR
         }
@@ -287,6 +320,18 @@ pub unsafe extern fn BrotliDecoderIsFinished(state_ptr: *const BrotliDecoderStat
 #[no_mangle]
 pub unsafe extern fn BrotliDecoderGetErrorCode(state_ptr: *const BrotliDecoderState) -> BrotliDecoderErrorCode {
   super::decode::BrotliDecoderGetErrorCode(&(*state_ptr).decompressor)
+}
+
+#[no_mangle]
+pub unsafe extern fn BrotliDecoderGetErrorString(state_ptr: *const BrotliDecoderState) -> *const u8 {
+  if !state_ptr.is_null() {
+    if let Err(ref msg) = &(*state_ptr).decompressor.mtf_or_error_string {
+      // important: this must be a ref
+      // so stack memory is not returned
+     return msg.as_ptr();
+    }
+  }
+  BrotliDecoderErrorString(super::decode::BrotliDecoderGetErrorCode(&(*state_ptr).decompressor))
 }
 
 #[no_mangle]

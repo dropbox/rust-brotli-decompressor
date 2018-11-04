@@ -249,7 +249,7 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
 
   // For InverseMoveToFrontTransform
   pub mtf_upper_bound: u32,
-  pub mtf: [u8; 256],
+  pub mtf_or_error_string: Result<[u8; 256], [u8; 256]>,
 
   // For custom dictionaries
   pub custom_dict: AllocU8::AllocatedMemory,
@@ -350,7 +350,7 @@ macro_rules! make_brotli_state {
 
            /* For InverseMoveToFrontTransform */
            mtf_upper_bound : 255,
-           mtf : [0; 256],
+           mtf_or_error_string : Ok([0; 256]),
 
            /* For custom dictionaries */
            custom_dict : $custom_dict,

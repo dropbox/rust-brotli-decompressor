@@ -326,6 +326,20 @@ BROTLI_DEC_API BrotliDecoderErrorCode BrotliDecoderGetErrorCode(
     const BrotliDecoderState* state);
 
 /**
+ * Acquires a detailed error code.
+ *
+ * Should be used only after ::BrotliDecoderDecompressStream returns
+ * ::BROTLI_DECODER_RESULT_ERROR.
+ *
+ * See also ::BrotliDecoderErrorString
+ *
+ * @param state decoder instance
+ * @returns last saved error string (may be panic info for a 'unreachable' error)
+ */
+BROTLI_DEC_API const char* BrotliDecoderGetErrorString(
+    const BrotliDecoderState* state);
+
+/**
  * Converts error code to a c-string.
  */
 BROTLI_DEC_API const char* BrotliDecoderErrorString(BrotliDecoderErrorCode c);
