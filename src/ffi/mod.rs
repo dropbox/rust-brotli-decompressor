@@ -15,6 +15,20 @@ use self::interface::{CAllocator, c_void, BrotliDecoderParameter, BrotliDecoderR
 use ::BrotliResult;
 pub use super::state::BrotliDecoderErrorCode;
 
+pub unsafe fn slice_from_raw_parts_or_nil<'a, T>(data: *const T, len: usize) -> &'a [T] {
+    if len == 0 {
+        return &[];
+    }
+    slice::from_raw_parts(data, len)
+}
+
+pub unsafe fn slice_from_raw_parts_or_nil_mut<'a, T>(data: *mut T, len: usize) -> &'a mut [T] {
+    if len == 0 {
+        return &mut [];
+    }
+    slice::from_raw_parts_mut(data, len)
+}
+
 #[cfg(feature="std")]
 type BrotliAdditionalErrorData = boxed::Box<any::Any + Send + 'static>;
 #[cfg(not(feature="std"))]
@@ -206,8 +220,8 @@ pub unsafe extern fn BrotliDecoderDecompressStream(
     }
     let result;
     {
-        let input_buf = slice::from_raw_parts(*input_buf_ptr, *available_in);
-        let output_buf = slice::from_raw_parts_mut(*output_buf_ptr, *available_out);
+        let input_buf = slice_from_raw_parts_or_nil(*input_buf_ptr, *available_in);
+        let output_buf = slice_from_raw_parts_or_nil_mut(*output_buf_ptr, *available_out);
             result = match super::decode::BrotliDecompressStream(
                 &mut *available_in,
                 &mut input_offset,

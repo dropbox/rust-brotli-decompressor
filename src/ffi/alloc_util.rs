@@ -75,7 +75,7 @@ impl<Ty:Sized+Default+Clone> alloc::Allocator<Ty> for SubclassableAllocator {
         if let Some(alloc_fn) = self.alloc.alloc_func {
             let ptr = alloc_fn(self.alloc.opaque, size * core::mem::size_of::<Ty>());
             let typed_ptr = unsafe {core::mem::transmute::<*mut c_void, *mut Ty>(ptr)};
-            let slice_ref = unsafe {core::slice::from_raw_parts_mut(typed_ptr, size)};
+            let slice_ref = unsafe {super::slice_from_raw_parts_or_nil_mut(typed_ptr, size)};
             for item in slice_ref.iter_mut() {
                 unsafe{core::ptr::write(item, Ty::default())};
             }
@@ -124,7 +124,7 @@ impl<Ty:Sized+Default> alloc::SliceWrapper<Ty> for MemoryBlock<Ty> {
         if unsafe{(*self.0).len()} == 0 {
             &[]
         } else {
-            unsafe{core::slice::from_raw_parts(&(*self.0)[0], (*self.0).len())}
+            unsafe{super::slice_from_raw_parts_or_nil(&(*self.0)[0], (*self.0).len())}
         }
     }
 }
@@ -134,7 +134,7 @@ impl<Ty:Sized+Default> alloc::SliceWrapperMut<Ty> for MemoryBlock<Ty> {
         if unsafe{(*self.0).len()} == 0 {
             &mut []
         } else {
-            unsafe{core::slice::from_raw_parts_mut(&mut (*self.0)[0], (*self.0).len())}
+            unsafe{super::slice_from_raw_parts_or_nil_mut(&mut (*self.0)[0], (*self.0).len())}
         }
     }
 }
@@ -176,7 +176,7 @@ impl<Ty:Sized+Default+Clone> alloc::Allocator<Ty> for SubclassableAllocator {
         if let Some(alloc_fn) = self.alloc.alloc_func {
             let ptr = alloc_fn(self.alloc.opaque, size * core::mem::size_of::<Ty>());
             let typed_ptr = unsafe {core::mem::transmute::<*mut c_void, *mut Ty>(ptr)};
-            let slice_ref = unsafe {core::slice::from_raw_parts_mut(typed_ptr, size)};
+            let slice_ref = unsafe {super::slice_from_raw_parts_or_nil_mut(typed_ptr, size)};
             for item in slice_ref.iter_mut() {
                 unsafe{core::ptr::write(item, Ty::default())};
             }
@@ -213,7 +213,7 @@ pub fn alloc_stdlib<T:Sized+Default+Copy+Clone>(_size: usize) -> *mut T {
 
 #[cfg(feature="std")]
 pub unsafe fn free_stdlib<T>(ptr: *mut T, size: usize) {
-    let slice_ref = core::slice::from_raw_parts_mut(ptr, size);
+    let slice_ref = super::slice_from_raw_parts_or_nil_mut(ptr, size);
     Box::from_raw(slice_ref); // free on drop
 }
 #[cfg(feature="std")]
