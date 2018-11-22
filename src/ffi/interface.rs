@@ -1,3 +1,4 @@
+use ::BrotliResult;
 #[allow(non_camel_case_types)]
 #[repr(u8)]
 pub enum c_void{
@@ -22,6 +23,17 @@ pub enum BrotliDecoderResult {
     BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT = 3,
 }
 
+
+impl From<BrotliResult> for BrotliDecoderResult {
+  fn from(r: BrotliResult) -> Self {
+    match r {
+      BrotliResult::ResultSuccess => BrotliDecoderResult::BROTLI_DECODER_RESULT_SUCCESS,
+      BrotliResult::ResultFailure => BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR,
+      BrotliResult::NeedsMoreInput => BrotliDecoderResult::BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT ,
+      BrotliResult::NeedsMoreOutput => BrotliDecoderResult::BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT ,
+    }
+  }
+}
 #[no_mangle]
 pub type brotli_alloc_func = Option<extern "C" fn(data: *mut c_void, size: usize) -> *mut c_void>;
 

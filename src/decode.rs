@@ -30,11 +30,13 @@ use ::dictionary::{kBrotliDictionary, kBrotliDictionaryOffsetsByLength,
                    kBrotliDictionarySizeBitsByLength, kBrotliMaxDictionaryWordLength,
                    kBrotliMinDictionaryWordLength};
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
+#[repr(C)]
+#[no_mangle]
 pub enum BrotliResult {
-  ResultSuccess,
-  NeedsMoreInput,
-  NeedsMoreOutput,
-  ResultFailure,
+  ResultSuccess = 1,
+  NeedsMoreInput = 2,
+  NeedsMoreOutput = 3,
+  ResultFailure = 0,
 }
 const kBrotliWindowGap: u32 = 16;
 const kBrotliLargeMinWbits: u32 = 10;
@@ -43,9 +45,9 @@ const kBrotliMaxPostfix: usize = 3;
 const kBrotliMaxAllowedDistance: u32 = 0x7FFFFFFC;
 const kDefaultCodeLength: u32 = 8;
 const kCodeLengthRepeatCode: u32 = 16;
-const kNumLiteralCodes: u16 = 256;
-const kNumInsertAndCopyCodes: u16 = 704;
-const kNumBlockLengthCodes: u32 = 26;
+pub const kNumLiteralCodes: u16 = 256;
+pub const kNumInsertAndCopyCodes: u16 = 704;
+pub const kNumBlockLengthCodes: u32 = 26;
 const kDistanceContextBits: i32 = 2;
 const HUFFMAN_TABLE_BITS: u32 = 8;
 const HUFFMAN_TABLE_MASK: u32 = 0xff;
@@ -1212,6 +1214,40 @@ fn HuffmanTreeGroupDecode<AllocU8: alloc::Allocator<u8>,
     s.substate_tree_group = BrotliRunningTreeGroupState::BROTLI_STATE_TREE_GROUP_NONE
   }
   result
+}
+#[allow(dead_code)]
+pub fn lg_window_size(first_byte: u8, second_byte: u8) -> Result<(u8, u8), ()> {
+  if first_byte & 1 == 0 {
+    return Ok((16, 1));
+  }
+  match first_byte & 15 {
+    0x3 => return Ok((18, 4)),
+    0x5 => return Ok((19, 4)),
+    0x7 => return Ok((20, 4)),
+    0x9 => return Ok((21, 4)),
+    0xb => return Ok((22, 4)),
+    0xd => return Ok((23, 4)),
+    0xf => return Ok((24, 4)),
+    _ => match first_byte & 127 {
+      0x71 => return Ok((15, 7)),
+      0x61 => return Ok((14, 7)),
+      0x51 => return Ok((13, 7)),
+      0x41 => return Ok((12, 7)),
+      0x31 => return Ok((11, 7)),
+      0x21 => return Ok((10, 7)),
+      0x1 => return Ok((17, 7)),
+      _ => {},
+    }
+  }
+  if (first_byte & 0x80) != 0 {
+    return Err(());
+  }
+  let ret  = second_byte & 0x3f;
+  if ret < 10 || ret > 30 {
+    return Err(());
+  }
+  Ok((ret, 14))
+
 }
 
 
@@ -3204,3 +3240,4 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
 
   SaveErrorCode!(s, result)
 }
+

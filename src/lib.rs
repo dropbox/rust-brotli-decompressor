@@ -19,7 +19,8 @@ use std::io::{self, Error, ErrorKind, Read, Write};
 extern crate alloc_stdlib;
 #[macro_use]
 extern crate alloc_no_stdlib as alloc;
-pub use alloc::{AllocatedStackMemory, Allocator, SliceWrapper, SliceWrapperMut, StackAllocator};
+pub use alloc::{AllocatedStackMemory, Allocator, SliceWrapper, SliceWrapperMut, StackAllocator, bzero};
+use core::ops;
 
 #[cfg(feature="std")]
 pub use alloc_stdlib::StandardAlloc;
@@ -315,4 +316,113 @@ pub fn copy_from_to<R: io::Read, W: io::Write>(mut r: R, mut w: W) -> io::Result
     }
   }
   Ok(out_size)
+}
+
+#[no_mangle]
+#[repr(C)]
+pub struct BrotliDecoderReturnInfo {
+    pub decoded_size: usize,
+    pub error_string: [u8;256],
+    pub error_code: state::BrotliDecoderErrorCode,
+    pub result: BrotliResult,
+}
+impl BrotliDecoderReturnInfo {
+    fn new<AllocU8: Allocator<u8>,
+           AllocU32: Allocator<u32>,
+           AllocHC: Allocator<HuffmanCode>>(
+        state: &BrotliState<AllocU8, AllocU32, AllocHC>,
+        result: BrotliResult,
+        output_size: usize,
+    ) -> Self {
+        let mut ret = BrotliDecoderReturnInfo{
+            result: result,
+            decoded_size: output_size,
+            error_code: decode::BrotliDecoderGetErrorCode(&state),  
+            error_string: if let &Err(msg) = &state.mtf_or_error_string {
+                msg
+            } else {
+                [0u8;256]
+            },
+        };
+        if ret.error_string[0] == 0 {
+            let error_string = state::BrotliDecoderErrorStr(ret.error_code);
+            let to_copy = core::cmp::min(error_string.len(), ret.error_string.len() - 1);
+            for (dst, src) in ret.error_string[..to_copy].iter_mut().zip(error_string[..to_copy].bytes()) {
+                *dst = src;
+            }
+        }
+        ret
+    }
+}
+
+#[cfg(not(feature="std"))] // error always since no default allocator
+declare_stack_allocator_struct!(MemPool, 512, stack);
+
+#[cfg(not(feature="std"))]
+pub fn brotli_decode(
+    input: &[u8],
+    output_and_scratch: &mut[u8],
+) -> BrotliDecoderReturnInfo {
+  let mut stack_u32_buffer = [0u32; 12 * 1024];
+  let mut stack_hc_buffer = [HuffmanCode::default(); 256 * (decode::kNumInsertAndCopyCodes as usize + decode::kNumLiteralCodes as usize) + 6 * decode::kNumBlockLengthCodes as usize * huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize];
+  let mut guessed_output_size = core::cmp::min(
+    core::cmp::max(input.len(), // shouldn't shrink too much
+                   output_and_scratch.len() / 3),
+      output_and_scratch.len());
+  if input.len() > 2 {
+      let scratch_len = output_and_scratch.len() - guessed_output_size;
+      if let Ok(lgwin) = decode::lg_window_size(input[0], input[1]) {
+          let extra_window_size = 65536 + (decode::kNumLiteralCodes + decode::kNumInsertAndCopyCodes) as usize * 256 + (1usize << lgwin.0);
+          if extra_window_size < scratch_len {
+              guessed_output_size += scratch_len - extra_window_size;
+          }
+      }
+  }
+  let (mut output, mut scratch_space) = output_and_scratch.split_at_mut(guessed_output_size);
+  let stack_u8_allocator = MemPool::<u8>::new_allocator(&mut scratch_space, bzero);
+  let stack_u32_allocator = MemPool::<u32>::new_allocator(&mut stack_u32_buffer, bzero);
+  let stack_hc_allocator = MemPool::<HuffmanCode>::new_allocator(&mut stack_hc_buffer, bzero);
+  let mut available_out = output.len();
+  let mut available_in: usize = input.len();
+  let mut input_offset: usize = 0;
+  let mut output_offset: usize = 0;
+  let mut written: usize = 0;
+  let mut brotli_state =
+    BrotliState::new(stack_u8_allocator, stack_u32_allocator, stack_hc_allocator);
+  let result = ::BrotliDecompressStream(&mut available_in,
+                                      &mut input_offset,
+                                      &input[..],
+                                      &mut available_out,
+                                      &mut output_offset,
+                                      &mut output,
+                                      &mut written,
+                                      &mut brotli_state);
+  let return_info = BrotliDecoderReturnInfo::new(&brotli_state, result.into(), output_offset);
+  brotli_state.BrotliStateCleanup();
+  return_info    
+}
+
+#[cfg(feature="std")]
+pub fn brotli_decode(
+    input: &[u8],
+    mut output: &mut[u8],
+) -> BrotliDecoderReturnInfo {
+  let mut available_out = output.len();
+  let mut available_in: usize = input.len();
+  let mut input_offset: usize = 0;
+  let mut output_offset: usize = 0;
+  let mut written: usize = 0;
+  let mut brotli_state =
+    BrotliState::new(StandardAlloc::default(), StandardAlloc::default(), StandardAlloc::default());
+  let result = ::BrotliDecompressStream(&mut available_in,
+                                      &mut input_offset,
+                                      &input[..],
+                                      &mut available_out,
+                                      &mut output_offset,
+                                      &mut output,
+                                      &mut written,
+                                      &mut brotli_state);
+  let return_info = BrotliDecoderReturnInfo::new(&brotli_state, result.into(), output_offset);
+  brotli_state.BrotliStateCleanup();
+  return_info
 }

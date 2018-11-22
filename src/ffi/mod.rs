@@ -7,13 +7,17 @@ use std::{thread,panic, io, boxed, any, string};
 use std::io::Write;
 use core;
 use core::slice;
+use core::ops;
 pub mod interface;
 pub mod alloc_util;
 use self::alloc_util::SubclassableAllocator;
-use alloc::Allocator;
+use alloc::{Allocator, SliceWrapper, SliceWrapperMut, StackAllocator, AllocatedStackMemory, bzero};
 use self::interface::{CAllocator, c_void, BrotliDecoderParameter, BrotliDecoderResult, brotli_alloc_func, brotli_free_func};
 use ::BrotliResult;
-pub use super::state::BrotliDecoderErrorCode;
+use ::BrotliDecoderReturnInfo;
+use ::brotli_decode;
+pub use super::HuffmanCode;
+pub use super::state::{BrotliDecoderErrorCode, BrotliState};
 
 pub unsafe fn slice_from_raw_parts_or_nil<'a, T>(data: *const T, len: usize) -> &'a [T] {
     if len == 0 {
@@ -104,45 +108,30 @@ pub unsafe extern fn BrotliDecoderSetParameter(_state_ptr: *mut BrotliDecoderSta
   // not implemented
 }
 
-#[cfg(not(feature="std"))] // error always since no default allocator
 #[no_mangle]
-pub unsafe extern fn BrotliDecoderDecompress(
-  _encoded_size: usize,
-  _encoded_buffer: *const u8,
-  _decoded_size: *mut usize,
-  _decoded_buffer: *mut u8,
-) -> BrotliDecoderResult {
-  BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR // no allocator
+pub unsafe extern fn BrotliDecoderDecompressWithReturnInfo(
+  encoded_size: usize,
+  encoded_buffer: *const u8,
+  decoded_size: usize,
+  decoded_buffer: *mut u8,
+) -> BrotliDecoderReturnInfo {
+  let input = slice_from_raw_parts_or_nil(encoded_buffer, encoded_size);
+  let output_scratch = slice_from_raw_parts_or_nil_mut(decoded_buffer, decoded_size);
+  ::brotli_decode(input, output_scratch)
 }
 
-#[cfg(feature="std")] // this requires a default allocator
 #[no_mangle]
 pub unsafe extern fn BrotliDecoderDecompress(
   encoded_size: usize,
   encoded_buffer: *const u8,
   decoded_size: *mut usize,
-  decoded_buffer: *mut u8) -> BrotliDecoderResult {
-  let mut total_out = 0;
-  let mut available_in = encoded_size;
-  let mut next_in = encoded_buffer;
-  let mut available_out = *decoded_size;
-  let mut next_out = decoded_buffer;
-  let s = BrotliDecoderCreateInstance(
-    None,
-    None,
-    core::ptr::null_mut(),
-  );
-  if s.is_null() { // if the allocation failed
-      return BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR;
-  }
-  let result = BrotliDecoderDecompressStream(
-    s, &mut available_in, &mut next_in, &mut available_out, &mut next_out, &mut total_out);
-  *decoded_size = total_out;
-  BrotliDecoderDestroyInstance(s);
-  if let BrotliDecoderResult::BROTLI_DECODER_RESULT_SUCCESS = result {
-    BrotliDecoderResult::BROTLI_DECODER_RESULT_SUCCESS
-  } else {
-    BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR
+  decoded_buffer: *mut u8,
+) -> BrotliDecoderResult {
+  let res = BrotliDecoderDecompressWithReturnInfo(encoded_size, encoded_buffer, *decoded_size, decoded_buffer);
+  *decoded_size = res.decoded_size;  
+  match res.result {
+      BrotliResult::ResultSuccess => BrotliDecoderResult::BROTLI_DECODER_RESULT_SUCCESS,
+      _ => BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR
   }
 }
 
@@ -218,11 +207,11 @@ pub unsafe extern fn BrotliDecoderDecompressStream(
     if total_out.is_null() {
         total_out = &mut fallback_total_out;
     }
-    let result;
+    let result: BrotliDecoderResult;
     {
         let input_buf = slice_from_raw_parts_or_nil(*input_buf_ptr, *available_in);
         let output_buf = slice_from_raw_parts_or_nil_mut(*output_buf_ptr, *available_out);
-            result = match super::decode::BrotliDecompressStream(
+            result = super::decode::BrotliDecompressStream(
                 &mut *available_in,
                 &mut input_offset,
                 input_buf,
@@ -231,12 +220,7 @@ pub unsafe extern fn BrotliDecoderDecompressStream(
                 output_buf,
                 &mut *total_out,
                 &mut (*state_ptr).decompressor,
-            ) {
-                BrotliResult::ResultSuccess => BrotliDecoderResult::BROTLI_DECODER_RESULT_SUCCESS,
-                BrotliResult::ResultFailure => BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR,
-                BrotliResult::NeedsMoreInput => BrotliDecoderResult::BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT ,
-                BrotliResult::NeedsMoreOutput => BrotliDecoderResult::BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT ,
-            };
+            ).into();
     }
     *input_buf_ptr = (*input_buf_ptr).offset(input_offset as isize);
     *output_buf_ptr = (*output_buf_ptr).offset(output_offset as isize);
@@ -249,6 +233,22 @@ pub unsafe extern fn BrotliDecoderDecompressStream(
             BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR
         }
     }
+}
+
+/// Equivalent to BrotliDecoderDecompressStream but with no optional arg and no double indirect ptrs
+#[no_mangle]
+pub unsafe extern fn BrotliDecoderDecompressStreaming(
+    state_ptr: *mut BrotliDecoderState,
+    available_in: *mut usize,
+    mut input_buf_ptr: *const u8,
+    available_out: *mut usize,
+    mut output_buf_ptr: *mut u8) -> BrotliDecoderResult {
+    BrotliDecoderDecompressStream(state_ptr,
+                                  available_in,
+                                  &mut input_buf_ptr,
+                                  available_out,
+                                  &mut output_buf_ptr,
+                                  core::ptr::null_mut())
 }
 
 #[cfg(feature="std")]
@@ -347,54 +347,11 @@ pub unsafe extern fn BrotliDecoderGetErrorString(state_ptr: *const BrotliDecoder
   }
   BrotliDecoderErrorString(super::decode::BrotliDecoderGetErrorCode(&(*state_ptr).decompressor))
 }
-
 #[no_mangle]
 pub extern fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) -> *const u8 {
-  match c {
-  BrotliDecoderErrorCode::BROTLI_DECODER_NO_ERROR => "NO_ERROR\0",
-  /* Same as BrotliDecoderResult values */
-  BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS => "SUCCESS\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT => "NEEDS_MORE_INPUT\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_OUTPUT => "NEEDS_MORE_OUTPUT\0",
-
-  /* Errors caused by invalid input */
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE => "ERROR_FORMAT_EXUBERANT_NIBBLE\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_RESERVED => "ERROR_FORMAT_RESERVED\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE => "ERROR_FORMAT_EXUBERANT_META_NIBBLE\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET => "ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME => "ERROR_FORMAT_SIMPLE_HUFFMAN_SAME\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_CL_SPACE => "ERROR_FORMAT_FL_SPACE\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE => "ERROR_FORMAT_HUFFMAN_SPACE\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT => "ERROR_FORMAT_CONTEXT_MAP_REPEAT\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1 =>"ERROR_FORMAT_BLOCK_LENGTH_1\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2 =>"ERROR_FORMAT_BLOCK_LENGTH_2\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_TRANSFORM => "ERROR_FORMAT_TRANSFORM\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_DICTIONARY =>"ERROR_FORMAT_DICTIONARY\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS =>"ERROR_FORMAT_WINDOW_BITS\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_PADDING_1 =>"ERROR_FORMAT_PADDING_1\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_PADDING_2 =>"ERROR_FORMAT_PADDING_2\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_DISTANCE =>"ERROR_FORMAT_DISTANCE\0",
-
-  /* -17..-18 codes are reserved */
-
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET => "ERROR_DICTIONARY_NOT_SET\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS => "ERROR_INVALID_ARGUMENTS\0",
-
-  /* Memory allocation problems */
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES => "ERROR_ALLOC_CONTEXT_MODES\0",
-  /* Literal => insert and distance trees together */
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS => "ERROR_ALLOC_TREE_GROUPS\0",
-  /* -23..-24 codes are reserved for distinct tree groups */
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP => "ERROR_ALLOC_CONTEXT_MAP\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1 => "ERROR_ALLOC_RING_BUFFER_1\0",
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2 => "ERROR_ALLOC_RING_BUFFER_2\0",
-  /* -28..-29 codes are reserved for dynamic ring-buffer allocation */
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES => "ERROR_ALLOC_BLOCK_TYPE_TREES\0",
-
-  /* "Impossible" states */
-  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_UNREACHABLE => "ERROR_UNREACHABLE\0",
-  }.as_ptr()
+    ::state::BrotliDecoderErrorStr(c).as_ptr()
 }
+
 
 #[no_mangle]
 pub extern fn BrotliDecoderVersion() -> u32 {
