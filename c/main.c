@@ -14,7 +14,6 @@ void custom_free(void*opaque, void* addr) {
 }
 
 void simple_test() {
-#ifndef NOSTDLIB
     const unsigned char brotli_file[] = {0x1b, 0x30, 0x00, 0xe0, 0x8d, 0xd4, 0x59, 0x2d, 0x39, 0x37, 0xb5, 0x02,
                                    0x48, 0x10, 0x95, 0x2a, 0x9a, 0xea, 0x42, 0x0e, 0x51, 0xa4, 0x16, 0xb9,
                                    0xcb, 0xf5, 0xf8, 0x5c, 0x64, 0xb9, 0x2f, 0xc9, 0x6a, 0x3f, 0xb1, 0xdc,
@@ -22,11 +21,36 @@ void simple_test() {
     const unsigned char key[] = "THIS IS A TEST OF THE EMERGENCY BROADCAST SYSTEM";
     unsigned char output[sizeof(key) * 2];
     size_t decoded_size = sizeof(output) * 2;
+    BrotliDecoderReturnInfo ret;
     BrotliDecoderDecompress(sizeof(brotli_file), brotli_file, &decoded_size, output);
     assert(decoded_size == sizeof(key));
     assert(memcmp(output, key, sizeof(key) - 1) == 0);
     assert(output[sizeof(key) - 1] == '\n');
-#endif
+    memset(output, 0xfc, sizeof(output));
+    ret = BrotliDecoderDecompressWithReturnInfo(sizeof(brotli_file), brotli_file, decoded_size, output);
+    assert(ret.decoded_size == sizeof(key));
+    assert(memcmp(output, key, sizeof(key) - 1) == 0);
+    assert(output[sizeof(key) - 1] == '\n');
+}
+void simple_prealloc_test() {
+    const unsigned char brotli_file[] = {0x1b, 0x30, 0x00, 0xe0, 0x8d, 0xd4, 0x59, 0x2d, 0x39, 0x37, 0xb5, 0x02,
+                                   0x48, 0x10, 0x95, 0x2a, 0x9a, 0xea, 0x42, 0x0e, 0x51, 0xa4, 0x16, 0xb9,
+                                   0xcb, 0xf5, 0xf8, 0x5c, 0x64, 0xb9, 0x2f, 0xc9, 0x6a, 0x3f, 0xb1, 0xdc,
+                                   0xa8, 0xe0, 0x35, 0x07};
+    const unsigned char key[] = "THIS IS A TEST OF THE EMERGENCY BROADCAST SYSTEM";
+    unsigned char output[sizeof(key) * 2];
+    size_t decoded_size = sizeof(output) * 2;
+    unsigned char scratch_u8[131072] = {0};
+    uint32_t scratch_u32[16384] = {0};
+    HuffmanCode HuffmanCodeZero = {0,0};
+    HuffmanCode scratch_hc[65536] = {HuffmanCodeZero};
+    BrotliDecoderReturnInfo ret = BrotliDecoderDecompressPrealloc(sizeof(brotli_file), brotli_file, decoded_size, output,
+                                                                  sizeof(scratch_u8), scratch_u8,
+                                                                  sizeof(scratch_u32) / sizeof(uint32_t), scratch_u32,
+                                                                  sizeof(scratch_hc) / sizeof(HuffmanCode), scratch_hc);
+    assert(ret.decoded_size == sizeof(key));
+    assert(memcmp(output, key, sizeof(key) - 1) == 0);
+    assert(output[sizeof(key) - 1] == '\n');
 }
 void negative_test() {
     BrotliDecoderState * state = BrotliDecoderCreateInstance(custom_alloc, custom_free, &custom_alloc_data);
@@ -50,6 +74,7 @@ void negative_test() {
 
 int main() {
     simple_test();
+    simple_prealloc_test();
     negative_test();
     BrotliDecoderState * state = BrotliDecoderCreateInstance(custom_alloc, custom_free, &custom_alloc_data);
     unsigned char ibuffer[4096];

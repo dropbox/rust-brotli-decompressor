@@ -16,7 +16,7 @@ use self::interface::{CAllocator, c_void, BrotliDecoderParameter, BrotliDecoderR
 use ::BrotliResult;
 use ::BrotliDecoderReturnInfo;
 use ::brotli_decode;
-pub use super::HuffmanCode;
+pub use ::HuffmanCode;
 pub use super::state::{BrotliDecoderErrorCode, BrotliState};
 
 pub unsafe fn slice_from_raw_parts_or_nil<'a, T>(data: *const T, len: usize) -> &'a [T] {
@@ -107,6 +107,28 @@ pub unsafe extern fn BrotliDecoderSetParameter(_state_ptr: *mut BrotliDecoderSta
                                        _value: u32) {
   // not implemented
 }
+
+#[no_mangle]
+pub unsafe extern fn BrotliDecoderDecompressPrealloc(
+  encoded_size: usize,
+  encoded_buffer: *const u8,
+  decoded_size: usize,
+  decoded_buffer: *mut u8,
+  scratch_u8_size: usize,
+  scratch_u8_buffer: *mut u8,
+  scratch_u32_size: usize,
+  scratch_u32_buffer: *mut u32,
+  scratch_hc_size: usize,
+  scratch_hc_buffer: *mut HuffmanCode,
+) -> BrotliDecoderReturnInfo {
+  let input = slice_from_raw_parts_or_nil(encoded_buffer, encoded_size);
+  let output = slice_from_raw_parts_or_nil_mut(decoded_buffer, decoded_size);
+  let scratch_u8 = slice_from_raw_parts_or_nil_mut(scratch_u8_buffer, scratch_u8_size);
+  let scratch_u32 = slice_from_raw_parts_or_nil_mut(scratch_u32_buffer, scratch_u32_size);
+  let scratch_hc = slice_from_raw_parts_or_nil_mut(scratch_hc_buffer, scratch_hc_size);
+  ::brotli_decode_prealloc(input, output, scratch_u8, scratch_u32, scratch_hc)
+}
+
 
 #[no_mangle]
 pub unsafe extern fn BrotliDecoderDecompressWithReturnInfo(

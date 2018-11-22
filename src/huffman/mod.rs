@@ -25,11 +25,14 @@ pub const BROTLI_HUFFMAN_MAX_CODE_LENGTHS_SIZE: usize = 704;
 pub const BROTLI_HUFFMAN_MAX_TABLE_SIZE: u32 = 1080;
 pub const BROTLI_HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH: u32 = 5;
 
+#[repr(C)]
+#[no_mangle]
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub struct HuffmanCode {
-  pub bits: u8, // number of bits used for this symbol
   pub value: u16, // symbol value or table offset
+  pub bits: u8, // number of bits used for this symbol
 }
+
 impl HuffmanCode {
   pub fn eq(&self, other: &Self) -> bool {
     self.value == other.value && self.bits == other.bits
