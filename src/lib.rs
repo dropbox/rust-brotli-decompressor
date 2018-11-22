@@ -364,7 +364,7 @@ pub fn brotli_decode(
     output_and_scratch: &mut[u8],
 ) -> BrotliDecoderReturnInfo {
   let mut stack_u32_buffer = [0u32; 12 * 1024 * 6];
-  let mut stack_hc_buffer = [HuffmanCode::default(); 256 * (decode::kNumInsertAndCopyCodes as usize + decode::kNumLiteralCodes as usize) + 6 * decode::kNumBlockLengthCodes as usize * huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize];
+  let mut stack_hc_buffer = [HuffmanCode::default(); 128 * (decode::kNumInsertAndCopyCodes as usize + decode::kNumLiteralCodes as usize) + 6 * decode::kNumBlockLengthCodes as usize * huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize];
   let mut guessed_output_size = core::cmp::min(
     core::cmp::max(input.len(), // shouldn't shrink too much
                    output_and_scratch.len() / 3),
