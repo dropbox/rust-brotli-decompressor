@@ -578,7 +578,7 @@ fn ProcessSingleCodeLength(code_len: u32,
       (*symbol) as u16;
     fast_mut!((next_symbol)[code_len as usize]) = (*symbol) as i32;
     *prev_code_len = code_len;
-    *space -= 32768 >> code_len;
+    *space = space.wrapping_sub(32768 >> code_len);
     fast_mut!((code_length_histo)[code_len as usize]) += 1;
     BROTLI_LOG!("[ReadHuffmanCode] code_length[{:}]={:} histo[]={:}\n",
                 *symbol, code_len, code_length_histo[code_len as usize]);
@@ -647,7 +647,7 @@ fn ProcessRepeatedCodeLength(code_len: u32,
       }
     }
     fast_mut!((next_symbol)[*repeat_code_len as usize]) = next;
-    *space -= repeat_delta << (15 - *repeat_code_len);
+    *space = space.wrapping_sub(repeat_delta << (15 - *repeat_code_len));
     fast_mut!((code_length_histo)[*repeat_code_len as usize]) =
       (fast!((code_length_histo)[*repeat_code_len as usize]) as u32 + repeat_delta) as u16;
   } else {
