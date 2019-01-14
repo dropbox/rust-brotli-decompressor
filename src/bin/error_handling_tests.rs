@@ -4,7 +4,7 @@ use std::io::{self, Read};
 
 extern crate brotli_decompressor;
 
-static ENCODED: &[u8] = b"\x1b\x03)\x00\xa4\xcc\xde\xe2\xb3 vA\x00\x0c";
+static ENCODED: &'static [u8] = b"\x1b\x03)\x00\xa4\xcc\xde\xe2\xb3 vA\x00\x0c";
 
 enum State { First, Second, Third, Fourth }
 struct R(State);
