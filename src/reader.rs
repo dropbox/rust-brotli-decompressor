@@ -181,10 +181,8 @@ pub struct DecompressorCustomIo<ErrType,
   total_out: usize,
   input_offset: usize,
   input_len: usize,
-  input_eof: bool,
   input: R,
   error_if_invalid_data: Option<ErrType>,
-  read_error: Option<ErrType>,
   state: BrotliState<AllocU8, AllocU32, AllocHC>,
 }
 
@@ -212,14 +210,12 @@ impl<ErrType,
             total_out : 0,
             input_offset : 0,
             input_len : 0,
-            input_eof : false,
             input: r,
             state : BrotliState::new_with_custom_dictionary(alloc_u8,
                                      alloc_u32,
                                      alloc_hc,
                                      dict),
             error_if_invalid_data : Some(invalid_data_error_type),
-            read_error : None,
         }
     }
 
@@ -254,50 +250,41 @@ impl<ErrType,
                                                                                      AllocU8,
                                                                                      AllocU32,
                                                                                      AllocHC> {
-	fn read(&mut self, buf: &mut [u8]) -> Result<usize, ErrType > {
-      let mut output_offset : usize = 0;
-      let mut avail_out = buf.len() - output_offset;
-      let mut avail_in = self.input_len - self.input_offset;
-      let mut needs_input = false;
-      while avail_out == buf.len() && (!needs_input || !self.input_eof) {
-        if self.input_len < self.input_buffer.slice_mut().len() && !self.input_eof {
+  fn read(&mut self, buf: &mut [u8]) -> Result<usize, ErrType > {
+    let mut output_offset : usize = 0;
+    let mut avail_out = buf.len() - output_offset;
+    let mut avail_in = self.input_len - self.input_offset;
+    while avail_out == buf.len() {
+      match BrotliDecompressStream(&mut avail_in,
+                                   &mut self.input_offset,
+                                   &self.input_buffer.slice_mut()[..],
+                                   &mut avail_out,
+                                   &mut output_offset,
+                                   buf,
+                                   &mut self.total_out,
+                                   &mut self.state) {
+        BrotliResult::NeedsMoreInput => {
+          self.copy_to_front();
           match self.input.read(&mut self.input_buffer.slice_mut()[self.input_len..]) {
             Err(e) => {
-              self.read_error = Some(e);
-              self.input_eof = true;
+              return Err(e);
             },
             Ok(size) => if size == 0 {
-              self.input_eof = true;
+              return Err(self.error_if_invalid_data.take().unwrap());
             }else {
-              needs_input = false;
               self.input_len += size;
               avail_in = self.input_len - self.input_offset;
             },
           }
-        }
-        match BrotliDecompressStream(&mut avail_in,
-                                     &mut self.input_offset,
-                                     &self.input_buffer.slice_mut()[..],
-                                     &mut avail_out,
-                                     &mut output_offset,
-                                     buf,
-                                     &mut self.total_out,
-                                     &mut self.state) {
-          BrotliResult::NeedsMoreInput => {
-            match self.read_error.take() {
-              Some(err) => return Err(err),
-              None => {
-                needs_input = true;
-                self.copy_to_front();
-              },
-            }
-          },
-          BrotliResult::NeedsMoreOutput => {},
-          BrotliResult::ResultSuccess => break,
-          BrotliResult::ResultFailure => return Err(self.error_if_invalid_data.take().unwrap()),
-        }
+        },
+        BrotliResult::NeedsMoreOutput => {
+          break;
+        },
+        BrotliResult::ResultSuccess => return Ok(output_offset),
+        BrotliResult::ResultFailure => return Err(self.error_if_invalid_data.take().unwrap()),
       }
-      Ok(output_offset)
     }
+    Ok(output_offset)
+  }
 }
 

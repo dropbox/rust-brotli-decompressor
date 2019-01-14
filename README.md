@@ -3,6 +3,14 @@
 [![crates.io](http://meritbadge.herokuapp.com/brotli-decompressor)](https://crates.io/crates/brotli)
 [![Build Status](https://travis-ci.org/dropbox/rust-brotli-decompressor.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli-decompressor)
 
+## What's new in version 2.1.2
+* Better handling of transient errors ( fixes #4 )
+* Do not panic in debug mode on unexpected bytes (handle arithmetic overflow)
+* Smaller stack allocations
+* Never create slice::from_raw_parts with nil
+* Better panic reporting to C FFI
+* Backport fixes to brotli issues 502 and 506
+
 ## What's new in version 2.0.0
 
 * Legacy Custom dictionaries (mostly useful for testing multithreaded brotli encoding and experimentation)
