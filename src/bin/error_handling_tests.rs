@@ -37,8 +37,8 @@ fn test_would_block() {
     let mut d = brotli_decompressor::Decompressor::new(R(State::First), 8192);
     let mut b = [0; 8192];
     assert_eq!(d.read(&mut b).unwrap_err().kind(), io::ErrorKind::WouldBlock);
-    assert_ne!(d.read(&mut b).unwrap(), 0);
+    assert!(d.read(&mut b).unwrap() != 0);
     println!("{}", String::from_utf8(b.to_vec()).unwrap());
-    assert_ne!(d.read(&mut b).unwrap(), 0);
+    assert!(d.read(&mut b).unwrap() != 0);
     assert_eq!(d.read(&mut b).unwrap(), 0);
 }
