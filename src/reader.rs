@@ -267,6 +267,12 @@ impl<ErrType,
           self.copy_to_front();
           match self.input.read(&mut self.input_buffer.slice_mut()[self.input_len..]) {
             Err(e) => {
+              if output_offset != 0 {
+                // The decompressor successfully decoded some bytes, but still requires more
+                // input that the stream cannot provide at this moment. Ignore the error for
+                // the time being and report the written bytes instead.
+                return Ok(output_offset);
+              }
               return Err(e);
             },
             Ok(size) => if size == 0 {
