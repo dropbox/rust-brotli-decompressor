@@ -29,7 +29,7 @@ pub struct Transform {
   pub suffix_id: u8,
 }
 
-const kPrefixSuffix: [u8; 208] =
+static kPrefixSuffix: [u8; 208] =
   [0x00, 0x20, 0x00, 0x2c, 0x20, 0x00, 0x20, 0x6f, 0x66, 0x20, 0x74, 0x68, 0x65, 0x20, 0x00, 0x20,
    0x6f, 0x66, 0x20, 0x00, 0x73, 0x20, 0x00, 0x2e, 0x00, 0x20, 0x61, 0x6e, 0x64, 0x20, 0x00, 0x20,
    0x69, 0x6e, 0x20, 0x00, 0x22, 0x00, 0x20, 0x74, 0x6f, 0x20, 0x00, 0x22, 0x3e, 0x00, 0x0a, 0x00,
@@ -109,7 +109,7 @@ const kPFix_NBSP: u8 = 200;
 const kPFix_ousSP: u8 = 203;
 
 pub const kNumTransforms: i32 = 121;
-pub const kTransforms: [Transform; kNumTransforms as usize] = [Transform {
+pub static kTransforms: [Transform; kNumTransforms as usize] = [Transform {
                                                                  prefix_id: kPFix_EMPTY,
                                                                  transform: kIdentity,
                                                                  suffix_id: kPFix_EMPTY,

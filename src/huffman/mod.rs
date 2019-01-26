@@ -14,7 +14,7 @@ pub const BROTLI_HUFFMAN_MAX_CODE_LENGTHS_SIZE: usize = 704;
 
 // Maximum possible Huffman table size for an alphabet size of (index * 32),
 // max code length 15 and root table bits 8.
-// pub const kMaxHuffmanTableSize : [u16;23] = [
+// pub static kMaxHuffmanTableSize : [u16;23] = [
 // 256, 402, 436, 468, 500, 534, 566, 598, 630, 662, 694, 726, 758, 790, 822,
 // 854, 886, 920, 952, 984, 1016, 1048, 1080, 1112, 1144,1176,1208,1240,272,
 // 1304, 1336, 1368, 1400, 1432, 1464, 1496, 1528];
@@ -117,7 +117,7 @@ impl<AllocU32 : alloc::Allocator<u32>,
 const BROTLI_REVERSE_BITS_MAX: usize = 8;
 
 const BROTLI_REVERSE_BITS_BASE: u8 = 0;
-const kReverseBits: [u8; (1 << BROTLI_REVERSE_BITS_MAX)] =
+static kReverseBits: [u8; (1 << BROTLI_REVERSE_BITS_MAX)] =
   [0x00, 0x80, 0x40, 0xC0, 0x20, 0xA0, 0x60, 0xE0, 0x10, 0x90, 0x50, 0xD0, 0x30, 0xB0, 0x70, 0xF0,
    0x08, 0x88, 0x48, 0xC8, 0x28, 0xA8, 0x68, 0xE8, 0x18, 0x98, 0x58, 0xD8, 0x38, 0xB8, 0x78, 0xF8,
    0x04, 0x84, 0x44, 0xC4, 0x24, 0xA4, 0x64, 0xE4, 0x14, 0x94, 0x54, 0xD4, 0x34, 0xB4, 0x74, 0xF4,

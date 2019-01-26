@@ -52,13 +52,13 @@ const kDistanceContextBits: i32 = 2;
 const HUFFMAN_TABLE_BITS: u32 = 8;
 const HUFFMAN_TABLE_MASK: u32 = 0xff;
 const CODE_LENGTH_CODES: usize = 18;
-const kCodeLengthCodeOrder: [u8; CODE_LENGTH_CODES] = [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10,
+static kCodeLengthCodeOrder: [u8; CODE_LENGTH_CODES] = [1, 2, 3, 4, 0, 5, 17, 6, 16, 7, 8, 9, 10,
                                                        11, 12, 13, 14, 15];
 
 // Static prefix code for the complex code length code lengths.
-const kCodeLengthPrefixLength: [u8; 16] = [2, 2, 2, 3, 2, 2, 2, 4, 2, 2, 2, 3, 2, 2, 2, 4];
+static kCodeLengthPrefixLength: [u8; 16] = [2, 2, 2, 3, 2, 2, 2, 4, 2, 2, 2, 3, 2, 2, 2, 4];
 
-const kCodeLengthPrefixValue: [u8; 16] = [0, 4, 3, 2, 0, 4, 3, 1, 0, 4, 3, 2, 0, 4, 3, 5];
+static kCodeLengthPrefixValue: [u8; 16] = [0, 4, 3, 2, 0, 4, 3, 1, 0, 4, 3, 2, 0, 4, 3, 5];
 
 
 macro_rules! BROTLI_LOG_UINT (

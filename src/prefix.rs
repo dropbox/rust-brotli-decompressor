@@ -6,7 +6,7 @@ pub struct PrefixCodeRange {
   pub nbits: u8,
 }
 
-pub const kBlockLengthPrefixCode: [PrefixCodeRange; 26] = [PrefixCodeRange {
+pub static kBlockLengthPrefixCode: [PrefixCodeRange; 26] = [PrefixCodeRange {
                                                              offset: 1,
                                                              nbits: 2,
                                                            },
@@ -121,7 +121,7 @@ pub struct CmdLutElement {
   pub insert_len_offset: u16,
   pub copy_len_offset: u16,
 }
-pub const kCmdLut: [CmdLutElement; 704] = [CmdLutElement {
+pub static kCmdLut: [CmdLutElement; 704] = [CmdLutElement {
                                              insert_len_extra_bits: 0x00,
                                              copy_len_extra_bits: 0x00,
                                              distance_code: 0,
