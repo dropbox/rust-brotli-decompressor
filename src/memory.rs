@@ -39,8 +39,8 @@ macro_rules! fast {
 }
 #[cfg(not(feature="unsafe"))]
 macro_rules! fast_uninitialized {
-    [$size : expr] => ([0; $size]);
-    [$def_value : expr ; $size : expr] => ([$def_value; $size]);
+    ($size : expr) => ([0; $size]);
+    ($def_value : expr ; $size : expr) => ([$def_value; $size]);
 }
 
 #[cfg(not(feature="unsafe"))]

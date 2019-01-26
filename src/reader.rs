@@ -96,7 +96,7 @@ pub struct Decompressor<R: Read>(DecompressorCustomAlloc<R,
 #[cfg(not(any(feature="unsafe", not(feature="std"))))]
 impl<R: Read> Decompressor<R> {
   pub fn new(r: R, buffer_size: usize) -> Self {
-     let dict = <StandardAlloc as Allocator<u8>>::AllocatedMemory::default();
+     let dict = <<StandardAlloc as Allocator<u8>>::AllocatedMemory as Default>::default();
      Self::new_with_custom_dict(r, buffer_size, dict)
   }
   pub fn new_with_custom_dict(r: R, buffer_size: usize, dict: <StandardAlloc as Allocator<u8>>::AllocatedMemory) -> Self {
@@ -136,7 +136,7 @@ pub struct Decompressor<R: Read>(DecompressorCustomAlloc<R,
 #[cfg(all(feature="unsafe", feature="std"))]
 impl<R: Read> Decompressor<R> {
   pub fn new(r: R, buffer_size: usize) -> Self {
-     let dict = <HeapAllocUninitialized<u8> as Allocator<u8>>::AllocatedMemory::default();
+     let dict = <<HeapAllocUninitialized<u8> as Allocator<u8>>::AllocatedMemory as Default>::default();
      Self::new_with_custom_dictionary(r, buffer_size, dict)
   }
   pub fn new_with_custom_dictionary(r: R, buffer_size: usize, dict: <HeapAllocUninitialized<u8>
@@ -198,7 +198,7 @@ impl<ErrType,
     pub fn new(r: R, buffer : BufferType,
                alloc_u8 : AllocU8, alloc_u32 : AllocU32, alloc_hc : AllocHC,
                invalid_data_error_type : ErrType) -> Self {
-     let dict = AllocU8::AllocatedMemory::default();
+     let dict = <AllocU8::AllocatedMemory as Default>::default();
      Self::new_with_custom_dictionary(r, buffer, alloc_u8, alloc_u32, alloc_hc, dict, invalid_data_error_type)
     }
     pub fn new_with_custom_dictionary(r: R, buffer : BufferType,

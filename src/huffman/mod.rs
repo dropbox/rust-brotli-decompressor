@@ -27,7 +27,7 @@ pub const BROTLI_HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH: u32 = 5;
 
 #[repr(C)]
 #[no_mangle]
-#[derive(PartialEq, Copy, Clone, Debug)]
+#[derive(PartialEq, Copy, Clone, Debug, Default)]
 pub struct HuffmanCode {
   pub value: u16, // symbol value or table offset
   pub bits: u8, // number of bits used for this symbol
@@ -36,15 +36,6 @@ pub struct HuffmanCode {
 impl HuffmanCode {
   pub fn eq(&self, other: &Self) -> bool {
     self.value == other.value && self.bits == other.bits
-  }
-}
-
-impl Default for HuffmanCode {
-  fn default() -> Self {
-    HuffmanCode {
-      value: 0,
-      bits: 0,
-    }
   }
 }
 
@@ -92,16 +83,9 @@ impl<AllocU32 : alloc::Allocator<u32>,
     }
     pub fn reset(self : &mut Self, alloc_u32 : &mut AllocU32, alloc_hc : &mut AllocHC) {
         alloc_u32.free_cell(core::mem::replace(&mut self.htrees,
-                                               AllocU32::AllocatedMemory::default()));
+                                               <AllocU32::AllocatedMemory as Default>::default()));
         alloc_hc.free_cell(core::mem::replace(&mut self.codes,
-                                              AllocHC::AllocatedMemory::default()));
-
-// for mut iter in self.htrees[0..self.num_htrees as usize].iter_mut() {
-//    if iter.slice().len() > 0 {
-//        alloc_hc.free_cell(core::mem::replace(&mut iter,
-//                                              AllocHC::AllocatedMemory::default()));
-//    }
-// }
+                                              <AllocHC::AllocatedMemory as Default>::default()));
 
     }
     pub fn build_hgroup_cache(&self) -> [&[HuffmanCode]; 256] {
@@ -119,8 +103,8 @@ impl<AllocU32 : alloc::Allocator<u32>,
      AllocHC : alloc::Allocator<HuffmanCode> > Default for HuffmanTreeGroup<AllocU32, AllocHC> {
     fn default() -> Self {
         HuffmanTreeGroup::<AllocU32, AllocHC> {
-          htrees : AllocU32::AllocatedMemory::default(),
-          codes : AllocHC::AllocatedMemory::default(),
+          htrees : <AllocU32::AllocatedMemory as Default>::default(),
+          codes : <AllocHC::AllocatedMemory as Default>::default(),
           max_symbol: 0,
           alphabet_size : 0,
           num_htrees : 0,

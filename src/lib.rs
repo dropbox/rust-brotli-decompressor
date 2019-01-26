@@ -40,11 +40,15 @@ pub mod transform;
 mod test;
 mod decode;
 pub mod io_wrappers;
+
 pub mod reader;
 pub mod writer;
+
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
+
 pub use state::BrotliState;
 pub mod ffi;
+
 pub use reader::{DecompressorCustomIo};
 
 #[cfg(feature="std")]
@@ -56,6 +60,7 @@ pub use writer::{DecompressorWriter};
 
 // use io_wrappers::write_all;
 pub use io_wrappers::{CustomRead, CustomWrite};
+
 #[cfg(feature="std")]
 pub use io_wrappers::{IntoIoReader, IoReaderWrapper, IntoIoWriter, IoWriterWrapper};
 
@@ -87,9 +92,9 @@ pub fn BrotliDecompress<InputType, OutputType>(r: &mut InputType,
                               w,
                               &mut input_buffer[..],
                               &mut output_buffer[..],
-                              StandardAlloc::default(),
-                              StandardAlloc::default(),
-                              StandardAlloc::default(),
+                              <StandardAlloc as Default>::default(),
+                              <StandardAlloc as Default>::default(),
+                              <StandardAlloc as Default>::default(),
   )
 }
 
@@ -193,7 +198,7 @@ pub fn BrotliDecompressCustomIo<ErrType,
   where InputType: CustomRead<ErrType>,
         OutputType: CustomWrite<ErrType>
 {
-  BrotliDecompressCustomIoCustomDict(r, w, input_buffer, output_buffer, alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default(), unexpected_eof_error_constant)
+  BrotliDecompressCustomIoCustomDict(r, w, input_buffer, output_buffer, alloc_u8, alloc_u32, alloc_hc, <AllocU8::AllocatedMemory as Default>::default(), unexpected_eof_error_constant)
 }
 pub fn BrotliDecompressCustomIoCustomDict<ErrType,
                                 InputType,
@@ -326,6 +331,7 @@ pub struct BrotliDecoderReturnInfo {
     pub error_code: state::BrotliDecoderErrorCode,
     pub result: BrotliResult,
 }
+
 impl BrotliDecoderReturnInfo {
     fn new<AllocU8: Allocator<u8>,
            AllocU32: Allocator<u32>,
@@ -455,3 +461,4 @@ pub fn brotli_decode(
   brotli_state.BrotliStateCleanup();
   return_info
 }
+

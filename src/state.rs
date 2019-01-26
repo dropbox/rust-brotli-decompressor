@@ -292,7 +292,7 @@ macro_rules! make_brotli_state {
             ringbuffer_mask: 0,
             dist_rb_idx : 0,
             dist_rb : [16, 15, 11, 4],
-            ringbuffer : AllocU8::AllocatedMemory::default(),
+            ringbuffer : <AllocU8::AllocatedMemory as Default>::default(),
             htree_command_index : 0,
             context_lookup : &kContextLookup[0],
             context_map_slice_index : 0,
@@ -311,15 +311,15 @@ macro_rules! make_brotli_state {
               num_block_types : [0;3],
               block_type_rb: [0;6],
               substate_read_block_length : BrotliRunningReadBlockLengthState::BROTLI_STATE_READ_BLOCK_LENGTH_NONE,
-              block_type_trees : AllocHC::AllocatedMemory::default(),
-              block_len_trees : AllocHC::AllocatedMemory::default(),
+              block_type_trees : <AllocHC::AllocatedMemory as Default>::default(),
+              block_len_trees : <AllocHC::AllocatedMemory as Default>::default(),
             },
             distance_postfix_bits : 0,
             num_direct_distance_codes : 0,
             distance_postfix_mask : 0,
             num_dist_htrees : 0,
-            dist_context_map : AllocU8::AllocatedMemory::default(),
-            //// not needed literal_htree : AllocHC::AllocatedMemory::default(),
+            dist_context_map : <AllocU8::AllocatedMemory as Default>::default(),
+            //// not needed literal_htree : <AllocHC::AllocatedMemory as Default>::default(),
             literal_htree_index : 0,
             dist_htree_index : 0,
             repeat_code_len : 0,
@@ -346,7 +346,7 @@ macro_rules! make_brotli_state {
            context_index : 0,
            max_run_length_prefix : 0,
            code : 0,
-           context_map_table : AllocHC::AllocatedMemory::default(),
+           context_map_table : <AllocHC::AllocatedMemory as Default>::default(),
 
            /* For InverseMoveToFrontTransform */
            mtf_upper_bound : 255,
@@ -374,8 +374,8 @@ macro_rules! make_brotli_state {
            should_wrap_ringbuffer: false,
            error_code: BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS,
            num_literal_htrees : 0,
-           context_map : AllocU8::AllocatedMemory::default(),
-           context_modes : AllocU8::AllocatedMemory::default(),
+           context_map : <AllocU8::AllocatedMemory as Default>::default(),
+           context_modes : <AllocU8::AllocatedMemory as Default>::default(),
            trivial_literal_contexts : [0u32; 8],
         }
     );
@@ -387,7 +387,7 @@ impl <'brotli_state,
     pub fn new(alloc_u8 : AllocU8,
            alloc_u32 : AllocU32,
            alloc_hc : AllocHC) -> Self{
-        let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default(), 0);
+        let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, <AllocU8::AllocatedMemory as Default>::default(), 0);
         retval.large_window = true;
         retval.context_map_table = retval.alloc_hc.alloc_cell(
           BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
@@ -409,7 +409,7 @@ impl <'brotli_state,
     pub fn new_strict(alloc_u8 : AllocU8,
            alloc_u32 : AllocU32,
            alloc_hc : AllocHC) -> Self{
-        let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default(), 0);
+        let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, <AllocU8::AllocatedMemory as Default>::default(), 0);
         retval.context_map_table = retval.alloc_hc.alloc_cell(
           BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
         retval.large_window =  false;
@@ -431,11 +431,11 @@ impl <'brotli_state,
         self.block_type_length_state.block_type_rb[4] = 1;
         self.block_type_length_state.block_type_rb[5] = 0;
         self.alloc_u8.free_cell(core::mem::replace(&mut self.context_map,
-                                             AllocU8::AllocatedMemory::default()));
+                                             <AllocU8::AllocatedMemory as Default>::default()));
         self.alloc_u8.free_cell(core::mem::replace(&mut self.context_modes,
-                                             AllocU8::AllocatedMemory::default()));
+                                             <AllocU8::AllocatedMemory as Default>::default()));
         self.alloc_u8.free_cell(core::mem::replace(&mut self.dist_context_map,
-                                             AllocU8::AllocatedMemory::default()));
+                                             <AllocU8::AllocatedMemory as Default>::default()));
         self.context_map_slice_index = 0;
         self.literal_htree_index = 0;
         self.dist_context_map_slice_index = 0;
@@ -447,11 +447,11 @@ impl <'brotli_state,
     }
     pub fn BrotliStateCleanupAfterMetablock(self : &mut Self) {
         self.alloc_u8.free_cell(core::mem::replace(&mut self.context_map,
-                                             AllocU8::AllocatedMemory::default()));
+                                             <AllocU8::AllocatedMemory as Default>::default()));
         self.alloc_u8.free_cell(core::mem::replace(&mut self.context_modes,
-                                             AllocU8::AllocatedMemory::default()));
+                                             <AllocU8::AllocatedMemory as Default>::default()));
         self.alloc_u8.free_cell(core::mem::replace(&mut self.dist_context_map,
-                                             AllocU8::AllocatedMemory::default()));
+                                             <AllocU8::AllocatedMemory as Default>::default()));
 
 
         self.literal_hgroup.reset(&mut self.alloc_u32, &mut self.alloc_hc);
@@ -462,15 +462,15 @@ impl <'brotli_state,
    pub fn BrotliStateCleanup(self : &mut Self) {
       self.BrotliStateCleanupAfterMetablock();
       self.alloc_u8.free_cell(core::mem::replace(&mut self.ringbuffer,
-                              AllocU8::AllocatedMemory::default()));
+                              <AllocU8::AllocatedMemory as Default>::default()));
       self.alloc_hc.free_cell(core::mem::replace(&mut self.block_type_length_state.block_type_trees,
-                              AllocHC::AllocatedMemory::default()));
+                              <AllocHC::AllocatedMemory as Default>::default()));
       self.alloc_hc.free_cell(core::mem::replace(&mut self.block_type_length_state.block_len_trees,
-                              AllocHC::AllocatedMemory::default()));
+                              <AllocHC::AllocatedMemory as Default>::default()));
       self.alloc_hc.free_cell(core::mem::replace(&mut self.context_map_table,
-                              AllocHC::AllocatedMemory::default()));
+                              <AllocHC::AllocatedMemory as Default>::default()));
       self.alloc_u8.free_cell(core::mem::replace(&mut self.custom_dict,
-                              AllocU8::AllocatedMemory::default()));
+                              <AllocU8::AllocatedMemory as Default>::default()));
 
       //FIXME??  BROTLI_FREE(s, s->legacy_input_buffer);
       //FIXME??  BROTLI_FREE(s, s->legacy_output_buffer);

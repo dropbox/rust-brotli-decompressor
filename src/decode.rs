@@ -1139,17 +1139,17 @@ fn HuffmanTreeGroupDecode<AllocU8: alloc::Allocator<u8>,
   let group_max_symbol;
   if group_index == 0 {
     hcodes = mem::replace(&mut s.literal_hgroup.codes,
-                          AllocHC::AllocatedMemory::default());
+                          <AllocHC::AllocatedMemory as Default>::default());
     htrees = mem::replace(&mut s.literal_hgroup.htrees,
-                          AllocU32::AllocatedMemory::default());
+                          <AllocU32::AllocatedMemory as Default>::default());
     group_num_htrees = s.literal_hgroup.num_htrees;
     alphabet_size = s.literal_hgroup.alphabet_size;
     group_max_symbol = s.literal_hgroup.max_symbol;
   } else if group_index == 1 {
     hcodes = mem::replace(&mut s.insert_copy_hgroup.codes,
-                          AllocHC::AllocatedMemory::default());
+                          <AllocHC::AllocatedMemory as Default>::default());
     htrees = mem::replace(&mut s.insert_copy_hgroup.htrees,
-                          AllocU32::AllocatedMemory::default());
+                          <AllocU32::AllocatedMemory as Default>::default());
     group_num_htrees = s.insert_copy_hgroup.num_htrees;
     alphabet_size = s.insert_copy_hgroup.alphabet_size;
     group_max_symbol = s.insert_copy_hgroup.max_symbol;
@@ -1160,9 +1160,9 @@ fn HuffmanTreeGroupDecode<AllocU8: alloc::Allocator<u8>,
       return ret;
     }
     hcodes = mem::replace(&mut s.distance_hgroup.codes,
-                          AllocHC::AllocatedMemory::default());
+                          <AllocHC::AllocatedMemory as Default>::default());
     htrees = mem::replace(&mut s.distance_hgroup.htrees,
-                          AllocU32::AllocatedMemory::default());
+                          <AllocU32::AllocatedMemory as Default>::default());
     group_num_htrees = s.distance_hgroup.num_htrees;
     alphabet_size = s.distance_hgroup.alphabet_size;
     group_max_symbol = s.distance_hgroup.max_symbol;
@@ -1196,19 +1196,19 @@ fn HuffmanTreeGroupDecode<AllocU8: alloc::Allocator<u8>,
   }
   if group_index == 0 {
     mem::replace(&mut s.literal_hgroup.codes,
-                 mem::replace(&mut hcodes, AllocHC::AllocatedMemory::default()));
+                 mem::replace(&mut hcodes, <AllocHC::AllocatedMemory as Default>::default()));
     mem::replace(&mut s.literal_hgroup.htrees,
-                 mem::replace(&mut htrees, AllocU32::AllocatedMemory::default()));
+                 mem::replace(&mut htrees, <AllocU32::AllocatedMemory as Default>::default()));
   } else if group_index == 1 {
     mem::replace(&mut s.insert_copy_hgroup.codes,
-                 mem::replace(&mut hcodes, AllocHC::AllocatedMemory::default()));
+                 mem::replace(&mut hcodes, <AllocHC::AllocatedMemory as Default>::default()));
     mem::replace(&mut s.insert_copy_hgroup.htrees,
-                 mem::replace(&mut htrees, AllocU32::AllocatedMemory::default()));
+                 mem::replace(&mut htrees, <AllocU32::AllocatedMemory as Default>::default()));
   } else {
     mem::replace(&mut s.distance_hgroup.codes,
-                 mem::replace(&mut hcodes, AllocHC::AllocatedMemory::default()));
+                 mem::replace(&mut hcodes, <AllocHC::AllocatedMemory as Default>::default()));
     mem::replace(&mut s.distance_hgroup.htrees,
-                 mem::replace(&mut htrees, AllocU32::AllocatedMemory::default()));
+                 mem::replace(&mut htrees, <AllocU32::AllocatedMemory as Default>::default()));
   }
   if let BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS = result {
     s.substate_tree_group = BrotliRunningTreeGroupState::BROTLI_STATE_TREE_GROUP_NONE
@@ -1324,7 +1324,7 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
       BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_HUFFMAN => {
 
         let mut local_context_map_table = mem::replace(&mut s.context_map_table,
-                                                       AllocHC::AllocatedMemory::default());
+                                                       <AllocHC::AllocatedMemory as Default>::default());
         let alphabet_size = *num_htrees + s.max_run_length_prefix;
         result = ReadHuffmanCode(alphabet_size, alphabet_size,
                                  &mut local_context_map_table.slice_mut(),
@@ -1334,7 +1334,7 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
                                  input);
         mem::replace(&mut s.context_map_table,
                      mem::replace(&mut local_context_map_table,
-                                  AllocHC::AllocatedMemory::default()));
+                                  <AllocHC::AllocatedMemory as Default>::default()));
         match result {
           BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS => {}
           _ => return result,
@@ -1440,9 +1440,9 @@ fn DecodeContextMap<AllocU8: alloc::Allocator<u8>,
     _ => unreachable!(),
   }
   let (mut num_htrees, mut context_map_arg) = if is_dist_context_map {
-    (s.num_dist_htrees, mem::replace(&mut s.dist_context_map, AllocU8::AllocatedMemory::default()))
+    (s.num_dist_htrees, mem::replace(&mut s.dist_context_map, <AllocU8::AllocatedMemory as Default>::default()))
   } else {
-    (s.num_literal_htrees, mem::replace(&mut s.context_map, AllocU8::AllocatedMemory::default()))
+    (s.num_literal_htrees, mem::replace(&mut s.context_map, <AllocU8::AllocatedMemory as Default>::default()))
   };
 
   let retval = DecodeContextMapInner(context_map_size as u32,
@@ -1453,11 +1453,11 @@ fn DecodeContextMap<AllocU8: alloc::Allocator<u8>,
   if is_dist_context_map {
     s.num_dist_htrees = num_htrees;
     mem::replace(&mut s.dist_context_map,
-                 mem::replace(&mut context_map_arg, AllocU8::AllocatedMemory::default()));
+                 mem::replace(&mut context_map_arg, <AllocU8::AllocatedMemory as Default>::default()));
   } else {
     s.num_literal_htrees = num_htrees;
     mem::replace(&mut s.context_map,
-                 mem::replace(&mut context_map_arg, AllocU8::AllocatedMemory::default()));
+                 mem::replace(&mut context_map_arg, <AllocU8::AllocatedMemory as Default>::default()));
   }
   retval
 }
@@ -1867,7 +1867,7 @@ fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
   }
   if s.custom_dict.slice().len() != 0 {
     s.alloc_u8.free_cell(core::mem::replace(&mut s.custom_dict,
-                         AllocU8::AllocatedMemory::default()));
+                         <AllocU8::AllocatedMemory as Default>::default()));
   }
   true
 }
@@ -2932,7 +2932,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
         BrotliRunningState::BROTLI_STATE_HUFFMAN_CODE_1 => {
           let tree_offset = s.loop_counter as u32 * huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as u32;
           let mut new_huffman_table = mem::replace(&mut s.block_type_length_state.block_type_trees,
-                                                   AllocHC::AllocatedMemory::default());
+                                                   <AllocHC::AllocatedMemory as Default>::default());
           let loop_counter = s.loop_counter as usize;
           let alphabet_size = fast!((s.block_type_length_state.num_block_types)[loop_counter]) + 2;
           result =
@@ -2954,7 +2954,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
         BrotliRunningState::BROTLI_STATE_HUFFMAN_CODE_2 => {
           let tree_offset = s.loop_counter * huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as i32;
           let mut new_huffman_table = mem::replace(&mut s.block_type_length_state.block_len_trees,
-                                                   AllocHC::AllocatedMemory::default());
+                                                   <AllocHC::AllocatedMemory as Default>::default());
           result = ReadHuffmanCode(kNumBlockLengthCodes, kNumBlockLengthCodes,
                                    new_huffman_table.slice_mut(),
                                    tree_offset as usize,

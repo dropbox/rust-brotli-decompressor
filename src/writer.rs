@@ -34,7 +34,7 @@ impl<W: Write,
     {
     pub fn new(w: W, buffer : BufferType,
                alloc_u8 : AllocU8, alloc_u32 : AllocU32, alloc_hc : AllocHC) -> Self {
-     let dict = AllocU8::AllocatedMemory::default();
+     let dict = <AllocU8::AllocatedMemory as Default>::default();
      Self::new_with_custom_dictionary(w, buffer, alloc_u8, alloc_u32, alloc_hc, dict)
 
     }
@@ -90,7 +90,7 @@ pub struct DecompressorWriter<W: Write>(DecompressorWriterCustomAlloc<W,
 #[cfg(not(any(feature="unsafe", not(feature="std"))))]
 impl<W: Write> DecompressorWriter<W> {
   pub fn new(w: W, buffer_size: usize) -> Self {
-      Self::new_with_custom_dictionary(w, buffer_size, <StandardAlloc as Allocator<u8>>::AllocatedMemory::default())
+      Self::new_with_custom_dictionary(w, buffer_size, <<StandardAlloc as Allocator<u8>>::AllocatedMemory as Default>::default())
   }
   pub fn new_with_custom_dictionary(w: W, buffer_size: usize, dict: <StandardAlloc as Allocator<u8>>::AllocatedMemory) -> Self {
     let mut alloc = StandardAlloc::default();
@@ -129,7 +129,7 @@ pub struct DecompressorWriter<W: Write>(DecompressorWriterCustomAlloc<W,
 #[cfg(all(feature="unsafe", feature="std"))]
 impl<W: Write> DecompressorWriter<W> {
   pub fn new(w: W, buffer_size: usize) -> Self {
-    let dict = <HeapAllocUninitialized<u8> as Allocator<u8>>::AllocatedMemory::default();
+    let dict = <<HeapAllocUninitialized<u8> as Allocator<u8>>::AllocatedMemory as Default>::default();
     Self::new_with_custom_dictionary(w, buffer_size, dict)
   }
   pub fn new_with_custom_dictionary(w: W, buffer_size: usize, dict: <HeapAllocUninitialized<u8> as Allocator<u8>>::AllocatedMemory) -> Self {
@@ -203,7 +203,7 @@ impl<ErrType,
     pub fn new(w: W, buffer : BufferType,
                alloc_u8 : AllocU8, alloc_u32 : AllocU32, alloc_hc : AllocHC,
                invalid_data_error_type : ErrType) -> Self {
-           let dict = AllocU8::AllocatedMemory::default();
+           let dict = <AllocU8::AllocatedMemory as Default>::default();
            Self::new_with_custom_dictionary(w, buffer, alloc_u8, alloc_u32, alloc_hc, dict, invalid_data_error_type)
     }
     pub fn new_with_custom_dictionary(w: W, buffer : BufferType,

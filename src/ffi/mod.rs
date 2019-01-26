@@ -13,7 +13,7 @@ pub mod alloc_util;
 use self::alloc_util::SubclassableAllocator;
 use alloc::{Allocator, SliceWrapper, SliceWrapperMut, StackAllocator, AllocatedStackMemory, bzero};
 use self::interface::{CAllocator, c_void, BrotliDecoderParameter, BrotliDecoderResult, brotli_alloc_func, brotli_free_func};
-use ::BrotliResult;
+use super::decode::BrotliResult;
 use ::BrotliDecoderReturnInfo;
 use ::brotli_decode;
 pub use ::HuffmanCode;

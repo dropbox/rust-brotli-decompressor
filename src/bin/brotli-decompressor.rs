@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
-
 mod integration_tests;
 mod tests;
+
 extern crate brotli_decompressor;
 extern crate core;
 #[macro_use]
