@@ -265,6 +265,12 @@ impl<ErrType,
                                    &mut self.state) {
         BrotliResult::NeedsMoreInput => {
           self.copy_to_front();
+          if output_offset != 0 {
+            // The decompressor successfully decoded some bytes, but still requires more
+            // we do not wish to risk self.input.read returning an error, so instead we
+            // opt to return what we have and do not invoke the read trait method
+            return Ok(output_offset);
+          }
           match self.input.read(&mut self.input_buffer.slice_mut()[self.input_len..]) {
             Err(e) => {
               return Err(e);
