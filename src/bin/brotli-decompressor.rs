@@ -13,11 +13,13 @@ pub struct Rebox<T> {
   b: Box<[T]>,
 }
 impl<T> From<Vec<T>> for Rebox<T> {
+  #[inline(always)]
   fn from(val: Vec<T>) -> Self {
     Rebox::<T>{b:val.into_boxed_slice()}
   }
 }
 impl<T> core::default::Default for Rebox<T> {
+  #[inline(always)]
   fn default() -> Self {
     let v: Vec<T> = Vec::new();
     let b = v.into_boxed_slice();
@@ -27,24 +29,28 @@ impl<T> core::default::Default for Rebox<T> {
 
 impl<T> ops::Index<usize> for Rebox<T> {
   type Output = T;
+  #[inline(always)]
   fn index(&self, index: usize) -> &T {
     &(*self.b)[index]
   }
 }
 
 impl<T> ops::IndexMut<usize> for Rebox<T> {
+  #[inline(always)]
   fn index_mut(&mut self, index: usize) -> &mut T {
     &mut (*self.b)[index]
   }
 }
 
 impl<T> alloc_no_stdlib::SliceWrapper<T> for Rebox<T> {
+  #[inline(always)]
   fn slice(&self) -> &[T] {
     &*self.b
   }
 }
 
 impl<T> alloc_no_stdlib::SliceWrapperMut<T> for Rebox<T> {
+  #[inline(always)]
   fn slice_mut(&mut self) -> &mut [T] {
     &mut *self.b
   }
