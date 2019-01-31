@@ -17,6 +17,7 @@ doc = false
 name = "brotli-decompressor"
 
 [profile.release]
+incremental=false
 lto=true
 
 [dependencies]
