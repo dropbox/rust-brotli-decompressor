@@ -174,7 +174,7 @@ pub struct DecompressorWriterCustomIo<ErrType,
 {
   output_buffer: BufferType,
   total_out: usize,
-  output: W,
+  output: Option<W>,
   error_if_invalid_data: Option<ErrType>,
   state: BrotliState<AllocU8, AllocU32, AllocHC>,
 }
@@ -213,11 +213,11 @@ impl<ErrType,
         DecompressorWriterCustomIo::<ErrType, W, BufferType, AllocU8, AllocU32, AllocHC>{
             output_buffer : buffer,
             total_out : 0,
-            output: w,
+            output: Some(w),
             state : BrotliState::new_with_custom_dictionary(alloc_u8,
-                                     alloc_u32,
-                                     alloc_hc,
-                                     dict),
+                                                                 alloc_u32,
+                                                                 alloc_hc,
+                                                                 dict),
             error_if_invalid_data : Some(invalid_data_error_type),
         }
     }
@@ -236,7 +236,7 @@ impl<ErrType,
                 self.output_buffer.slice_mut(),                
                 &mut self.total_out,
                 &mut self.state);
-          match write_all(&mut self.output, &self.output_buffer.slice_mut()[..output_offset]) {
+          match write_all(self.output.as_mut().unwrap(), &self.output_buffer.slice_mut()[..output_offset]) {
             Ok(_) => {},
             Err(e) => return Err(e),
            }
@@ -250,10 +250,10 @@ impl<ErrType,
     }
 
     pub fn get_ref(&self) -> &W {
-        &self.output
+        self.output.as_ref().unwrap()
     }
     pub fn get_mut(&mut self) -> &mut W {
-        &mut self.output
+        self.output.as_mut().unwrap()
     }
 }
 impl<ErrType,
@@ -272,6 +272,7 @@ impl<ErrType,
           Ok(_) => {},
           Err(_) => {},
     }
+    self.state.BrotliStateCleanup();
   }
 }
 impl<ErrType,
@@ -299,7 +300,7 @@ impl<ErrType,
                                      self.output_buffer.slice_mut(),
                                      &mut self.total_out,
                                      &mut self.state);
-         match write_all(&mut self.output, &self.output_buffer.slice_mut()[..output_offset]) {
+         match write_all(self.output.as_mut().unwrap(), &self.output_buffer.slice_mut()[..output_offset]) {
           Ok(_) => {},
           Err(e) => return Err(e),
          }
@@ -316,7 +317,7 @@ impl<ErrType,
       Ok(buf.len())
     }
     fn flush(&mut self) -> Result<(), ErrType> {
-       self.output.flush()
+       self.output.as_mut().unwrap().flush()
     }
 }
 

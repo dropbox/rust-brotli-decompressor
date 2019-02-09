@@ -181,7 +181,7 @@ pub struct DecompressorCustomIo<ErrType,
   total_out: usize,
   input_offset: usize,
   input_len: usize,
-  input: R,
+  input: Option<R>,
   error_if_invalid_data: Option<ErrType>,
   state: BrotliState<AllocU8, AllocU32, AllocHC>,
 }
@@ -210,7 +210,7 @@ impl<ErrType,
             total_out : 0,
             input_offset : 0,
             input_len : 0,
-            input: r,
+            input: Some(r),
             state : BrotliState::new_with_custom_dictionary(alloc_u8,
                                      alloc_u32,
                                      alloc_hc,
@@ -220,10 +220,10 @@ impl<ErrType,
     }
 
     pub fn get_ref(&self) -> &R {
-      &self.input
+      self.input.as_ref().unwrap()
     }
     pub fn get_mut(&mut self) -> &mut R {
-      &mut self.input
+      self.input.as_mut().unwrap()
     }
 
     pub fn copy_to_front(&mut self) {
@@ -238,6 +238,23 @@ impl<ErrType,
             self.input_offset = 0;
         }
     }
+}
+
+
+impl<ErrType,
+     R: CustomRead<ErrType>,
+     BufferType : SliceWrapperMut<u8>,
+     AllocU8 : Allocator<u8>,
+     AllocU32 : Allocator<u32>,
+     AllocHC : Allocator<HuffmanCode> > Drop for DecompressorCustomIo<ErrType,
+                                                                      R,
+                                                                      BufferType,
+                                                                      AllocU8,
+                                                                      AllocU32,
+                                                                      AllocHC> {
+  fn drop(&mut self) {
+    self.state.BrotliStateCleanup();
+  }
 }
 impl<ErrType,
      R: CustomRead<ErrType>,
@@ -271,7 +288,7 @@ impl<ErrType,
             // opt to return what we have and do not invoke the read trait method
             return Ok(output_offset);
           }
-          match self.input.read(&mut self.input_buffer.slice_mut()[self.input_len..]) {
+          match self.input.as_mut().unwrap().read(&mut self.input_buffer.slice_mut()[self.input_len..]) {
             Err(e) => {
               return Err(e);
             },
