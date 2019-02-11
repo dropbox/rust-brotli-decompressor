@@ -159,7 +159,7 @@ impl<W: Write> DecompressorWriter<W> {
     &mut (self.0).0.get_mut().0
   }
   pub fn into_inner(self) -> W {
-    self.0.into_inner().0
+    self.0.into_inner()
   }
 }
 
