@@ -198,7 +198,6 @@ pub fn decompress_internal<InputType, OutputType>(r: &mut InputType,
         available_out = output.slice().len()
       }
     }
-    brotli_state.BrotliStateCleanup();
   }
   if timing_error {
     let _r = super::writeln0(&mut io::stderr(), "Timing error");

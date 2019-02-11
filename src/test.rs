@@ -41,7 +41,6 @@ fn oneshot(input: &mut [u8], mut output: &mut [u8]) -> (BrotliResult, usize, usi
                                       &mut output,
                                       &mut written,
                                       &mut brotli_state);
-  brotli_state.BrotliStateCleanup();
   return (result, input_offset, output_offset);
 }
 

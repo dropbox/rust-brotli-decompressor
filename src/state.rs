@@ -459,7 +459,7 @@ impl <'brotli_state,
         self.distance_hgroup.reset(&mut self.alloc_u32, &mut self.alloc_hc);
     }
 
-   pub fn BrotliStateCleanup(self : &mut Self) {
+   fn BrotliStateCleanup(self : &mut Self) {
       self.BrotliStateCleanupAfterMetablock();
       self.alloc_u8.free_cell(core::mem::replace(&mut self.ringbuffer,
                               AllocU8::AllocatedMemory::default()));

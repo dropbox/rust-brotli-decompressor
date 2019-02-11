@@ -67,6 +67,9 @@ impl<R: Read,
     pub fn get_mut(&mut self) -> &mut R {
       &mut self.0.get_mut().0
     }
+    pub fn into_inner(self) -> R {
+      self.0.into_inner().0
+    }
 }
 #[cfg(feature="std")]
 impl<R: Read,
@@ -121,6 +124,9 @@ impl<R: Read> Decompressor<R> {
   pub fn get_mut(&mut self) -> &mut R {
     &mut ((self.0).0).get_mut().0
   }
+  pub fn into_inner(self) -> R {
+    self.0.into_inner()
+  }
 }
 
 
@@ -160,6 +166,9 @@ impl<R: Read> Decompressor<R> {
   pub fn get_mut(&mut self) -> &mut R {
     &mut (self.0).0.get_mut().0
   }
+  pub fn into_inner(self) -> R {
+    self.0.into_inner()
+  }
 }
 
 
@@ -181,7 +190,7 @@ pub struct DecompressorCustomIo<ErrType,
   total_out: usize,
   input_offset: usize,
   input_len: usize,
-  input: Option<R>,
+  input: R,
   error_if_invalid_data: Option<ErrType>,
   state: BrotliState<AllocU8, AllocU32, AllocHC>,
 }
@@ -210,7 +219,7 @@ impl<ErrType,
             total_out : 0,
             input_offset : 0,
             input_len : 0,
-            input: Some(r),
+            input: r,
             state : BrotliState::new_with_custom_dictionary(alloc_u8,
                                      alloc_u32,
                                      alloc_hc,
@@ -220,10 +229,25 @@ impl<ErrType,
     }
 
     pub fn get_ref(&self) -> &R {
-      self.input.as_ref().unwrap()
+      &self.input
     }
     pub fn get_mut(&mut self) -> &mut R {
-      self.input.as_mut().unwrap()
+      &mut self.input
+    }
+    pub fn into_inner(self) -> R {
+      match self {
+        Self {
+          input_buffer: _ib,
+          total_out: _to,
+          state: _state,
+          input_offset: _io,
+          input_len: _il,
+          error_if_invalid_data:_eiid,
+          input,
+        } =>{
+          input
+        }
+    }
     }
 
     pub fn copy_to_front(&mut self) {
@@ -240,22 +264,6 @@ impl<ErrType,
     }
 }
 
-
-impl<ErrType,
-     R: CustomRead<ErrType>,
-     BufferType : SliceWrapperMut<u8>,
-     AllocU8 : Allocator<u8>,
-     AllocU32 : Allocator<u32>,
-     AllocHC : Allocator<HuffmanCode> > Drop for DecompressorCustomIo<ErrType,
-                                                                      R,
-                                                                      BufferType,
-                                                                      AllocU8,
-                                                                      AllocU32,
-                                                                      AllocHC> {
-  fn drop(&mut self) {
-    self.state.BrotliStateCleanup();
-  }
-}
 impl<ErrType,
      R: CustomRead<ErrType>,
      BufferType : SliceWrapperMut<u8>,
@@ -288,7 +296,7 @@ impl<ErrType,
             // opt to return what we have and do not invoke the read trait method
             return Ok(output_offset);
           }
-          match self.input.as_mut().unwrap().read(&mut self.input_buffer.slice_mut()[self.input_len..]) {
+          match self.input.read(&mut self.input_buffer.slice_mut()[self.input_len..]) {
             Err(e) => {
               return Err(e);
             },

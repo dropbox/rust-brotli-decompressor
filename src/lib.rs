@@ -229,12 +229,10 @@ pub fn BrotliDecompressCustomIoCustomDict<ErrType,
         input_offset = 0;
         match r.read(input_buffer) {
           Err(e) => {
-            brotli_state.BrotliStateCleanup();
             return Err(e);
           },
           Ok(size) => {
             if size == 0 {
-              brotli_state.BrotliStateCleanup();
               return Err(unexpected_eof_error_constant);
             }
             available_in = size;
@@ -247,7 +245,6 @@ pub fn BrotliDecompressCustomIoCustomDict<ErrType,
           // this would be a call to write_all
           match w.write(&output_buffer[total_written..output_offset]) {
             Err(e) => {
-              brotli_state.BrotliStateCleanup();
               return Result::Err(e);
             },
             Ok(cur_written) => {
@@ -261,7 +258,6 @@ pub fn BrotliDecompressCustomIoCustomDict<ErrType,
       }
       BrotliResult::ResultSuccess => break,
       BrotliResult::ResultFailure => {
-        brotli_state.BrotliStateCleanup();
         return Err(unexpected_eof_error_constant);
       }
     }
@@ -280,7 +276,6 @@ pub fn BrotliDecompressCustomIoCustomDict<ErrType,
       while total_written < output_offset {
         match w.write(&output_buffer[total_written..output_offset]) {
           Err(e) => {
-            brotli_state.BrotliStateCleanup();
             return Result::Err(e);
           },
           // CustomResult::Transient(e) => continue,
@@ -294,7 +289,6 @@ pub fn BrotliDecompressCustomIoCustomDict<ErrType,
       available_out = output_buffer.len()
     }
   }
-  brotli_state.BrotliStateCleanup();
   Ok(())
 }
 
@@ -396,7 +390,6 @@ pub fn brotli_decode_prealloc(
                                       &mut written,
                                       &mut brotli_state);
   let return_info = BrotliDecoderReturnInfo::new(&brotli_state, result.into(), output_offset);
-  brotli_state.BrotliStateCleanup();
   return_info    
 }
 
@@ -440,7 +433,6 @@ pub fn brotli_decode(
                                       &mut written,
                                       &mut brotli_state);
   let return_info = BrotliDecoderReturnInfo::new(&brotli_state, result.into(), output_offset);
-  brotli_state.BrotliStateCleanup();
   return_info    
 }
 
@@ -465,6 +457,5 @@ pub fn brotli_decode(
                                       &mut written,
                                       &mut brotli_state);
   let return_info = BrotliDecoderReturnInfo::new(&brotli_state, result.into(), output_offset);
-  brotli_state.BrotliStateCleanup();
   return_info
 }

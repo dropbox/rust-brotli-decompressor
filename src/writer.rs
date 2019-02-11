@@ -58,6 +58,9 @@ impl<W: Write,
     pub fn get_mut(&mut self) -> &mut W {
         &mut self.0.get_mut().0
     }
+    pub fn into_inner(self) -> W {
+        self.0.into_inner().0
+    }
 }
 #[cfg(feature="std")]
 impl<W: Write,
@@ -114,6 +117,9 @@ impl<W: Write> DecompressorWriter<W> {
   pub fn get_mut(&mut self) -> &mut W {
       self.0.get_mut()
   }
+  pub fn into_inner(self) -> W {
+    self.0.into_inner()
+  }
 }
 
 
@@ -151,6 +157,9 @@ impl<W: Write> DecompressorWriter<W> {
   }
   pub fn get_mut(&mut self) -> &mut W {
     &mut (self.0).0.get_mut().0
+  }
+  pub fn into_inner(self) -> W {
+    self.0.into_inner().0
   }
 }
 
@@ -255,6 +264,9 @@ impl<ErrType,
     pub fn get_mut(&mut self) -> &mut W {
         self.output.as_mut().unwrap()
     }
+    pub fn into_inner(mut self) -> W {
+      core::mem::replace(&mut self.output, None).unwrap()
+    }
 }
 impl<ErrType,
      W: CustomWrite<ErrType>,
@@ -272,7 +284,6 @@ impl<ErrType,
           Ok(_) => {},
           Err(_) => {},
     }
-    self.state.BrotliStateCleanup();
   }
 }
 impl<ErrType,
