@@ -1,4 +1,3 @@
-use core;
 #[cfg(feature="std")]
 use std::io::{self, Error, ErrorKind, Read};
 #[cfg(feature="std")]
