@@ -3,6 +3,10 @@
 [![crates.io](https://meritbadge.herokuapp.com/brotli-decompressor)](https://crates.io/crates/brotli-decompressor)
 [![Build Status](https://travis-ci.org/dropbox/rust-brotli-decompressor.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli-decompressor)
 
+## What's new in version 2.2.x
+* into_impl for reader and writer classes
+* removed BrotliStateCleanup since it happens upon drop()
+
 ## What's new in version 2.1.2
 * Better handling of transient errors ( fixes #4 )
 * Do not panic in debug mode on unexpected bytes (handle arithmetic overflow)
