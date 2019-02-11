@@ -1,3 +1,4 @@
+use core;
 #[cfg(feature="std")]
 use std::io::{self, Error, ErrorKind, Read};
 #[cfg(feature="std")]
@@ -236,7 +237,7 @@ impl<ErrType,
     }
     pub fn into_inner(self) -> R {
       match self {
-        Self {
+        DecompressorCustomIo {
           input_buffer: _ib,
           total_out: _to,
           state: _state,
