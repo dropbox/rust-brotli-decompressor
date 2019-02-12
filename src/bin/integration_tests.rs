@@ -326,9 +326,9 @@ fn test_reader_uni() {
 
 #[cfg(feature="std")]
 fn writer_helper(mut in_buf: &[u8], desired_out_buf: &[u8], buf_size: usize) {
-  let mut output = UnlimitedBuffer::new(&[]);
+  let output = UnlimitedBuffer::new(&[]);
 
-  {let mut wdec = DecompressorWriter::new(&mut output, 517);
+  {let mut wdec = DecompressorWriter::new(output, 517);
   while in_buf.len() > 0 {
     match wdec.write(&in_buf[..cmp::min(in_buf.len(), buf_size)]) {
       Ok(size) => {
@@ -340,10 +340,39 @@ fn writer_helper(mut in_buf: &[u8], desired_out_buf: &[u8], buf_size: usize) {
       Err(e) => panic!("Error {:?}", e),
     }
   }
+   let ub = match wdec.into_inner() {
+     Ok(w) => w,
+     Err(_) => panic!("error with into_inner"),
+   };
+     assert_eq!(ub.data.len(), desired_out_buf.len());
+  for i in 0..cmp::min(desired_out_buf.len(), ub.data.len()) {
+    assert_eq!(ub.data[i], desired_out_buf[i]);
   }
-  assert_eq!(output.data.len(), desired_out_buf.len());
-  for i in 0..cmp::min(desired_out_buf.len(), output.data.len()) {
-    assert_eq!(output.data[i], desired_out_buf[i]);
+
+  }
+}
+
+#[cfg(feature="std")]
+fn writer_early_out_helper(in_buf: &[u8], desired_out_buf: &[u8], buf_size: usize, ibuf: usize) {
+  let output = UnlimitedBuffer::new(&[]);
+
+  {let mut wdec = DecompressorWriter::new(output, ibuf);
+  if in_buf.len() > 0 {
+    match wdec.write(&in_buf[..cmp::min(in_buf.len(), buf_size)]) {
+      Ok(_size) => {
+      }
+      Err(e) => panic!("Error {:?}", e),
+    }
+  }
+   match wdec.into_inner() {
+     Err(ub) => {
+       assert!(ub.data.len() != 0);
+       for i in 0..cmp::min(desired_out_buf.len(), ub.data.len()) {
+         assert_eq!(ub.data[i], desired_out_buf[i]);
+       }
+     },
+     Ok(w) => panic!(w),
+   }
   }
 }
 
@@ -361,9 +390,18 @@ fn test_writer_64x() {
 #[cfg(feature="std")]
 fn test_writer_mapsdatazrh() {
   writer_helper(include_bytes!("../../testdata/mapsdatazrh.compressed"),
-                                           include_bytes!("../../testdata/mapsdatazrh"), 717)
+                include_bytes!("../../testdata/mapsdatazrh"), 512)
+    
+}
+
+#[test]
+#[cfg(feature="std")]
+fn test_writer_mapsdatazrh_truncated() {
+  writer_early_out_helper(include_bytes!("../../testdata/mapsdatazrh.compressed"),
+                                           include_bytes!("../../testdata/mapsdatazrh"), 65536, 65536)
 
 }
+
 
 #[test]
 fn test_10x_10y_byte_by_byte() {

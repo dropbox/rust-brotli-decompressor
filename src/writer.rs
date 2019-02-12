@@ -59,8 +59,11 @@ impl<W: Write,
     pub fn get_mut(&mut self) -> &mut W {
         &mut self.0.get_mut().0
     }
-    pub fn into_inner(self) -> W {
-        self.0.into_inner().0
+    pub fn into_inner(self) -> Result<W, W> {
+        match self.0.into_inner() {
+            Ok(w) => Ok(w.0),
+            Err(w) => Err(w.0),
+        }
     }
 }
 #[cfg(feature="std")]
@@ -118,7 +121,7 @@ impl<W: Write> DecompressorWriter<W> {
   pub fn get_mut(&mut self) -> &mut W {
       self.0.get_mut()
   }
-  pub fn into_inner(self) -> W {
+  pub fn into_inner(self) -> Result<W, W> {
     self.0.into_inner()
   }
 }
@@ -159,7 +162,7 @@ impl<W: Write> DecompressorWriter<W> {
   pub fn get_mut(&mut self) -> &mut W {
     &mut (self.0).0.get_mut().0
   }
-  pub fn into_inner(self) -> W {
+  pub fn into_inner(self) -> Result<W, W> {
     self.0.into_inner()
   }
 }
@@ -265,10 +268,14 @@ impl<ErrType,
     pub fn get_mut(&mut self) -> &mut W {
         self.output.as_mut().unwrap()
     }
-    pub fn into_inner(mut self) -> W {
-      core::mem::replace(&mut self.output, None).unwrap()
+    pub fn into_inner(mut self) -> Result<W, W> {
+        match self.close() {
+            Ok(_) => Ok((core::mem::replace(&mut self.output, None).unwrap())),
+            Err(_) => Err((core::mem::replace(&mut self.output, None).unwrap())),
+        }
     }
 }
+
 impl<ErrType,
      W: CustomWrite<ErrType>,
      BufferType : SliceWrapperMut<u8>,
@@ -280,13 +287,16 @@ impl<ErrType,
                                                                                      AllocU8,
                                                                                      AllocU32,
                                                                                      AllocHC> {
-  fn drop(&mut self) {
-    match self.close() {
-          Ok(_) => {},
-          Err(_) => {},
+    fn drop(&mut self) {
+        if self.output.is_some() {
+            match self.close() {
+                Ok(_) => {},
+                Err(_) => {},
+            }
+        }
     }
-  }
 }
+
 impl<ErrType,
      W: CustomWrite<ErrType>,
      BufferType : SliceWrapperMut<u8>,
