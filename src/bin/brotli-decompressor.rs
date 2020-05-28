@@ -7,7 +7,21 @@ extern crate brotli_decompressor;
 extern crate core;
 #[macro_use]
 extern crate alloc_no_stdlib;
-use core::ops;
+use brotli_decompressor::brotli_decode;
+use std::fs;
+use std::io::{Cursor, Read};
+fn main() {
+    let block = fs::read(&std::env::args_os().nth(1).unwrap()).unwrap();
+    let mut decompressed = brotli_decompressor::Decompressor::new(Cursor::new(block), 8192);
+    let mut buf = Vec::new();
+    decompressed.read_to_end(&mut buf).expect("Brotli decompression error.");
+    println!("{:?}", buf.len());
+    //let mut buf = vec![0; 1<<30];
+    //let r = brotli_decode(&block, &mut buf);
+    //assert!(matches!(r.result, brotli_decompressor::BrotliResult::ResultSuccess));
+    //println!("{}", r.decoded_size);
+}
+/*use core::ops;
 use brotli_decompressor::CustomRead;
 pub struct Rebox<T> {
   b: Box<[T]>,
@@ -326,12 +340,13 @@ fn main() {
     }
   }
   if input.is_none() {
-    decompress(&mut io::stdin(), &mut io::stdout(), 65536, dictionary).unwrap();
+    decompress(&mut io::stdin(), &mut io::stdout(), 4096, dictionary).unwrap();
   } else {
     if output.is_none() {
-      decompress(&mut input.unwrap(), &mut io::stdout(), 65536, dictionary).unwrap();
+      decompress(&mut input.unwrap(), &mut io::stdout(), 4096, dictionary).unwrap();
     } else {
-      decompress(&mut input.unwrap(), &mut output.unwrap(), 65536, dictionary).unwrap();
+      decompress(&mut input.unwrap(), &mut output.unwrap(), 4096, dictionary).unwrap();
     }
   }
 }
+*/
