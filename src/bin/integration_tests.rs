@@ -318,6 +318,13 @@ fn test_reader_64x() {
 
 #[test]
 #[cfg(feature="std")]
+fn test_streaming_leftover_buffer() {
+  reader_helper(include_bytes!("../../testdata/reducetostream.map.compressed"),
+                                           include_bytes!("../../testdata/reducetostream.map"), 8192)
+}
+
+#[test]
+#[cfg(feature="std")]
 fn test_reader_uni() {
   reader_helper(include_bytes!("../../testdata/random_then_unicode.compressed"),
                                            include_bytes!("../../testdata/random_then_unicode"), 121)
