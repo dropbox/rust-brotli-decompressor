@@ -32,6 +32,7 @@ use ::dictionary::{kBrotliDictionary, kBrotliDictionaryOffsetsByLength,
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
 #[repr(C)]
 #[no_mangle]
+#[derive(Debug)]
 pub enum BrotliResult {
   ResultSuccess = 1,
   NeedsMoreInput = 2,
@@ -1176,7 +1177,7 @@ fn HuffmanTreeGroupDecode<AllocU8: alloc::Allocator<u8>,
     BrotliRunningTreeGroupState::BROTLI_STATE_TREE_GROUP_LOOP => {}
   }
   let mut result = BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS;
-  for mut htree_iter in
+  for htree_iter in
       fast_mut!((htrees.slice_mut())[s.htree_index as usize ; (group_num_htrees as usize)])
     .iter_mut() {
     let mut table_size: u32 = 0;
@@ -1346,7 +1347,7 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
       BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_DECODE => {
         let mut context_index: u32 = s.context_index;
         let max_run_length_prefix: u32 = s.max_run_length_prefix;
-        let mut context_map = &mut context_map_arg.slice_mut();
+        let context_map = &mut context_map_arg.slice_mut();
         let mut code: u32 = s.code;
         let mut rleCodeGoto = (code != 0xFFFF);
         while (rleCodeGoto || context_index < context_map_size) {
@@ -2687,7 +2688,6 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
     }
     local_input = &saved_buffer[..];
     s.br.next_in = 0;
-    s.br.avail_in = s.buffer_length;
   }
   loop {
     match result {

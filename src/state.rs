@@ -18,7 +18,7 @@ pub enum WhichTreeGroup {
   DISTANCE,
 }
 #[repr(C)]
-#[derive(Clone,Copy)]
+#[derive(Clone,Copy, Debug)]
 #[no_mangle]
 pub enum BrotliDecoderErrorCode{
   BROTLI_DECODER_NO_ERROR = 0,
@@ -65,6 +65,7 @@ pub enum BrotliDecoderErrorCode{
   BROTLI_DECODER_ERROR_UNREACHABLE = -31,
 }
 
+#[derive(Debug)]
 pub enum BrotliRunningState {
   BROTLI_STATE_UNINITED,
   BROTLI_STATE_LARGE_WINDOW_BITS,
