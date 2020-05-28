@@ -66,10 +66,8 @@ impl<AllocU32 : alloc::Allocator<u32>,
         self.max_symbol = max_symbol;
         self.num_htrees = ntrees;
         let nt = ntrees as usize;
-        core::mem::replace(&mut self.htrees,
-                           alloc_u32.alloc_cell(nt));
-        core::mem::replace(&mut self.codes,
-                           alloc_hc.alloc_cell(nt * BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize));
+        self.htrees = alloc_u32.alloc_cell(nt);
+        self.codes = alloc_hc.alloc_cell(nt * BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
     }
 
 //  pub fn get_tree_mut<'a>(self :&'a mut Self, index : u32, mut tree_out : &'a mut [HuffmanCode]) {

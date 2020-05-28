@@ -34,7 +34,7 @@ pub unsafe fn slice_from_raw_parts_or_nil_mut<'a, T>(data: *mut T, len: usize) -
 }
 
 #[cfg(feature="std")]
-type BrotliAdditionalErrorData = boxed::Box<any::Any + Send + 'static>;
+type BrotliAdditionalErrorData = boxed::Box<dyn any::Any + Send + 'static>;
 #[cfg(not(feature="std"))]
 type BrotliAdditionalErrorData = ();
 

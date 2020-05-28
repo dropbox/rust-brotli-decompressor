@@ -170,7 +170,10 @@ pub fn decompress_internal<InputType, OutputType>(r: &mut InputType,
           }
         }
         BrotliResult::NeedsMoreOutput => {
-          try!(_write_all(&mut w, &output.slice()[..output_offset]));
+          match _write_all(&mut w, &output.slice()[..output_offset]) {
+            Err(x) => return Err(x),
+            _ => {},
+          }
           output_offset = 0;
         }
         BrotliResult::ResultSuccess => break,
@@ -193,7 +196,10 @@ pub fn decompress_internal<InputType, OutputType>(r: &mut InputType,
       }
       total = total + delta;
       if output_offset != 0 {
-        try!(_write_all(&mut w, &output.slice()[..output_offset]));
+        match _write_all(&mut w, &output.slice()[..output_offset]) {
+          Err(x) => return Err(x),
+          _ => {},
+        }
         output_offset = 0;
         available_out = output.slice().len()
       }
