@@ -315,6 +315,7 @@ fn test_reader_64x() {
                                            include_bytes!("../../testdata/64x"), 181)
 
 }
+
 #[test]
 #[cfg(feature="std")]
 fn test_reader_uni() {
