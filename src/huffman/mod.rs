@@ -26,7 +26,6 @@ pub const BROTLI_HUFFMAN_MAX_TABLE_SIZE: u32 = 1080;
 pub const BROTLI_HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH: u32 = 5;
 
 #[repr(C)]
-#[no_mangle]
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub struct HuffmanCode {
   pub value: u16, // symbol value or table offset

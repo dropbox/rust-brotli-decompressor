@@ -31,7 +31,6 @@ use ::dictionary::{kBrotliDictionary, kBrotliDictionaryOffsetsByLength,
                    kBrotliMinDictionaryWordLength};
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
 #[repr(C)]
-#[no_mangle]
 #[derive(Debug)]
 pub enum BrotliResult {
   ResultSuccess = 1,

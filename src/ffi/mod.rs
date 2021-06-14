@@ -1,6 +1,5 @@
 #![cfg(not(feature="safe"))]
 
-#[no_mangle]
 #[cfg(feature="std")]
 use std::{thread,panic, io, boxed, any, string};
 #[cfg(feature="std")]
@@ -39,7 +38,6 @@ type BrotliAdditionalErrorData = boxed::Box<any::Any + Send + 'static>;
 type BrotliAdditionalErrorData = ();
 
 #[repr(C)]
-#[no_mangle]
 pub struct BrotliDecoderState {
     pub custom_allocator: CAllocator,
     pub decompressor: ::BrotliState<SubclassableAllocator,
