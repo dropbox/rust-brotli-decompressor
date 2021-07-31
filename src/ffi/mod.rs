@@ -1,6 +1,5 @@
 #![cfg(not(feature="safe"))]
 
-#[no_mangle]
 #[cfg(feature="std")]
 use std::{thread,panic, io, boxed, any, string};
 #[cfg(feature="std")]
@@ -34,12 +33,11 @@ pub unsafe fn slice_from_raw_parts_or_nil_mut<'a, T>(data: *mut T, len: usize) -
 }
 
 #[cfg(feature="std")]
-type BrotliAdditionalErrorData = boxed::Box<any::Any + Send + 'static>;
+type BrotliAdditionalErrorData = boxed::Box<dyn any::Any + Send + 'static>;
 #[cfg(not(feature="std"))]
 type BrotliAdditionalErrorData = ();
 
 #[repr(C)]
-#[no_mangle]
 pub struct BrotliDecoderState {
     pub custom_allocator: CAllocator,
     pub decompressor: ::BrotliState<SubclassableAllocator,

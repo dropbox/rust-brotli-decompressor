@@ -325,7 +325,6 @@ pub fn copy_from_to<R: io::Read, W: io::Write>(mut r: R, mut w: W) -> io::Result
   Ok(out_size)
 }
 
-#[no_mangle]
 #[repr(C)]
 pub struct BrotliDecoderReturnInfo {
     pub decoded_size: usize,

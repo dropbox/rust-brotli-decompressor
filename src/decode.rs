@@ -31,7 +31,6 @@ use ::dictionary::{kBrotliDictionary, kBrotliDictionaryOffsetsByLength,
                    kBrotliMinDictionaryWordLength};
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
 #[repr(C)]
-#[no_mangle]
 #[derive(Debug)]
 pub enum BrotliResult {
   ResultSuccess = 1,
@@ -1196,19 +1195,19 @@ fn HuffmanTreeGroupDecode<AllocU8: alloc::Allocator<u8>,
     s.htree_index += 1;
   }
   if group_index == 0 {
-    mem::replace(&mut s.literal_hgroup.codes,
+    let _ = mem::replace(&mut s.literal_hgroup.codes,
                  mem::replace(&mut hcodes, AllocHC::AllocatedMemory::default()));
-    mem::replace(&mut s.literal_hgroup.htrees,
+    let _ = mem::replace(&mut s.literal_hgroup.htrees,
                  mem::replace(&mut htrees, AllocU32::AllocatedMemory::default()));
   } else if group_index == 1 {
-    mem::replace(&mut s.insert_copy_hgroup.codes,
+    let _ = mem::replace(&mut s.insert_copy_hgroup.codes,
                  mem::replace(&mut hcodes, AllocHC::AllocatedMemory::default()));
-    mem::replace(&mut s.insert_copy_hgroup.htrees,
+    let _ = mem::replace(&mut s.insert_copy_hgroup.htrees,
                  mem::replace(&mut htrees, AllocU32::AllocatedMemory::default()));
   } else {
-    mem::replace(&mut s.distance_hgroup.codes,
+    let _ = mem::replace(&mut s.distance_hgroup.codes,
                  mem::replace(&mut hcodes, AllocHC::AllocatedMemory::default()));
-    mem::replace(&mut s.distance_hgroup.htrees,
+    let _ = mem::replace(&mut s.distance_hgroup.htrees,
                  mem::replace(&mut htrees, AllocU32::AllocatedMemory::default()));
   }
   if let BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS = result {
@@ -1333,7 +1332,7 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
                                  None,
                                  &mut s,
                                  input);
-        mem::replace(&mut s.context_map_table,
+        let _ = mem::replace(&mut s.context_map_table,
                      mem::replace(&mut local_context_map_table,
                                   AllocHC::AllocatedMemory::default()));
         match result {
@@ -1453,11 +1452,11 @@ fn DecodeContextMap<AllocU8: alloc::Allocator<u8>,
                                      input);
   if is_dist_context_map {
     s.num_dist_htrees = num_htrees;
-    mem::replace(&mut s.dist_context_map,
+    let _ = mem::replace(&mut s.dist_context_map,
                  mem::replace(&mut context_map_arg, AllocU8::AllocatedMemory::default()));
   } else {
     s.num_literal_htrees = num_htrees;
-    mem::replace(&mut s.context_map,
+    let _ = mem::replace(&mut s.context_map,
                  mem::replace(&mut context_map_arg, AllocU8::AllocatedMemory::default()));
   }
   retval
@@ -2593,15 +2592,15 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
   s.pos = pos;
   s.loop_counter = i;
 
-  core::mem::replace(&mut s.literal_hgroup,
+  let _ = core::mem::replace(&mut s.literal_hgroup,
                      core::mem::replace(&mut saved_literal_hgroup,
                                         HuffmanTreeGroup::<AllocU32, AllocHC>::default()));
 
-  core::mem::replace(&mut s.distance_hgroup,
+  let _ = core::mem::replace(&mut s.distance_hgroup,
                      core::mem::replace(&mut saved_distance_hgroup,
                                         HuffmanTreeGroup::<AllocU32, AllocHC>::default()));
 
-  core::mem::replace(&mut s.insert_copy_hgroup,
+  let _ = core::mem::replace(&mut s.insert_copy_hgroup,
                      core::mem::replace(&mut saved_insert_copy_hgroup,
                                         HuffmanTreeGroup::<AllocU32, AllocHC>::default()));
 
@@ -2942,7 +2941,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                             None,
                             &mut s,
                             local_input);
-          mem::replace(&mut s.block_type_length_state.block_type_trees,
+          let _ = mem::replace(&mut s.block_type_length_state.block_type_trees,
                        new_huffman_table);
           match result {
             BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS => {}
@@ -2961,7 +2960,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                                    None,
                                    &mut s,
                                    local_input);
-          mem::replace(&mut s.block_type_length_state.block_len_trees,
+          let _ = mem::replace(&mut s.block_type_length_state.block_len_trees,
                        new_huffman_table);
           match result {
             BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS => {}

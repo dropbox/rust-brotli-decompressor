@@ -170,8 +170,10 @@ pub fn decompress_internal<InputType, OutputType>(r: &mut InputType,
           }
         }
         BrotliResult::NeedsMoreOutput => {
-          try!(_write_all(&mut w, &output.slice()[..output_offset]));
-          output_offset = 0;
+            if let Err(e) = _write_all(&mut w, &output.slice()[..output_offset]) {
+                return Err(e)
+            }
+            output_offset = 0;
         }
         BrotliResult::ResultSuccess => break,
         BrotliResult::ResultFailure => panic!("FAILURE"),
@@ -193,7 +195,9 @@ pub fn decompress_internal<InputType, OutputType>(r: &mut InputType,
       }
       total = total + delta;
       if output_offset != 0 {
-        try!(_write_all(&mut w, &output.slice()[..output_offset]));
+        if let Err(e) = _write_all(&mut w, &output.slice()[..output_offset]) {
+          return Err(e)
+        }
         output_offset = 0;
         available_out = output.slice().len()
       }
@@ -379,7 +383,7 @@ fn writer_early_out_helper(in_buf: &[u8], desired_out_buf: &[u8], buf_size: usiz
          assert_eq!(ub.data[i], desired_out_buf[i]);
        }
      },
-     Ok(w) => panic!(w),
+     Ok(_) => panic!("unreachable"),
    }
   }
 }
