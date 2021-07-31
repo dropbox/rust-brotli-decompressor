@@ -19,7 +19,6 @@ pub enum WhichTreeGroup {
 }
 #[repr(C)]
 #[derive(Clone,Copy, Debug)]
-#[no_mangle]
 pub enum BrotliDecoderErrorCode{
   BROTLI_DECODER_NO_ERROR = 0,
   /* Same as BrotliDecoderResult values */

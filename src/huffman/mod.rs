@@ -26,7 +26,6 @@ pub const BROTLI_HUFFMAN_MAX_TABLE_SIZE: u32 = 1080;
 pub const BROTLI_HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH: u32 = 5;
 
 #[repr(C)]
-#[no_mangle]
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub struct HuffmanCode {
   pub value: u16, // symbol value or table offset
@@ -66,19 +65,19 @@ impl<AllocU32 : alloc::Allocator<u32>,
         self.max_symbol = max_symbol;
         self.num_htrees = ntrees;
         let nt = ntrees as usize;
-        core::mem::replace(&mut self.htrees,
+        let _ = core::mem::replace(&mut self.htrees,
                            alloc_u32.alloc_cell(nt));
-        core::mem::replace(&mut self.codes,
+        let _ = core::mem::replace(&mut self.codes,
                            alloc_hc.alloc_cell(nt * BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize));
     }
 
 //  pub fn get_tree_mut<'a>(self :&'a mut Self, index : u32, mut tree_out : &'a mut [HuffmanCode]) {
 //        let start : usize = fast!((self.htrees)[index as usize]) as usize;
-//        core::mem::replace(&mut tree_out, fast_mut!((self.codes.slice_mut())[start;]));
+//        let _ = core::mem::replace(&mut tree_out, fast_mut!((self.codes.slice_mut())[start;]));
 //    }
 //    pub fn get_tree<'a>(self :&'a Self, index : u32, mut tree_out : &'a [HuffmanCode]) {
 //        let start : usize = fast!((self.htrees)[index as usize]) as usize;
-//        core::mem::replace(&mut tree_out, fast_slice!((self.codes)[start;]));
+//        let _ = core::mem::replace(&mut tree_out, fast_slice!((self.codes)[start;]));
 //    }
     #[allow(dead_code)]
     pub fn get_tree_mut(&mut self, index : u32) -> &mut [HuffmanCode] {
