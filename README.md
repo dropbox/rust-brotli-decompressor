@@ -1,6 +1,6 @@
 # rust-brotli-decompressor
 
-[![crates.io](https://meritbadge.herokuapp.com/brotli-decompressor)](https://crates.io/crates/brotli-decompressor)
+[![crates.io](https://img.shields.io/crates/v/brotli-decompressor.svg)](https://crates.io/crates/brotli-decompressor)
 [![Build Status](https://travis-ci.org/dropbox/rust-brotli-decompressor.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli-decompressor)
 
 ## What's new in version 2.2.x
