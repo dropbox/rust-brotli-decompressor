@@ -203,62 +203,96 @@ pub fn write_all<ErrType, W: CustomWrite<ErrType>>(writer: &mut W, mut buf : &[u
     Ok(())
 }
 
-
-impl<ErrType,
-     W: CustomWrite<ErrType>,
-     BufferType : SliceWrapperMut<u8>,
-     AllocU8,
-     AllocU32,
-     AllocHC> DecompressorWriterCustomIo<ErrType, W, BufferType, AllocU8, AllocU32, AllocHC>
- where AllocU8 : Allocator<u8>, AllocU32 : Allocator<u32>, AllocHC : Allocator<HuffmanCode>
+impl<
+    ErrType,
+    W: CustomWrite<ErrType>,
+    BufferType: SliceWrapperMut<u8>,
+    AllocU8,
+    AllocU32,
+    AllocHC,
+  > DecompressorWriterCustomIo<ErrType, W, BufferType, AllocU8, AllocU32, AllocHC>
+where
+    AllocU8: Allocator<u8>,
+    AllocU32: Allocator<u32>,
+    AllocHC: Allocator<HuffmanCode>,
 {
-
-    pub fn new(w: W, buffer : BufferType,
-               alloc_u8 : AllocU8, alloc_u32 : AllocU32, alloc_hc : AllocHC,
-               invalid_data_error_type : ErrType) -> Self {
-           let dict = AllocU8::AllocatedMemory::default();
-           Self::new_with_custom_dictionary(w, buffer, alloc_u8, alloc_u32, alloc_hc, dict, invalid_data_error_type)
+    pub fn new(
+        w: W,
+        buffer: BufferType,
+        alloc_u8: AllocU8,
+        alloc_u32: AllocU32,
+        alloc_hc: AllocHC,
+        invalid_data_error_type: ErrType,
+    ) -> Self {
+        let dict = AllocU8::AllocatedMemory::default();
+        Self::new_with_custom_dictionary(
+            w,
+            buffer,
+            alloc_u8,
+            alloc_u32,
+            alloc_hc,
+            dict,
+            invalid_data_error_type,
+        )
     }
-    pub fn new_with_custom_dictionary(w: W, buffer : BufferType,
-               alloc_u8 : AllocU8, alloc_u32 : AllocU32, alloc_hc : AllocHC,
-               dict: AllocU8::AllocatedMemory,
-               invalid_data_error_type : ErrType) -> Self {
-        DecompressorWriterCustomIo::<ErrType, W, BufferType, AllocU8, AllocU32, AllocHC>{
-            output_buffer : buffer,
-            total_out : 0,
+
+    pub fn new_with_custom_dictionary(
+        w: W,
+        buffer: BufferType,
+        alloc_u8: AllocU8,
+        alloc_u32: AllocU32,
+        alloc_hc: AllocHC,
+        dict: AllocU8::AllocatedMemory,
+        invalid_data_error_type: ErrType,
+    ) -> Self {
+        DecompressorWriterCustomIo::<ErrType, W, BufferType, AllocU8, AllocU32, AllocHC> {
+            output_buffer: buffer,
+            total_out: 0,
             output: Some(w),
-            state : BrotliState::new_with_custom_dictionary(alloc_u8,
-                                                                 alloc_u32,
-                                                                 alloc_hc,
-                                                                 dict),
-            error_if_invalid_data : Some(invalid_data_error_type),
+            state: BrotliState::new_with_custom_dictionary(alloc_u8, alloc_u32, alloc_hc, dict),
+            error_if_invalid_data: Some(invalid_data_error_type),
         }
     }
-    fn close(&mut self) -> Result<(), ErrType>{
+
+    fn close(&mut self) -> Result<(), ErrType> {
+        match self._close() {
+            Ok(ret) => match ret {
+                BrotliResult::NeedsMoreInput => return Err(self.error_if_invalid_data.take().unwrap()),
+                BrotliResult::ResultSuccess => return Ok(()),
+                BrotliResult::ResultFailure => return Err(self.error_if_invalid_data.take().unwrap()),
+                BrotliResult::NeedsMoreOutput => unreachable!(),
+            },
+            Err(err) => Err(err),
+        }
+    }
+
+    fn _close(&mut self) -> Result<BrotliResult, ErrType> {
         loop {
-            let mut avail_in : usize = 0;
-            let mut input_offset : usize = 0;
-            let mut avail_out : usize = self.output_buffer.slice_mut().len();
-            let mut output_offset : usize = 0;
+            let mut avail_in: usize = 0;
+            let mut input_offset: usize = 0;
+            let mut avail_out: usize = self.output_buffer.slice_mut().len();
+            let mut output_offset: usize = 0;
             let ret = BrotliDecompressStream(
                 &mut avail_in,
                 &mut input_offset,
                 &[],
                 &mut avail_out,
                 &mut output_offset,
-                self.output_buffer.slice_mut(),                
+                self.output_buffer.slice_mut(),
                 &mut self.total_out,
-                &mut self.state);
-          match write_all(self.output.as_mut().unwrap(), &self.output_buffer.slice_mut()[..output_offset]) {
-            Ok(_) => {},
-            Err(e) => return Err(e),
-           }
-           match ret {
-           BrotliResult::NeedsMoreInput => return Err(self.error_if_invalid_data.take().unwrap()),
-           BrotliResult::NeedsMoreOutput => {},
-           BrotliResult::ResultSuccess => return Ok(()),
-           BrotliResult::ResultFailure => return Err(self.error_if_invalid_data.take().unwrap()),
-           }
+                &mut self.state,
+            );
+            match write_all(
+                self.output.as_mut().unwrap(),
+                &self.output_buffer.slice_mut()[..output_offset],
+            ) {
+                Ok(_) => {}
+                Err(e) => return Err(e),
+            }
+            match ret {
+                BrotliResult::NeedsMoreOutput => {}
+                _ => return Ok(ret),
+            }
         }
     }
 
@@ -276,70 +310,85 @@ impl<ErrType,
     }
 }
 
-impl<ErrType,
-     W: CustomWrite<ErrType>,
-     BufferType : SliceWrapperMut<u8>,
-     AllocU8 : Allocator<u8>,
-     AllocU32 : Allocator<u32>,
-     AllocHC : Allocator<HuffmanCode> > Drop for DecompressorWriterCustomIo<ErrType,
-                                                                                     W,
-                                                                                     BufferType,
-                                                                                     AllocU8,
-                                                                                     AllocU32,
-                                                                                     AllocHC> {
+impl<
+    ErrType,
+    W: CustomWrite<ErrType>,
+    BufferType: SliceWrapperMut<u8>,
+    AllocU8: Allocator<u8>,
+    AllocU32: Allocator<u32>,
+    AllocHC: Allocator<HuffmanCode>,
+  > Drop for DecompressorWriterCustomIo<ErrType, W, BufferType, AllocU8, AllocU32, AllocHC>
+{
     fn drop(&mut self) {
         if self.output.is_some() {
-            match self.close() {
-                Ok(_) => {},
-                Err(_) => {},
-            }
+            let _ = self._close();
         }
     }
 }
 
-impl<ErrType,
-     W: CustomWrite<ErrType>,
-     BufferType : SliceWrapperMut<u8>,
-     AllocU8 : Allocator<u8>,
-     AllocU32 : Allocator<u32>,
-     AllocHC : Allocator<HuffmanCode> > CustomWrite<ErrType> for DecompressorWriterCustomIo<ErrType,
-                                                                                     W,
-                                                                                     BufferType,
-                                                                                     AllocU8,
-                                                                                     AllocU32,
-                                                                                     AllocHC> {
-	fn write(&mut self, buf: &[u8]) -> Result<usize, ErrType > {
+impl<
+    ErrType,
+    W: CustomWrite<ErrType>,
+    BufferType: SliceWrapperMut<u8>,
+    AllocU8: Allocator<u8>,
+    AllocU32: Allocator<u32>,
+    AllocHC: Allocator<HuffmanCode>,
+  > CustomWrite<ErrType>
+  for DecompressorWriterCustomIo<ErrType, W, BufferType, AllocU8, AllocU32, AllocHC>
+{
+    fn write(&mut self, buf: &[u8]) -> Result<usize, ErrType> {
         let mut avail_in = buf.len();
-        let mut input_offset : usize = 0;
+        let mut input_offset: usize = 0;
         loop {
             let mut output_offset = 0;
             let mut avail_out = self.output_buffer.slice_mut().len();
-            let op_result = BrotliDecompressStream(&mut avail_in,
-                                     &mut input_offset,
-                                     &buf[..],
-                                     &mut avail_out,
-                                     &mut output_offset,
-                                     self.output_buffer.slice_mut(),
-                                     &mut self.total_out,
-                                     &mut self.state);
-         match write_all(self.output.as_mut().unwrap(), &self.output_buffer.slice_mut()[..output_offset]) {
-          Ok(_) => {},
-          Err(e) => return Err(e),
-         }
-         match op_result {
-          BrotliResult::NeedsMoreInput => assert_eq!(avail_in, 0),
-          BrotliResult::NeedsMoreOutput => continue,
-          BrotliResult::ResultSuccess => return Ok((buf.len())),
-          BrotliResult::ResultFailure => return Err(self.error_if_invalid_data.take().unwrap()),
+            let op_result = BrotliDecompressStream(
+                &mut avail_in,
+                &mut input_offset,
+                &buf[..],
+                &mut avail_out,
+                &mut output_offset,
+                self.output_buffer.slice_mut(),
+                &mut self.total_out,
+                &mut self.state,
+            );
+            match write_all(
+                self.output.as_mut().unwrap(),
+                &self.output_buffer.slice_mut()[..output_offset],
+            ) {
+                Ok(_) => {}
+                Err(e) => return Err(e),
+            }
+            match op_result {
+                BrotliResult::NeedsMoreInput => assert_eq!(avail_in, 0),
+                BrotliResult::NeedsMoreOutput => continue,
+                BrotliResult::ResultSuccess => return Ok((buf.len())),
+                BrotliResult::ResultFailure => return Err(self.error_if_invalid_data.take().unwrap()),
+            }
+            if avail_in == 0 {
+                break;
+            }
         }
-        if avail_in == 0 {
-           break
-        }
-      }
-      Ok(buf.len())
+        Ok(buf.len())
     }
+
     fn flush(&mut self) -> Result<(), ErrType> {
-       self.output.as_mut().unwrap().flush()
+        self.output.as_mut().unwrap().flush()
     }
 }
 
+#[cfg(test)]
+mod tests {
+  use std::io::{stdout, Write};
+
+  use crate::DecompressorWriter;
+
+  // Drop handler does not panic after write failure. (#21)
+  #[test]
+  fn test_write_fail() {
+    let compressed = b"xxxxxxxxxxx";
+    if let Err(e) = DecompressorWriter::new(stdout(), 1024).write(compressed) {
+      eprintln!("{}", e);
+    }
+  }
+}
