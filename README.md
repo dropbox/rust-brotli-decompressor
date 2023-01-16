@@ -3,6 +3,9 @@
 [![crates.io](https://img.shields.io/crates/v/brotli-decompressor.svg)](https://crates.io/crates/brotli-decompressor)
 [![Build Status](https://travis-ci.org/dropbox/rust-brotli-decompressor.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli-decompressor)
 
+## What's new in version 2.3.4
+* Check for fully consumed buffers in the decompressor reader/writer.
+
 ## What's new in version 2.3.x
 * Error handling for Write and Read implementations.
 * Fixed issue with small buffer sizes on certain files when repeatedly calling Decode stream

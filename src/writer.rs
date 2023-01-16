@@ -280,7 +280,9 @@ impl<ErrType,
            match ret {
            BrotliResult::NeedsMoreInput => return self.error_if_invalid_data.take().map(|e|Err(e)).unwrap_or(Ok(())),
            BrotliResult::NeedsMoreOutput => {},
-           BrotliResult::ResultSuccess => return Ok(()),
+           BrotliResult::ResultSuccess => {
+               return Ok(());
+           },
            BrotliResult::ResultFailure => return self.error_if_invalid_data.take().map(|e|Err(e)).unwrap_or(Ok(()))
            }
         }
@@ -353,7 +355,14 @@ impl<ErrType,
          match op_result {
           BrotliResult::NeedsMoreInput => assert_eq!(avail_in, 0),
           BrotliResult::NeedsMoreOutput => continue,
-          BrotliResult::ResultSuccess => return Ok((buf.len())),
+          BrotliResult::ResultSuccess => {
+              if input_offset != buf.len() {
+                  // Did not utilize the full buffer; return error.
+                  return self.error_if_invalid_data.take().map(
+                      |e|Err(e)).unwrap_or(Ok(0));
+              }
+              return Ok((buf.len()));
+          }
           BrotliResult::ResultFailure => return self.error_if_invalid_data.take().map(|e|Err(e)).unwrap_or(Ok(0)),
        }
         if avail_in == 0 {
@@ -366,4 +375,3 @@ impl<ErrType,
        self.output.as_mut().unwrap().flush()
     }
 }
-

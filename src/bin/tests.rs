@@ -96,6 +96,7 @@ fn test_one_byte_copier() {
     }
 }
 
+#[cfg(features="std")]
 #[test]
 fn test_one_byte_writer() {
     for b in 0..256 {
@@ -119,6 +120,24 @@ fn test_one_byte_writer() {
     }
 }
 
+
+#[cfg(features="std")]
+#[test]
+fn test_error_byte_writer() {
+    let in_buf = b"\x8f\x02\x80\x68\x65\x6c\x6c\x6f\x0a\x03\x67\x6f\x6f\x64\x62\x79\x65\x0a";
+    let mut output = Buffer::new(&[]);
+    let mut writer = super::brotli_decompressor::DecompressorWriter::new(&mut output, 4096);
+    match writer.write_all(&in_buf[..]) {
+        Ok(_) => {
+            assert_eq!(writer.close().unwrap_err().kind(), io::ErrorKind::InvalidData);
+        },
+        Err(e) => {
+            assert_eq!(e.kind(), io::ErrorKind::InvalidData);
+        }
+    }
+}
+
+#[cfg(features="std")]
 #[test]
 fn test_one_byte_reader() {
     for b in 0..256 {
