@@ -1,7 +1,8 @@
 #![cfg(test)]
 extern crate core;
-use std::io;
+use std::io::{self, Write, Read};
 use core::cmp;
+
 
 struct Buffer {
   data: Vec<u8>,
@@ -72,6 +73,70 @@ fn copy_from_to<R: io::Read, W: io::Write>(mut r: R, mut w: W) -> io::Result<usi
 }
 
 
+fn ok_one_byte_brotli(b: u8) -> bool{
+    b == 6 || b == 26 || b== 51 ||
+        b == 53 || b == 55 || b == 57 ||
+        b == 59 || b == 61 || b == 63
+}
+
+#[test]
+fn test_one_byte_copier() {
+    for b in 0..256 {
+        let in_buf = [b as u8];
+        let mut output = Buffer::new(&[]);
+        let mut input = super::BrotliDecompressor::new(Buffer::new(&in_buf), 4096);
+        match copy_from_to(&mut input, &mut output) {
+            Ok(_) => if ok_one_byte_brotli(in_buf[0]) {
+                assert_eq!(output.data, &[])
+            } else {
+                panic!("Expected error not {}", b)
+            },
+            Err(e) => assert_eq!(e.kind(), io::ErrorKind::InvalidData),
+        }
+    }
+}
+
+#[test]
+fn test_one_byte_writer() {
+    for b in 0..256 {
+        let in_buf = [b as u8];
+        let mut output = Buffer::new(&[]);
+        let mut writer = super::brotli_decompressor::DecompressorWriter::new(&mut output, 4096);
+        match writer.write(&in_buf) {
+            Ok(v) => {
+                if ok_one_byte_brotli(b as u8) {
+                    writer.close().unwrap();
+                } else {
+                    assert_eq!(writer.close().unwrap_err().kind(), io::ErrorKind::InvalidData);
+                }
+                assert_eq!(v, 1);
+            },
+            Err(e) => {
+                assert_eq!(e.kind(), io::ErrorKind::InvalidData);
+                assert!(!ok_one_byte_brotli(b as u8));
+            }
+        }
+    }
+}
+
+#[test]
+fn test_one_byte_reader() {
+    for b in 0..256 {
+        let in_buf = [b as u8];
+        let mut output = [0u8;1];
+        let mut reader = super::brotli_decompressor::Decompressor::new(&in_buf[..], 4096);
+        match reader.read(&mut output) {
+            Ok(v) => {
+                assert!(ok_one_byte_brotli(b as u8));
+                assert_eq!(v, 0);
+            },
+            Err(e) => {
+                assert_eq!(e.kind(), io::ErrorKind::InvalidData);
+                assert!(!ok_one_byte_brotli(b as u8));
+            }
+        }
+    }
+}
 
 #[test]
 fn test_10x_10y() {

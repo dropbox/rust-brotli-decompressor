@@ -301,7 +301,7 @@ impl<ErrType,
               return Err(e);
             },
             Ok(size) => if size == 0 {
-              return Err(self.error_if_invalid_data.take().unwrap());
+              return self.error_if_invalid_data.take().map(|e| Err(e)).unwrap_or(Ok(0));
             }else {
               self.input_len += size;
               avail_in = self.input_len - self.input_offset;
@@ -312,7 +312,7 @@ impl<ErrType,
           break;
         },
         BrotliResult::ResultSuccess => return Ok(output_offset),
-        BrotliResult::ResultFailure => return Err(self.error_if_invalid_data.take().unwrap()),
+        BrotliResult::ResultFailure => return self.error_if_invalid_data.take().map(|e| Err(e)).unwrap_or(Ok(9)),
       }
     }
     Ok(output_offset)
