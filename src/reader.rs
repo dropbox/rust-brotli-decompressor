@@ -193,6 +193,7 @@ pub struct DecompressorCustomIo<ErrType,
   input: R,
   error_if_invalid_data: Option<ErrType>,
   state: BrotliState<AllocU8, AllocU32, AllocHC>,
+  done: bool,
 }
 
 impl<ErrType,
@@ -225,6 +226,7 @@ impl<ErrType,
                                      alloc_hc,
                                      dict),
             error_if_invalid_data : Some(invalid_data_error_type),
+            done: false,
         }
     }
 
@@ -244,6 +246,7 @@ impl<ErrType,
           input_len: _il,
           error_if_invalid_data:_eiid,
           input,
+          done: _done,
         } =>{
           input
         }
@@ -275,6 +278,22 @@ impl<ErrType,
                                                                                      AllocU8,
                                                                                      AllocU32,
                                                                                      AllocHC> {
+  /// This variant of read will return Ok(number of bytes read) until the file
+  /// Is completed at which point it will return Ok(0).
+  /// However if there are additional unconsumed bytes in the buffer, it will
+  /// return Err(InvalidData) at that point. Otherwise it will keep returning
+  /// Ok(0).
+  ///
+  /// # Arguments
+  ///
+  /// * `buf` - The buffer to read into
+  ///
+  /// # Errors
+  ///
+  /// Returns Ok(0) if the file has been fully decompressed.
+  /// If the file has been fully decompressed but there are additional
+  /// non-brotli bytes in the buffer, then return an InvalidData error.
+  /// Also upstream errors from the reader are returned.
   fn read(&mut self, buf: &mut [u8]) -> Result<usize, ErrType > {
     let mut output_offset : usize = 0;
     let mut avail_out = buf.len() - output_offset;
@@ -312,9 +331,13 @@ impl<ErrType,
           break;
         },
         BrotliResult::ResultSuccess => {
-            if self.input_len != self.input_offset {
-                // Did not consume entire input; report error.
-                return self.error_if_invalid_data.take().map(|e| Err(e)).unwrap_or(Ok(output_offset));
+            if output_offset == 0 {
+                if !self.done {
+                    self.done = true;
+                } else if self.input_len != self.input_offset {
+                    // Did not consume entire input; report error.
+                    return self.error_if_invalid_data.take().map(|e| Err(e)).unwrap_or(Ok(output_offset));
+                }
             }
             return Ok(output_offset);
         }
@@ -332,8 +355,66 @@ fn test_no_vanishing_bytes() {
 
     // Output from this command:
     let compressed_with_extra = b"\x8f\x02\x80\x68\x65\x6c\x6c\x6f\x0a\x03\x67\x6f\x6f\x64\x62\x79\x65\x0a";
+    // Make sure that read_to_string returns the data.
     let cursor = std::io::Cursor::new(compressed_with_extra);
     let mut reader = super::Decompressor::new(cursor, 8000);
-    assert_eq!(std::io::read_to_string(&mut reader).unwrap_err().kind(), io::ErrorKind::InvalidData);
+    assert_eq!(std::io::read_to_string(&mut reader).unwrap(), "hello\n");
+
+    // However you can call read extra times to make sure there's no data.
+    let cursor = std::io::Cursor::new(compressed_with_extra);
+    let mut reader = super::Decompressor::new(cursor, 8000);
+    let mut data = std::vec::Vec::<u8>::default();
+    loop {
+        let mut buf = [0u8;5];
+        let offset = reader.read(&mut buf).unwrap();
+        if offset == 0 {
+            break;
+        }
+        data.extend_from_slice(&buf[..offset]);
+    }
+    assert_eq!(
+        &data,
+        &['h' as u8, 'e' as u8, 'l' as u8, 'l' as u8, 'o' as u8, '\n' as u8]);
+
+    // But calling read, one last time, results in an error because there
+    // were leftover bytes in the buffer.
+    let mut buf = [0u8;5];
+    assert_eq!(reader.read(&mut buf).unwrap_err().kind(),
+               io::ErrorKind::InvalidData);
+    data.clear();
+
+
+}
+
+#[cfg(feature="std")]
+#[test]
+fn test_repeated_read_returns_zero() {
+    use std::string::ToString;
+
+    // Output from this command:
+    let compressed_without_extra = b"\x8f\x02\x80\x68\x65\x6c\x6c\x6f\x0a\x03";
+    // Make sure that read_to_string returns the data.
+    let cursor = std::io::Cursor::new(compressed_without_extra);
+    let mut reader = super::Decompressor::new(cursor, 8000);
+    assert_eq!(std::io::read_to_string(&mut reader).unwrap(), "hello\n");
+
+    // However you can call read extra times to make sure there's no data.
+    let cursor = std::io::Cursor::new(compressed_without_extra);
+    let mut reader = super::Decompressor::new(cursor, 8000);
+    let mut data = std::vec::Vec::<u8>::default();
+    loop {
+        let mut buf = [0u8;5];
+        let offset = reader.read(&mut buf).unwrap();
+        if offset == 0 {
+            break;
+        }
+        data.extend_from_slice(&buf[..offset]);
+    }
+    assert_eq!(&data, &['h' as u8, 'e' as u8, 'l' as u8, 'l' as u8, 'o' as u8, '\n' as u8]);
+    let mut buf = [0u8;5];
+    assert_eq!(reader.read(&mut buf).unwrap(), 0);
+    data.clear();
+
+
 }
 
