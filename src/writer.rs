@@ -4,7 +4,7 @@ use std::io::{self, Error, ErrorKind, Write};
 #[cfg(feature="std")]
 pub use alloc_stdlib::StandardAlloc;
 #[cfg(all(feature="unsafe",feature="std"))]
-pub use alloc_stdlib::HeapAllocUninitialized;
+pub use alloc_stdlib::HeapAlloc;
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
 pub use state::BrotliState;
 // use io_wrappers::write_all;
@@ -144,30 +144,30 @@ impl<W: Write> DecompressorWriter<W> {
 
 #[cfg(all(feature="unsafe", feature="std"))]
 pub struct DecompressorWriter<W: Write>(DecompressorWriterCustomAlloc<W,
-                                                         <HeapAllocUninitialized<u8>
+                                                         <HeapAlloc<u8>
                                                           as Allocator<u8>>::AllocatedMemory,
-                                                         HeapAllocUninitialized<u8>,
-                                                         HeapAllocUninitialized<u32>,
-                                                         HeapAllocUninitialized<HuffmanCode> >);
+                                                         HeapAlloc<u8>,
+                                                         HeapAlloc<u32>,
+                                                         HeapAlloc<HuffmanCode> >);
 
 
 #[cfg(all(feature="unsafe", feature="std"))]
 impl<W: Write> DecompressorWriter<W> {
   pub fn new(w: W, buffer_size: usize) -> Self {
-    let dict = <HeapAllocUninitialized<u8> as Allocator<u8>>::AllocatedMemory::default();
+    let dict = <HeapAlloc<u8> as Allocator<u8>>::AllocatedMemory::default();
     Self::new_with_custom_dictionary(w, buffer_size, dict)
   }
-  pub fn new_with_custom_dictionary(w: W, buffer_size: usize, dict: <HeapAllocUninitialized<u8> as Allocator<u8>>::AllocatedMemory) -> Self {
-    let mut alloc_u8 = unsafe { HeapAllocUninitialized::<u8>::new() };
+  pub fn new_with_custom_dictionary(w: W, buffer_size: usize, dict: <HeapAlloc<u8> as Allocator<u8>>::AllocatedMemory) -> Self {
+    let mut alloc_u8 = HeapAlloc::<u8>::new(0);
     let buffer = alloc_u8.alloc_cell(buffer_size);
-    let alloc_u32 = unsafe { HeapAllocUninitialized::<u32>::new() };
-    let alloc_hc = unsafe { HeapAllocUninitialized::<HuffmanCode>::new() };
+    let alloc_u32 = HeapAlloc::<u32>::new(0);
+    let alloc_hc = HeapAlloc::<HuffmanCode>::new(HuffmanCode{bits:2, value: 1});
     DecompressorWriter::<W>(DecompressorWriterCustomAlloc::<W,
-                                                <HeapAllocUninitialized<u8>
+                                                <HeapAlloc<u8>
                                                  as Allocator<u8>>::AllocatedMemory,
-                                                HeapAllocUninitialized<u8>,
-                                                HeapAllocUninitialized<u32>,
-                                                HeapAllocUninitialized<HuffmanCode> >
+                                                HeapAlloc<u8>,
+                                                HeapAlloc<u32>,
+                                                HeapAlloc<HuffmanCode> >
       ::new_with_custom_dictionary(w, buffer, alloc_u8, alloc_u32, alloc_hc, dict))
   }
 
