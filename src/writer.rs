@@ -356,12 +356,7 @@ impl<ErrType,
           BrotliResult::NeedsMoreInput => assert_eq!(avail_in, 0),
           BrotliResult::NeedsMoreOutput => continue,
           BrotliResult::ResultSuccess => {
-              if input_offset != buf.len() {
-                  // Did not utilize the full buffer; return error.
-                  return self.error_if_invalid_data.take().map(
-                      |e|Err(e)).unwrap_or(Ok(0));
-              }
-              return Ok((buf.len()));
+              return Ok(input_offset);
           }
           BrotliResult::ResultFailure => return self.error_if_invalid_data.take().map(|e|Err(e)).unwrap_or(Ok(0)),
        }
@@ -373,5 +368,32 @@ impl<ErrType,
     }
     fn flush(&mut self) -> Result<(), ErrType> {
        self.output.as_mut().unwrap().flush()
+    }
+}
+
+#[cfg(feature="std")]
+#[cfg(test)]
+mod test {
+    use super::DecompressorWriter;
+    use std::vec::Vec;
+    use std::io::Write;
+    // Brotli-compressed "hello\n" and 2 extra bytes
+
+
+    #[test]
+    fn write_extra() {
+        let contents = b"\x8f\x02\x80\x68\x65\x6c\x6c\x6f\x0a\x03\x67\x6f\x6f\x64\x62\x79\x65\x0a";
+        let mut decoder = DecompressorWriter::new(Vec::new(), 0);
+        let n = decoder.write(contents).unwrap();
+        assert_eq!(n, 10);
+        // Ensure that we can continue to not send data to the writer
+        // as it has consumed the entire file.
+        let n = decoder.write(contents).unwrap();
+        assert_eq!(n, 0);
+
+        let mut decoder = DecompressorWriter::new(Vec::new(), 0);
+        let e = decoder.write_all(contents).unwrap_err();
+        assert!(e.kind() == std::io::ErrorKind::WriteZero);
+        assert_eq!(decoder.get_ref().as_slice(), b"hello\n");
     }
 }
