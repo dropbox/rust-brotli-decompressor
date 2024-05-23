@@ -248,8 +248,10 @@ pub fn BrotliDecompressCustomIoCustomDict<ErrType,
             Err(e) => {
               return Result::Err(e);
             },
+            Ok(0) => {
+              return Result::Err(unexpected_eof_error_constant);
+            }
             Ok(cur_written) => {
-              assert_eq!(cur_written == 0, false); // not allowed by the contract
               total_written += cur_written;
             }
           }
@@ -280,8 +282,10 @@ pub fn BrotliDecompressCustomIoCustomDict<ErrType,
             return Result::Err(e);
           },
           // CustomResult::Transient(e) => continue,
+          Ok(0) => {
+            return Result::Err(unexpected_eof_error_constant);
+          }
           Ok(cur_written) => {
-            assert_eq!(cur_written == 0, false); // not allowed by the contract
             total_written += cur_written;
           }
         }
