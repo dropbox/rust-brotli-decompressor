@@ -1,0 +1,32 @@
+[package]
+name = "brotli-decompressor-fuzz"
+version = "0.0.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.brotli-decompressor]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "decompress_into_vec"
+path = "fuzz_targets/decompress_into_vec.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "decompress_into_fixed"
+path = "fuzz_targets/decompress_into_fixed.rs"
+test = false
+doc = false
