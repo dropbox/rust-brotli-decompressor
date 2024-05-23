@@ -268,3 +268,18 @@ fn test_early_eof() {
   }
   assert_eq!(input_offset, input.len());
 }
+
+#[test]
+#[cfg(feature="std")]
+fn test_run_out_of_writer_space() {
+  // this is a valid compression of [0u8; 2048];
+  let compression = [27, 255, 7, 0, 36, 0, 194, 177, 64, 114, 7];
+  // output buffer doesn't have enough space
+  let mut output_buffer = [0u8; 2047];
+
+  super::BrotliDecompress(
+    &mut io::Cursor::new(compression),
+    &mut io::Cursor::new(&mut output_buffer[..]),
+  )
+  .unwrap_err();
+}
