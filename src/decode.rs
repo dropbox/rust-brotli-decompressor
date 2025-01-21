@@ -2316,6 +2316,12 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                 }
                 fast_mut!((s.ringbuffer.slice_mut())[pos as usize]) = literal as u8;
               }
+              if (s.block_type_length_state.block_length)[0] == 0 {
+                  mark_unlikely();
+                  result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS;
+                  inner_return = true;
+                  break;
+              }
               fast_mut!((s.block_type_length_state.block_length)[0]) -= 1;
               BROTLI_LOG_UINT!(s.literal_htree_index);
               BROTLI_LOG_ARRAY_INDEX!(s.ringbuffer.slice(), pos);
@@ -2387,6 +2393,11 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                 p1 = literal as u8;
               }
               fast_slice_mut!((s.ringbuffer)[pos as usize]) = p1;
+              if (s.block_type_length_state.block_length)[0] == 0 {
+                  result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS;
+                  inner_return = true;
+                  break;
+              }
               fast_mut!((s.block_type_length_state.block_length)[0]) -= 1;
               BROTLI_LOG_UINT!(s.context_map.slice()[s.context_map_slice_index as usize +
                                                      context as usize]);
