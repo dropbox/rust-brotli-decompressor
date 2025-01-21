@@ -3,6 +3,10 @@
 [![crates.io](https://img.shields.io/crates/v/brotli-decompressor.svg)](https://crates.io/crates/brotli-decompressor)
 [![Build Status](https://travis-ci.org/dropbox/rust-brotli-decompressor.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli-decompressor)
 
+
+## What's new in version 4.0.2
+* Better handling of corrupt brotli files.
+
 ## What's new in version 4.0.0
 * The FFI is no longer active by default to avoid ODR issues if multiple versions of brotli are included in several dependent crates.
 
