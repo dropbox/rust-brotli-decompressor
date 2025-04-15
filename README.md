@@ -3,6 +3,9 @@
 [![crates.io](https://img.shields.io/crates/v/brotli-decompressor.svg)](https://crates.io/crates/brotli-decompressor)
 [![Build Status](https://travis-ci.org/dropbox/rust-brotli-decompressor.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli-decompressor)
 
+## What's new in version 4.0.3
+No longer seed the context by the end of the lz77 dictionary. Instead use
+zero for the seed as would happen without a dictionary.
 
 ## What's new in version 4.0.2
 * Better handling of corrupt brotli files.
