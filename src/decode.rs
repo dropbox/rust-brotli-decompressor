@@ -1858,12 +1858,12 @@ fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
     if (s.ringbuffer.slice().len() == 0) {
       return false;
     }
+    fast_mut!((s.ringbuffer.slice_mut())[s.ringbuffer_size as usize - 1]) = 0;
+    fast_mut!((s.ringbuffer.slice_mut())[s.ringbuffer_size as usize - 2]) = 0;
     if custom_dict.len() != 0 {
       let offset = ((-s.custom_dict_size) & s.ringbuffer_mask) as usize;
       fast_mut!((s.ringbuffer.slice_mut())[offset ; offset + s.custom_dict_size as usize]).clone_from_slice(custom_dict);
     }
-    fast_mut!((s.ringbuffer.slice_mut())[s.ringbuffer_size as usize - 1]) = 0;
-    fast_mut!((s.ringbuffer.slice_mut())[s.ringbuffer_size as usize - 2]) = 0;
   }
   if s.custom_dict.slice().len() != 0 {
     s.alloc_u8.free_cell(core::mem::replace(&mut s.custom_dict,
@@ -2348,6 +2348,17 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
           } else {
             let mut p1 = fast_slice!((s.ringbuffer)[((pos - 1) & s.ringbuffer_mask) as usize]);
             let mut p2 = fast_slice!((s.ringbuffer)[((pos - 2) & s.ringbuffer_mask) as usize]);
+            if s.custom_dict_avoid_context_seed {
+                mark_unlikely();
+                p2 = 0;
+                if s.pos == 0 {
+                    p1 = 0;
+                } else {
+                    // have already set both seed bytes and can now move on to using
+                    // the ringbuffer.
+                    s.custom_dict_avoid_context_seed = false;
+                }
+            }
             let mut inner_return: bool = false;
             let mut inner_continue: bool = false;
             loop {
