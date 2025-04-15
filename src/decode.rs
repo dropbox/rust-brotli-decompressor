@@ -1858,12 +1858,12 @@ fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
     if (s.ringbuffer.slice().len() == 0) {
       return false;
     }
-    fast_mut!((s.ringbuffer.slice_mut())[s.ringbuffer_size as usize - 1]) = 0;
-    fast_mut!((s.ringbuffer.slice_mut())[s.ringbuffer_size as usize - 2]) = 0;
     if custom_dict.len() != 0 {
       let offset = ((-s.custom_dict_size) & s.ringbuffer_mask) as usize;
       fast_mut!((s.ringbuffer.slice_mut())[offset ; offset + s.custom_dict_size as usize]).clone_from_slice(custom_dict);
     }
+    fast_mut!((s.ringbuffer.slice_mut())[s.ringbuffer_size as usize - 1]) = 0;
+    fast_mut!((s.ringbuffer.slice_mut())[s.ringbuffer_size as usize - 2]) = 0;
   }
   if s.custom_dict.slice().len() != 0 {
     s.alloc_u8.free_cell(core::mem::replace(&mut s.custom_dict,
