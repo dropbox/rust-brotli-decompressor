@@ -2351,13 +2351,10 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
             if s.custom_dict_avoid_context_seed {
                 mark_unlikely();
                 p2 = 0;
-                if s.pos == 0 {
-                    p1 = 0;
-                } else {
-                    // have already set both seed bytes and can now move on to using
-                    // the ringbuffer.
-                    s.custom_dict_avoid_context_seed = false;
-                }
+                p1 = 0;
+                // have already set both seed bytes and can now move on to using
+                // the ringbuffer.
+                s.custom_dict_avoid_context_seed = false;
             }
             let mut inner_return: bool = false;
             let mut inner_continue: bool = false;
