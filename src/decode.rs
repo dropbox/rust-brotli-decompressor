@@ -1843,7 +1843,7 @@ fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
     // We need at least 2 bytes of ring buffer size to get the last two
     // bytes for context from there
     if (is_last != 0) {
-      while (s.ringbuffer_size >= (s.custom_dict_size + s.meta_block_remaining_len) * 2 && s.ringbuffer_size > 32) {
+      while (s.ringbuffer_size >= (s.custom_dict_size + s.meta_block_remaining_len + 16) * 2 && s.ringbuffer_size > 32) {
         s.ringbuffer_size >>= 1;
       }
     }
