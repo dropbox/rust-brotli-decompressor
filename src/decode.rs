@@ -2348,10 +2348,13 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
           } else {
             let mut p1 = fast_slice!((s.ringbuffer)[((pos - 1) & s.ringbuffer_mask) as usize]);
             let mut p2 = fast_slice!((s.ringbuffer)[((pos - 2) & s.ringbuffer_mask) as usize]);
-            if s.custom_dict_avoid_context_seed {
+            if s.custom_dict_avoid_context_seed && pos < 2 {
                 mark_unlikely();
                 p2 = 0;
                 p1 = 0;
+            }
+            if pos > 1
+            {
                 // have already set both seed bytes and can now move on to using
                 // the ringbuffer.
                 s.custom_dict_avoid_context_seed = false;
