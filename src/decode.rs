@@ -1834,7 +1834,7 @@ fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
   {
     let custom_dict = if s.custom_dict_size as usize > max_dict_size {
       let cd = fast_slice!((s.custom_dict)[(s.custom_dict_size as usize - max_dict_size); s.custom_dict_size as usize]);
-      s.custom_dict_size = max_dict_size as i32;
+      s.custom_dict_size = max_dict_size as isize;
       cd
     } else {
       fast_slice!((s.custom_dict)[0; s.custom_dict_size as usize])
@@ -1843,7 +1843,7 @@ fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
     // We need at least 2 bytes of ring buffer size to get the last two
     // bytes for context from there
     if (is_last != 0) {
-      while (s.ringbuffer_size >= (s.custom_dict_size + s.meta_block_remaining_len + 16) * 2 && s.ringbuffer_size > 32) {
+      while (s.ringbuffer_size as isize >= (s.custom_dict_size + s.meta_block_remaining_len as isize + 16) * 2 && s.ringbuffer_size as isize > 32) {
         s.ringbuffer_size >>= 1;
       }
     }
@@ -1861,7 +1861,7 @@ fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
     fast_mut!((s.ringbuffer.slice_mut())[s.ringbuffer_size as usize - 1]) = 0;
     fast_mut!((s.ringbuffer.slice_mut())[s.ringbuffer_size as usize - 2]) = 0;
     if custom_dict.len() != 0 {
-      let offset = ((-s.custom_dict_size) & s.ringbuffer_mask) as usize;
+      let offset = ((-s.custom_dict_size) & s.ringbuffer_mask as isize) as usize;
       fast_mut!((s.ringbuffer.slice_mut())[offset ; offset + s.custom_dict_size as usize]).clone_from_slice(custom_dict);
     }
   }
@@ -2467,7 +2467,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
 
           if (s.max_distance != s.max_backward_distance) {
             if (pos < s.max_backward_distance_minus_custom_dict_size) {
-              s.max_distance = pos + s.custom_dict_size;
+              s.max_distance = pos + s.custom_dict_size as i32;
             } else {
               s.max_distance = s.max_backward_distance;
             }
@@ -2834,8 +2834,8 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
         }
         BrotliRunningState::BROTLI_STATE_INITIALIZE => {
           s.max_backward_distance = (1 << s.window_bits) - kBrotliWindowGap as i32;
-          s.max_backward_distance_minus_custom_dict_size = s.max_backward_distance -
-                                                           s.custom_dict_size;
+          s.max_backward_distance_minus_custom_dict_size = (s.max_backward_distance as isize -
+                                                           s.custom_dict_size) as i32;
 
           // (formerly) Allocate memory for both block_type_trees and block_len_trees.
           s.block_type_length_state.block_type_trees = s.alloc_hc
