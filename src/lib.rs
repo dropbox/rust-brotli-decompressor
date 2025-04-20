@@ -196,7 +196,6 @@ pub fn BrotliDecompressCustomIo<ErrType,
 {
   BrotliDecompressCustomIoCustomDict(r, w, input_buffer, output_buffer, alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default(), unexpected_eof_error_constant)
 }
-
 pub fn BrotliDecompressCustomIoCustomDict<ErrType,
                                 InputType,
                                 OutputType,

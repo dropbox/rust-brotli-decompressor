@@ -1807,17 +1807,6 @@ fn CopyUncompressedBlockToOutput<AllocU8: alloc::Allocator<u8>,
   }
 }
 
-#[cfg(feature = "std")]
-fn report_custom_dictionary_too_big(dict_size: usize, max_dict_size: usize)
-{
-    eprintln!("The dictionary is too big: {} bytes > {}",
-              dict_size, max_dict_size);
-}
-#[cfg(not(feature = "std"))]
-fn report_custom_dictionary_too_big(_dict_size: usize, _max_dict_size: usize)
-{
-}
-const kMaxDictionarySize: usize = 50331660;
 fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
                             AllocU32: alloc::Allocator<u32>,
                             AllocHC: alloc::Allocator<HuffmanCode>>
@@ -1841,14 +1830,8 @@ fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
       is_last = 1;
     }
   }
-
   let max_dict_size = s.ringbuffer_size as usize - 16;
   {
-    if s.custom_dict_size as usize > kMaxDictionarySize {
-      report_custom_dictionary_too_big(s.custom_dict_size as usize,
-                                       kMaxDictionarySize);
-      return false;
-    }
     let custom_dict = if s.custom_dict_size as usize > max_dict_size {
       let cd = fast_slice!((s.custom_dict)[(s.custom_dict_size as usize - max_dict_size); s.custom_dict_size as usize]);
       s.custom_dict_size = max_dict_size as isize;

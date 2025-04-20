@@ -315,6 +315,9 @@ fn main() {
     if argument.starts_with("-dict=") && !double_dash {
       let mut dict_file = File::open(&Path::new(&argument[6..])).unwrap();
       dict_file.read_to_end(&mut dictionary).unwrap();
+      if dictionary.len() > 50331660 {
+          panic!("Dictionary larger than 50331660");
+      }
       continue;
     }
     if input.is_none() {
