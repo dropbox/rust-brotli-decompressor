@@ -2241,7 +2241,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
     let distance_hgroup = saved_distance_hgroup.build_hgroup_cache();
     let insert_copy_hgroup = saved_insert_copy_hgroup.build_hgroup_cache();
 
-    loop {
+    'outer: loop {
       match s.state {
         BrotliRunningState::BROTLI_STATE_COMMAND_BEGIN => {
           if (!CheckInputAmount(safe, &s.br, 28)) {
@@ -2280,28 +2280,24 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
             let mut value: u32 = 0;
             let mut literal_htree = &fast!((literal_hgroup)[s.literal_htree_index as usize]);
             PreloadSymbol(safe, literal_htree, &mut s.br, &mut bits, &mut value, input);
-            let mut inner_return: bool = false;
-            let mut inner_continue: bool = false;
             loop {
               if (!CheckInputAmount(safe, &s.br, 28)) {
                 // 162 bits + 7 bytes
                 result = BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;
-                inner_return = true;
-                break;
+                break 'outer; // return
               }
               if (fast!((s.block_type_length_state.block_length)[0]) == 0) {
                 mark_unlikely();
                 if (!DecodeLiteralBlockSwitchInternal(safe, s, input)) && safe {
                   result = BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;
-                  inner_return = true;
-                  break;
+                  break 'outer; // return
                 }
                 literal_htree = fast_ref!((literal_hgroup)[s.literal_htree_index as usize]);
                 PreloadSymbol(safe, literal_htree, &mut s.br, &mut bits, &mut value, input);
                 if (s.trivial_literal_context == 0) {
+                  mark_unlikely();
                   s.state = BrotliRunningState::BROTLI_STATE_COMMAND_INNER;
-                  inner_continue = true;
-                  break; // goto StateCommandInner
+                  continue 'outer; // goto StateCommandInner
                 }
               }
               if (!safe) {
@@ -2311,16 +2307,14 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                 let mut literal: u32 = 0;
                 if (!SafeReadSymbol(literal_htree, &mut s.br, &mut literal, input)) {
                   result = BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;
-                  inner_return = true;
-                  break;
+                  break 'outer; // return
                 }
                 fast_mut!((s.ringbuffer.slice_mut())[pos as usize]) = literal as u8;
               }
               if (s.block_type_length_state.block_length)[0] == 0 {
                   mark_unlikely();
                   result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS;
-                  inner_return = true;
-                  break;
+                  break 'outer; // return
               }
               fast_mut!((s.block_type_length_state.block_length)[0]) -= 1;
               BROTLI_LOG_UINT!(s.literal_htree_index);
@@ -2330,20 +2324,12 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                 mark_unlikely();
                 s.state = BrotliRunningState::BROTLI_STATE_COMMAND_INNER_WRITE;
                 i -= 1;
-                inner_return = true;
-                break;
+                break 'outer; // return
               }
               i -= 1;
               if i == 0 {
                 break;
               }
-            }
-            if inner_return {
-              break; // return
-            }
-            if inner_continue {
-              mark_unlikely();
-              continue;
             }
           } else {
             let mut p1 = fast_slice!((s.ringbuffer)[((pos - 1) & s.ringbuffer_mask) as usize]);
@@ -2359,27 +2345,23 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                 // the ringbuffer.
                 s.custom_dict_avoid_context_seed = false;
             }
-            let mut inner_return: bool = false;
-            let mut inner_continue: bool = false;
             loop {
               if (!CheckInputAmount(safe, &s.br, 28)) {
                 // 162 bits + 7 bytes
                 s.state = BrotliRunningState::BROTLI_STATE_COMMAND_INNER;
                 result = BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;
-                inner_return = true;
-                break;
+                break 'outer; // return
               }
               if (fast!((s.block_type_length_state.block_length)[0]) == 0) {
                 mark_unlikely();
                 if (!DecodeLiteralBlockSwitchInternal(safe, s, input)) && safe {
                   result = BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;
-                  inner_return = true;
-                  break;
+                  break 'outer; // return
                 }
                 if s.trivial_literal_context != 0 {
+                  mark_unlikely();
                   s.state = BrotliRunningState::BROTLI_STATE_COMMAND_INNER;
-                  inner_continue = true;
-                  break;
+                  continue 'outer;
                 }
               }
               let context = s.context_lookup[p1 as usize] | s.context_lookup[p2 as usize |256];
@@ -2398,16 +2380,14 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                 let mut literal: u32 = 0;
                 if (!SafeReadSymbol(hc, &mut s.br, &mut literal, input)) {
                   result = BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;
-                  inner_return = true;
-                  break;
+                  break 'outer; // return
                 }
                 p1 = literal as u8;
               }
               fast_slice_mut!((s.ringbuffer)[pos as usize]) = p1;
               if (s.block_type_length_state.block_length)[0] == 0 {
                   result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS;
-                  inner_return = true;
-                  break;
+                  break 'outer; // return
               }
               fast_mut!((s.block_type_length_state.block_length)[0]) -= 1;
               BROTLI_LOG_UINT!(s.context_map.slice()[s.context_map_slice_index as usize +
@@ -2418,20 +2398,12 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                 mark_unlikely();
                 s.state = BrotliRunningState::BROTLI_STATE_COMMAND_INNER_WRITE;
                 i -= 1;
-                inner_return = true;
-                break;
+                break 'outer; // return
               }
               i -= 1;
               if i == 0 {
                 break;
               }
-            }
-            if inner_return {
-              break; // return
-            }
-            if inner_continue {
-              mark_unlikely();
-              continue;
             }
           }
           if (s.meta_block_remaining_len <= 0) {
@@ -2574,7 +2546,6 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
         }
         BrotliRunningState::BROTLI_STATE_COMMAND_POST_WRAP_COPY => {
           let mut wrap_guard = s.ringbuffer_size - pos;
-          let mut inner_return: bool = false;
           while i > 0 {
             i -= 1;
             fast_slice_mut!((s.ringbuffer)[pos as usize]) =
@@ -2585,13 +2556,8 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               mark_unlikely();
               // s.partial_pos_rb += (size_t)s.ringbuffer_size;
               s.state = BrotliRunningState::BROTLI_STATE_COMMAND_POST_WRITE_2;
-              inner_return = true;
-              break; //return
+              break 'outer; //return
             }
-          }
-          if inner_return {
-            mark_unlikely();
-            break;
           }
           i -= 1;
           if (s.meta_block_remaining_len <= 0) {
