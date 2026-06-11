@@ -320,8 +320,47 @@ fn writeln_time<OutputType: Write>(strm: &mut OutputType,
   writeln!(strm, "{:} {:} {:}.{:09}", v0, data, v1, v2)
 }
 
+// Decompresses with a serialized shared dictionary (and optionally a raw
+// LZ77 prefix dictionary) attached.
+#[cfg(not(feature="seccomp"))]
+pub fn decompress_serialized_dict<InputType, OutputType>(r: &mut InputType,
+                                                         w: &mut OutputType,
+                                                         buffer_size: usize,
+                                                         dict: Vec<u8>,
+                                                         serialized_dict: Vec<u8>)
+                                                         -> Result<(), io::Error>
+  where InputType: Read,
+        OutputType: Write
+{
+  let mut alloc_u8 = HeapAllocator::<u8> { default_value: 0 };
+  let mut raw_dict_alloc = alloc_u8.alloc_cell(dict.len());
+  raw_dict_alloc.slice_mut().clone_from_slice(&dict[..]);
+  let mut serialized_alloc = alloc_u8.alloc_cell(serialized_dict.len());
+  serialized_alloc.slice_mut().clone_from_slice(&serialized_dict[..]);
+  let mut reader = brotli_decompressor::DecompressorCustomIo::new_with_custom_dictionary(
+    IoReaderWrapper::<InputType>(r),
+    alloc_u8.alloc_cell(buffer_size),
+    alloc_u8,
+    HeapAllocator::<u32> { default_value: 0 },
+    HeapAllocator::<HuffmanCode> { default_value: HuffmanCode::default() },
+    raw_dict_alloc,
+    Error::new(ErrorKind::InvalidData, "Invalid Data"));
+  if !reader.attach_serialized_dictionary(serialized_alloc) {
+    return Err(Error::new(ErrorKind::InvalidData, "Invalid serialized dictionary"));
+  }
+  let mut buf = vec![0u8; buffer_size];
+  loop {
+    match brotli_decompressor::CustomRead::read(&mut reader, &mut buf[..]) {
+      Err(e) => return Err(e),
+      Ok(0) => return Ok(()),
+      Ok(size) => w.write_all(&buf[..size])?,
+    }
+  }
+}
+
 fn main() {
   let mut dictionary = Vec::<u8>::new();
+  let mut serialized_dictionary = Vec::<u8>::new();
   let mut double_dash = false;
   let mut input: Option<File> = None;
   let mut output: Option<File> = None;
@@ -338,6 +377,14 @@ fn main() {
       }
       continue;
     }
+    if argument.starts_with("-serialized_dict=") && !double_dash {
+      if !serialized_dictionary.is_empty() {
+        panic!("Only one serialized dictionary may be attached");
+      }
+      let mut dict_file = File::open(&Path::new(&argument[17..])).unwrap();
+      dict_file.read_to_end(&mut serialized_dictionary).unwrap();
+      continue;
+    }
     if input.is_none() {
        input = Some(File::open(&Path::new(&argument)).unwrap());
     } else if output.is_none() {
@@ -346,13 +393,39 @@ fn main() {
        panic!("Cannot specify more than 2 filename args (input, output)")
     }
   }
-  if input.is_none() {
-    decompress(&mut io::stdin(), &mut io::stdout(), 65536, dictionary).unwrap();
-  } else {
-    if output.is_none() {
-      decompress(&mut input.unwrap(), &mut io::stdout(), 65536, dictionary).unwrap();
+  #[cfg(not(feature="seccomp"))]
+  {
+    if !serialized_dictionary.is_empty() {
+      match (input, output) {
+        (None, _) => decompress_serialized_dict(&mut io::stdin(), &mut io::stdout(), 65536, dictionary, serialized_dictionary).unwrap(),
+        (Some(mut i), None) => decompress_serialized_dict(&mut i, &mut io::stdout(), 65536, dictionary, serialized_dictionary).unwrap(),
+        (Some(mut i), Some(mut o)) => decompress_serialized_dict(&mut i, &mut o, 65536, dictionary, serialized_dictionary).unwrap(),
+      }
+      return;
+    }
+    if input.is_none() {
+      decompress(&mut io::stdin(), &mut io::stdout(), 65536, dictionary).unwrap();
     } else {
-      decompress(&mut input.unwrap(), &mut output.unwrap(), 65536, dictionary).unwrap();
+      if output.is_none() {
+        decompress(&mut input.unwrap(), &mut io::stdout(), 65536, dictionary).unwrap();
+      } else {
+        decompress(&mut input.unwrap(), &mut output.unwrap(), 65536, dictionary).unwrap();
+      }
+    }
+  }
+  #[cfg(feature="seccomp")]
+  {
+    if !serialized_dictionary.is_empty() {
+      panic!("serialized dictionaries unsupported with seccomp");
+    }
+    if input.is_none() {
+      decompress(&mut io::stdin(), &mut io::stdout(), 65536, dictionary).unwrap();
+    } else {
+      if output.is_none() {
+        decompress(&mut input.unwrap(), &mut io::stdout(), 65536, dictionary).unwrap();
+      } else {
+        decompress(&mut input.unwrap(), &mut output.unwrap(), 65536, dictionary).unwrap();
+      }
     }
   }
 }

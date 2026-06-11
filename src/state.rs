@@ -10,6 +10,9 @@ use bit_reader::{BrotliBitReader, BrotliGetAvailableBits, BrotliInitBitReader};
 use huffman::{BROTLI_HUFFMAN_MAX_CODE_LENGTH, BROTLI_HUFFMAN_MAX_CODE_LENGTHS_SIZE,
               BROTLI_HUFFMAN_MAX_TABLE_SIZE, HuffmanCode, HuffmanTreeGroup};
 use alloc::SliceWrapper;
+use alloc::SliceWrapperMut;
+use shared_dictionary;
+use shared_dictionary::{BrotliSharedDictionary, TRANSFORM_LIST_STRIDE, WORD_LIST_STRIDE};
 
 #[allow(dead_code)]
 pub enum WhichTreeGroup {
@@ -309,6 +312,9 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub custom_dict_size: isize,
   pub custom_dict_avoid_context_seed: bool,
   pub compound_dictionary: BrotliDecoderCompoundDictionary<AllocU8>,
+  // Custom word/transform lists from an attached serialized shared
+  // dictionary; selects the built-in static dictionary when empty.
+  pub dictionary: BrotliSharedDictionary<AllocU8, AllocU32>,
   // less used attributes are in the end of this struct */
   // States inside function calls
   pub substate_metablock_header: BrotliRunningMetablockHeaderState,
@@ -412,6 +418,7 @@ macro_rules! make_brotli_state {
            custom_dict_size : $custom_dict_len as isize,
            custom_dict_avoid_context_seed: $custom_dict_len != 0,
            compound_dictionary : BrotliDecoderCompoundDictionary::default(),
+           dictionary : BrotliSharedDictionary::default(),
            /* less used attributes are in the end of this struct */
            /* States inside function calls */
            substate_metablock_header : BrotliRunningMetablockHeaderState::BROTLI_STATE_METABLOCK_HEADER_NONE,
@@ -496,6 +503,83 @@ impl <'brotli_state,
             },
         }
         self.attach_compound_dictionary_chunk(dict)
+    }
+    // Attaches a serialized shared dictionary (magic bytes 0x91 0x00), the
+    // equivalent of the C API BrotliDecoderAttachDictionary with
+    // BROTLI_SHARED_DICTIONARY_SERIALIZED. An embedded LZ77 prefix dictionary
+    // becomes a compound dictionary chunk; custom word lists and transform
+    // lists replace the built-in static dictionary. Only one attached
+    // dictionary may carry custom word/transform lists. Allowed only before
+    // any compressed data has been processed. Returns false (and frees the
+    // dictionary) on failure.
+    pub fn attach_serialized_dictionary(self : &mut Self,
+                                        dict_data: AllocU8::AllocatedMemory) -> bool {
+        match self.state {
+            BrotliRunningState::BROTLI_STATE_UNINITED => {},
+            _ => {
+                self.alloc_u8.free_cell(dict_data);
+                return false;
+            },
+        }
+        let summary = match shared_dictionary::dry_parse_serialized_dictionary(
+            dict_data.slice()) {
+            Ok(summary) => summary,
+            Err(()) => {
+                self.alloc_u8.free_cell(dict_data);
+                return false;
+            },
+        };
+        let is_custom = summary.num_word_lists != 0 || summary.num_transform_lists != 0;
+        // Cannot combine different custom static dictionaries, only prefix
+        // dictionaries.
+        if is_custom && self.dictionary.is_custom() {
+            self.alloc_u8.free_cell(dict_data);
+            return false;
+        }
+        let mut parsed = BrotliSharedDictionary::<AllocU8, AllocU32>::default();
+        if is_custom {
+            let arena_size = summary.num_word_lists as usize * WORD_LIST_STRIDE +
+                             summary.num_transform_lists as usize * TRANSFORM_LIST_STRIDE;
+            parsed.meta = self.alloc_u32.alloc_cell(arena_size);
+            if parsed.meta.slice().len() != arena_size ||
+               shared_dictionary::parse_serialized_dictionary_into(
+                   dict_data.slice(), &summary, &mut parsed).is_err() {
+                self.alloc_u32.free_cell(core::mem::replace(&mut parsed.meta,
+                                         AllocU32::AllocatedMemory::default()));
+                self.alloc_u8.free_cell(dict_data);
+                return false;
+            }
+        }
+        // The prefix dictionary is copied into its own buffer so the parsed
+        // word/transform offsets can keep referencing the blob unchanged.
+        if let Some((prefix_offset, prefix_len)) = summary.prefix {
+            let mut chunk = self.alloc_u8.alloc_cell(prefix_len);
+            if chunk.slice().len() != prefix_len {
+                self.alloc_u8.free_cell(chunk);
+                self.alloc_u32.free_cell(core::mem::replace(&mut parsed.meta,
+                                         AllocU32::AllocatedMemory::default()));
+                self.alloc_u8.free_cell(dict_data);
+                return false;
+            }
+            chunk.slice_mut().clone_from_slice(
+                &dict_data.slice()[prefix_offset..prefix_offset + prefix_len]);
+            if !self.attach_compound_dictionary_chunk(chunk) {
+                self.alloc_u32.free_cell(core::mem::replace(&mut parsed.meta,
+                                         AllocU32::AllocatedMemory::default()));
+                self.alloc_u8.free_cell(dict_data);
+                return false;
+            }
+        }
+        if is_custom {
+            parsed.blob = dict_data;
+            let old = core::mem::replace(&mut self.dictionary, parsed);
+            self.alloc_u8.free_cell(old.blob);
+            self.alloc_u32.free_cell(old.meta);
+        } else {
+            // Nothing references the blob: the prefix chunk was copied out.
+            self.alloc_u8.free_cell(dict_data);
+        }
+        true
     }
     // Attaches one LZ77 prefix ("compound") dictionary chunk. Chunks must be
     // attached before any data is decompressed; the most recently attached
@@ -582,6 +666,10 @@ impl <'brotli_state,
                                 AllocU8::AllocatedMemory::default()));
       }
       self.compound_dictionary = BrotliDecoderCompoundDictionary::default();
+      self.alloc_u8.free_cell(core::mem::replace(&mut self.dictionary.blob,
+                              AllocU8::AllocatedMemory::default()));
+      self.alloc_u32.free_cell(core::mem::replace(&mut self.dictionary.meta,
+                               AllocU32::AllocatedMemory::default()));
 
       //FIXME??  BROTLI_FREE(s, s->legacy_input_buffer);
       //FIXME??  BROTLI_FREE(s, s->legacy_output_buffer);

@@ -29,6 +29,8 @@ use context::{kContextLookup};
 use ::dictionary::{kBrotliDictionary, kBrotliDictionaryOffsetsByLength,
                    kBrotliDictionarySizeBitsByLength, kBrotliMaxDictionaryWordLength,
                    kBrotliMinDictionaryWordLength};
+use ::shared_dictionary::{SHARED_BROTLI_MIN_DICTIONARY_WORD_LENGTH,
+                          SHARED_BROTLI_MAX_DICTIONARY_WORD_LENGTH};
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
 #[repr(C)]
 #[derive(Debug)]
@@ -1815,8 +1817,10 @@ fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
    -> bool {
   // We need the slack region for the following reasons:
   // - doing up to two 16-byte copies for fast backward copying
-  // - inserting transformed dictionary word (5 prefix + 24 base + 8 suffix)
-  const kRingBufferWriteAheadSlack: i32 = 42;
+  // - inserting transformed dictionary word: 255 prefix + 31 base + 255
+  //   suffix for shared-dictionary custom transforms (the built-in
+  //   transforms need only 5 + 24 + 8); matches the C implementation's 542
+  const kRingBufferWriteAheadSlack: i32 = 542;
   let mut is_last = s.is_last_metablock;
   s.ringbuffer_size = 1 << s.window_bits;
 
@@ -2579,6 +2583,97 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               pos += CopyFromCompoundDictionary(s, pos);
               if pos >= s.ringbuffer_size {
                 s.state = BrotliRunningState::BROTLI_STATE_COMMAND_POST_WRITE_1;
+                break; // return
+              }
+            } else if s.dictionary.is_custom() &&
+                i >= SHARED_BROTLI_MIN_DICTIONARY_WORD_LENGTH as i32 &&
+                i <= SHARED_BROTLI_MAX_DICTIONARY_WORD_LENGTH as i32 {
+              // Generalized lookup with the word/transform lists of an
+              // attached serialized shared dictionary; mirrors the
+              // corresponding branch in c/dec/decode.c.
+              let dict_id = if s.dictionary.context_based {
+                let p1 = fast_slice!((s.ringbuffer)[((pos - 1) & s.ringbuffer_mask) as usize]);
+                let p2 = fast_slice!((s.ringbuffer)[((pos - 2) & s.ringbuffer_mask) as usize]);
+                let context = (s.context_lookup[p1 as usize] |
+                               s.context_lookup[p2 as usize | 256]) as usize;
+                s.dictionary.context_map[context]
+              } else {
+                0
+              };
+              let mut words = s.dictionary.words_of(dict_id);
+              let mut transforms = s.dictionary.transforms_of(dict_id);
+              let mut shift = words.size_bits_by_length(i) as u32;
+              let mut address = s.distance_code - s.max_distance - 1 -
+                                compound_dictionary_size as i32;
+              let mut word_idx = address & bit_reader::BitMask(shift) as i32;
+              let mut transform_idx = address >> shift;
+              // Compensate double distance-ring-buffer roll.
+              s.dist_rb_idx += s.distance_context;
+              // If the distance is out of bound, select a next dictionary if
+              // there exist multiple.
+              if (transform_idx >= transforms.num_transforms() || shift == 0) &&
+                 s.dictionary.num_dictionaries > 1 {
+                let mut dist_remaining = address -
+                    (((1u32 << shift) & !1u32) as i32) * transforms.num_transforms();
+                for dict_id2 in 0..s.dictionary.num_dictionaries {
+                  if dict_id2 == dict_id {
+                    continue;
+                  }
+                  let words2 = s.dictionary.words_of(dict_id2);
+                  let shift2 = words2.size_bits_by_length(i) as u32;
+                  if shift2 == 0 {
+                    continue;
+                  }
+                  let transforms2 = s.dictionary.transforms_of(dict_id2);
+                  let num = (((1u32 << shift2) & !1u32) as i32) * transforms2.num_transforms();
+                  if dist_remaining < num {
+                    words = words2;
+                    transforms = transforms2;
+                    address = dist_remaining;
+                    shift = shift2;
+                    word_idx = address & bit_reader::BitMask(shift) as i32;
+                    transform_idx = address >> shift;
+                    break;
+                  }
+                  dist_remaining -= num;
+                }
+              }
+              if words.size_bits_by_length(i) == 0 {
+                BROTLI_LOG!(
+                  "Invalid backward reference. pos: %d distance: %d len: %d bytes left: %d\n",
+                  pos, s.distance_code, i, s.meta_block_remaining_len);
+                result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_DICTIONARY;
+                break; // return
+              }
+              if transform_idx < transforms.num_transforms() {
+                let mut len = i;
+                if transform_idx == transforms.cutoff_identity() {
+                  let word = words.word(len, word_idx);
+                  fast_slice_mut!((s.ringbuffer)[pos as usize ; ((pos + len) as usize)])
+                    .clone_from_slice(word);
+                } else {
+                  let word = words.word(len, word_idx);
+                  len = transforms.apply(fast_slice_mut!((s.ringbuffer)[pos as usize;]),
+                                         word,
+                                         len,
+                                         transform_idx);
+                  if len == 0 && s.distance_code <= 120 {
+                    result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_TRANSFORM;
+                    break; // return
+                  }
+                }
+                pos += len;
+                s.meta_block_remaining_len -= len;
+                if (pos >= s.ringbuffer_size) {
+                  s.state = BrotliRunningState::BROTLI_STATE_COMMAND_POST_WRITE_1;
+                  break; // return return
+                }
+              } else {
+                BROTLI_LOG!(
+                  "Invalid backward reference. pos: %d distance: %d len: %d bytes left: %d\n",
+                  pos, s.distance_code, i,
+                  s.meta_block_remaining_len);
+                result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_TRANSFORM;
                 break; // return
               }
             } else if (i >= kBrotliMinDictionaryWordLength as i32 &&
