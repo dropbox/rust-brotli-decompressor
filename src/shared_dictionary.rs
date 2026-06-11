@@ -110,7 +110,7 @@ impl<AllocU8: alloc::Allocator<u8>,
   pub fn is_custom(&self) -> bool {
     self.num_word_lists != 0 || self.num_transform_lists != 0
   }
-  pub fn words_of(&self, dict_id: u8) -> DictWords {
+  pub fn words_of(&self, dict_id: u8) -> DictWords<'_> {
     let index = self.words_index[dict_id as usize];
     if index >= self.num_word_lists {
       DictWords::Builtin
@@ -122,7 +122,7 @@ impl<AllocU8: alloc::Allocator<u8>,
       })
     }
   }
-  pub fn transforms_of(&self, dict_id: u8) -> DictTransforms {
+  pub fn transforms_of(&self, dict_id: u8) -> DictTransforms<'_> {
     let index = self.transforms_index[dict_id as usize];
     if index >= self.num_transform_lists {
       DictTransforms::Builtin
