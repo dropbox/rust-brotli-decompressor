@@ -1,41 +1,31 @@
-// Compiles the reference C brotli implementation (with BROTLI_EXPERIMENTAL,
-// so serialized shared dictionaries are supported) into the fuzz binary for
-// the differential fuzz targets. Only active with --features c-compat.
+// Links the system brotli (>= 1.1.0, e.g. Debian/Ubuntu libbrotli-dev) into
+// the fuzz binary for the differential fuzz targets. Only active with
+// --features c-compat.
 //
-// The checkout location is taken from $BROTLI_C_ROOT, falling back to
-// ../../google-brotli (a sibling of this repository).
+// Note the system library is built without BROTLI_EXPERIMENTAL, so it has no
+// serialized shared dictionary support; the differential targets only
+// exercise raw (custom) dictionaries. Serialized dictionaries are covered by
+// the fixture corpus under testdata/dict_corpus instead.
 
 fn main() {
     if std::env::var_os("CARGO_FEATURE_C_COMPAT").is_none() {
         return;
     }
-    let root = std::env::var("BROTLI_C_ROOT").unwrap_or_else(|_| {
-        let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-        format!("{}/../../google-brotli", manifest)
-    });
-    let root = std::path::PathBuf::from(root);
-    if !root.join("c/include/brotli/decode.h").exists() {
-        panic!(
-            "google/brotli checkout not found at {:?}; set BROTLI_C_ROOT to a \
-             checkout of https://github.com/google/brotli",
-            root
-        );
-    }
-    println!("cargo:rerun-if-env-changed=BROTLI_C_ROOT");
-    let mut build = cc::Build::new();
-    build
-        .include(root.join("c/include"))
-        .define("BROTLI_EXPERIMENTAL", "1")
-        .opt_level(1)
-        .warnings(false);
-    for dir in ["c/common", "c/dec", "c/enc"].iter() {
-        for entry in std::fs::read_dir(root.join(dir)).unwrap() {
-            let path = entry.unwrap().path();
-            if path.extension().map_or(false, |e| e == "c") {
-                println!("cargo:rerun-if-changed={}", path.display());
-                build.file(path);
+    // pkg-config supplies the link-search paths when brotli is installed off
+    // the default linker path; the -l flags below cover the common case.
+    if let Ok(out) = std::process::Command::new("pkg-config")
+        .args(["--libs-only-L", "libbrotlienc", "libbrotlidec"])
+        .output()
+    {
+        if out.status.success() {
+            for flag in String::from_utf8_lossy(&out.stdout).split_whitespace() {
+                if let Some(path) = flag.strip_prefix("-L") {
+                    println!("cargo:rustc-link-search=native={}", path);
+                }
             }
         }
     }
-    build.compile("brotli_c_reference");
+    println!("cargo:rustc-link-lib=brotlienc");
+    println!("cargo:rustc-link-lib=brotlidec");
+    println!("cargo:rustc-link-lib=brotlicommon");
 }
