@@ -1087,6 +1087,87 @@ fn test_attach_dictionary_too_late_fails() {
   assert_eq!(decoded, issue42_expanded());
 }
 
+// Serialized shared dictionaries (issue #27). The .dict fixtures are in the
+// shared-brotli serialized format (magic 0x91 0x00); the .compressed fixtures
+// were produced by the C implementation (BROTLI_EXPERIMENTAL) with the
+// dictionary attached at q11, and verified to decode with the C decoder.
+// shared_custom carries an LZ77 prefix plus custom word and transform lists;
+// shared_context additionally selects between the custom and the built-in
+// dictionary through a context map (and exercises the cross-dictionary
+// fallback scan).
+#[cfg(all(feature="std", not(feature="unsafe")))]
+fn serialized_dict_helper(serialized_dict: &[u8], compressed: &[u8], expected: &[u8]) {
+  use super::brotli_decompressor::StandardAlloc;
+  let mut alloc = StandardAlloc::default();
+  let mut dict = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, serialized_dict.len());
+  dict.slice_mut().clone_from_slice(serialized_dict);
+  let mut reader = Decompressor::new(compressed, 4096);
+  assert!(reader.attach_serialized_dictionary(dict));
+  let mut decoded = Vec::<u8>::new();
+  reader.read_to_end(&mut decoded).unwrap();
+  assert_eq!(decoded, expected);
+}
+
+#[test]
+#[cfg(all(feature="std", not(feature="unsafe")))]
+fn test_serialized_dictionary_custom_words() {
+  serialized_dict_helper(include_bytes!("../../testdata/shared_custom.dict"),
+                         include_bytes!("../../testdata/shared_custom.compressed"),
+                         include_bytes!("../../testdata/shared_content"));
+}
+
+#[test]
+#[cfg(all(feature="std", not(feature="unsafe")))]
+fn test_serialized_dictionary_context_map() {
+  serialized_dict_helper(include_bytes!("../../testdata/shared_context.dict"),
+                         include_bytes!("../../testdata/shared_context.compressed"),
+                         include_bytes!("../../testdata/shared_content"));
+}
+
+// A serialized dictionary containing only an LZ77 prefix chunk is equivalent
+// to attaching the same bytes as a raw dictionary.
+#[test]
+#[cfg(all(feature="std", not(feature="unsafe")))]
+fn test_serialized_dictionary_prefix_only_matches_raw() {
+  let raw = include_bytes!("../../testdata/issue42.dict");
+  let mut serialized = Vec::<u8>::new();
+  serialized.extend_from_slice(&[0x91, 0x00]);
+  // varint length of the LZ77 prefix chunk
+  let mut len = raw.len();
+  loop {
+    let b = (len & 127) as u8;
+    len >>= 7;
+    if len != 0 {
+      serialized.push(b | 128);
+    } else {
+      serialized.push(b);
+      break;
+    }
+  }
+  serialized.extend_from_slice(raw);
+  serialized.push(0); // NUM_WORD_LISTS
+  serialized.push(0); // NUM_TRANSFORM_LISTS
+  serialized_dict_helper(&serialized,
+                         include_bytes!("../../testdata/issue42.compressed"),
+                         &issue42_expanded());
+}
+
+#[test]
+#[cfg(all(feature="std", not(feature="unsafe")))]
+fn test_serialized_dictionary_rejects_garbage() {
+  use super::brotli_decompressor::StandardAlloc;
+  let mut alloc = StandardAlloc::default();
+  // bad magic
+  let mut dict = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, 4);
+  dict.slice_mut().clone_from_slice(&[0x90, 0x00, 0x00, 0x00]);
+  let mut reader = Decompressor::new(&include_bytes!("../../testdata/issue42.compressed")[..], 4096);
+  assert!(!reader.attach_serialized_dictionary(dict));
+  // truncated prefix chunk
+  let mut dict = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, 4);
+  dict.slice_mut().clone_from_slice(&[0x91, 0x00, 0x40, 0x00]);
+  assert!(!reader.attach_serialized_dictionary(dict));
+}
+
 #[test]
 fn test_random_then_unicode() {
   assert_decompressed_input_matches_output(include_bytes!("../../testdata/random_then_unicode.\

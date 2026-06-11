@@ -64,6 +64,9 @@ impl<R: Read,
     pub fn attach_dictionary(&mut self, dict: AllocU8::AllocatedMemory) -> bool {
       self.0.attach_dictionary(dict)
     }
+    pub fn attach_serialized_dictionary(&mut self, dict: AllocU8::AllocatedMemory) -> bool {
+      self.0.attach_serialized_dictionary(dict)
+    }
 
     pub fn get_ref(&self) -> &R {
       &self.0.get_ref().0
@@ -128,6 +131,13 @@ impl<R: Read> Decompressor<R> {
     self.0.attach_dictionary(dict)
   }
 
+  // Attaches a serialized shared dictionary (magic 0x91 0x00, may contain an
+  // LZ77 prefix dictionary and custom word/transform lists); only allowed
+  // before the first read.
+  pub fn attach_serialized_dictionary(&mut self, dict: <StandardAlloc as Allocator<u8>>::AllocatedMemory) -> bool {
+    self.0.attach_serialized_dictionary(dict)
+  }
+
   pub fn get_ref(&self) -> &R {
     &self.0.get_ref()
   }
@@ -176,6 +186,13 @@ impl<R: Read> Decompressor<R> {
   // the first read. Returns false if the dictionary could not be attached.
   pub fn attach_dictionary(&mut self, dict: <HeapAlloc<u8> as Allocator<u8>>::AllocatedMemory) -> bool {
     self.0.attach_dictionary(dict)
+  }
+
+  // Attaches a serialized shared dictionary (magic 0x91 0x00, may contain an
+  // LZ77 prefix dictionary and custom word/transform lists); only allowed
+  // before the first read.
+  pub fn attach_serialized_dictionary(&mut self, dict: <HeapAlloc<u8> as Allocator<u8>>::AllocatedMemory) -> bool {
+    self.0.attach_serialized_dictionary(dict)
   }
 
   pub fn get_ref(&self) -> &R {
@@ -252,6 +269,13 @@ impl<ErrType,
     // the first read. Returns false if the dictionary could not be attached.
     pub fn attach_dictionary(&mut self, dict: AllocU8::AllocatedMemory) -> bool {
       self.state.attach_dictionary(dict)
+    }
+
+    // Attaches a serialized shared dictionary (magic 0x91 0x00, may contain
+    // an LZ77 prefix dictionary and custom word/transform lists); only
+    // allowed before the first read.
+    pub fn attach_serialized_dictionary(&mut self, dict: AllocU8::AllocatedMemory) -> bool {
+      self.state.attach_serialized_dictionary(dict)
     }
 
     pub fn get_ref(&self) -> &R {

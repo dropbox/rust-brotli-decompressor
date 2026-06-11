@@ -56,6 +56,9 @@ impl<W: Write,
     pub fn attach_dictionary(&mut self, dict: AllocU8::AllocatedMemory) -> bool {
       self.0.attach_dictionary(dict)
     }
+    pub fn attach_serialized_dictionary(&mut self, dict: AllocU8::AllocatedMemory) -> bool {
+      self.0.attach_serialized_dictionary(dict)
+    }
 
     pub fn get_ref(&self) -> &W {
         &self.0.get_ref().0
@@ -140,6 +143,13 @@ impl<W: Write> DecompressorWriter<W> {
     self.0.attach_dictionary(dict)
   }
 
+  // Attaches a serialized shared dictionary (magic 0x91 0x00, may contain an
+  // LZ77 prefix dictionary and custom word/transform lists); only allowed
+  // before the first write.
+  pub fn attach_serialized_dictionary(&mut self, dict: <StandardAlloc as Allocator<u8>>::AllocatedMemory) -> bool {
+    self.0.attach_serialized_dictionary(dict)
+  }
+
   pub fn get_ref(&self) -> &W {
       self.0.get_ref()
   }
@@ -185,6 +195,13 @@ impl<W: Write> DecompressorWriter<W> {
   // the first write. Returns false if the dictionary could not be attached.
   pub fn attach_dictionary(&mut self, dict: <HeapAlloc<u8> as Allocator<u8>>::AllocatedMemory) -> bool {
     self.0.attach_dictionary(dict)
+  }
+
+  // Attaches a serialized shared dictionary (magic 0x91 0x00, may contain an
+  // LZ77 prefix dictionary and custom word/transform lists); only allowed
+  // before the first write.
+  pub fn attach_serialized_dictionary(&mut self, dict: <HeapAlloc<u8> as Allocator<u8>>::AllocatedMemory) -> bool {
+    self.0.attach_serialized_dictionary(dict)
   }
 
   pub fn get_ref(&self) -> &W {
@@ -308,6 +325,13 @@ impl<ErrType,
     // the first write. Returns false if the dictionary could not be attached.
     pub fn attach_dictionary(&mut self, dict: AllocU8::AllocatedMemory) -> bool {
       self.state.attach_dictionary(dict)
+    }
+
+    // Attaches a serialized shared dictionary (magic 0x91 0x00, may contain
+    // an LZ77 prefix dictionary and custom word/transform lists); only
+    // allowed before the first write.
+    pub fn attach_serialized_dictionary(&mut self, dict: AllocU8::AllocatedMemory) -> bool {
+      self.state.attach_serialized_dictionary(dict)
     }
 
     pub fn get_ref(&self) -> &W {
