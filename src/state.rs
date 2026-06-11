@@ -44,8 +44,9 @@ pub enum BrotliDecoderErrorCode{
   BROTLI_DECODER_ERROR_FORMAT_PADDING_2 = -15,
   BROTLI_DECODER_ERROR_FORMAT_DISTANCE = -16,
 
-  /* -17..-18 codes are reserved */
+  /* -17 code is reserved */
 
+  BROTLI_DECODER_ERROR_COMPOUND_DICTIONARY = -18,
   BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET = -19,
   BROTLI_DECODER_ERROR_INVALID_ARGUMENTS = -20,
 
@@ -142,6 +143,58 @@ pub enum BrotliRunningReadBlockLengthState {
 }
 
 pub const kLiteralContextBits: usize = 6;
+
+// Maximum number of compound dictionary chunks that may be attached to a
+// decoder instance, per the shared-brotli draft
+// (https://datatracker.ietf.org/doc/draft-vandevenne-shared-brotli-format/).
+pub const SHARED_BROTLI_MAX_COMPOUND_DICTS: usize = 15;
+// Practical limit for the total size of attached raw dictionaries; matches
+// SHARED_BROTLI_MAX_RAW_DICT_SIZE in the C implementation.
+#[cfg(target_pointer_width = "64")]
+pub const SHARED_BROTLI_MAX_RAW_DICT_SIZE: usize = 1usize << 31;
+#[cfg(not(target_pointer_width = "64"))]
+pub const SHARED_BROTLI_MAX_RAW_DICT_SIZE: usize = 1usize << 27;
+
+// LZ77 prefix ("compound") dictionaries attached to the decoder. Unlike the
+// historical approach of copying the dictionary into the ring buffer, chunks
+// are kept in their own buffers and referenced by backward distances in
+// (max_distance, max_distance + total_size], so they stay addressable even
+// after the ring buffer wraps (issue #42).
+pub struct BrotliDecoderCompoundDictionary<AllocU8: alloc::Allocator<u8>> {
+  pub num_chunks: usize,
+  pub total_size: usize,
+  // Map from address >> block_bits to the first chunk that might contain that
+  // address; 255 means "not yet computed".
+  pub block_bits: u32,
+  pub block_map: [u8; 256],
+  // chunk_offsets[i] is the address of the first byte of chunk i;
+  // chunk_offsets[num_chunks] == total_size.
+  pub chunk_offsets: [u32; SHARED_BROTLI_MAX_COMPOUND_DICTS + 1],
+  pub chunks: [AllocU8::AllocatedMemory; SHARED_BROTLI_MAX_COMPOUND_DICTS],
+  // Cursor for an in-progress copy from the dictionary into the ring buffer:
+  // a single copy command may be interrupted to flush the ring buffer.
+  pub br_index: usize,
+  pub br_offset: usize,
+  pub br_length: usize,
+  pub br_copied: usize,
+}
+
+impl<AllocU8: alloc::Allocator<u8>> Default for BrotliDecoderCompoundDictionary<AllocU8> {
+  fn default() -> Self {
+    BrotliDecoderCompoundDictionary::<AllocU8> {
+      num_chunks: 0,
+      total_size: 0,
+      block_bits: 255,
+      block_map: [0; 256],
+      chunk_offsets: [0; SHARED_BROTLI_MAX_COMPOUND_DICTS + 1],
+      chunks: Default::default(),
+      br_index: 0,
+      br_offset: 0,
+      br_length: 0,
+      br_copied: 0,
+    }
+  }
+}
 
 pub struct BlockTypeAndLengthState<AllocHC: alloc::Allocator<HuffmanCode>> {
   pub substate_read_block_length: BrotliRunningReadBlockLengthState,
@@ -255,6 +308,7 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub custom_dict: AllocU8::AllocatedMemory,
   pub custom_dict_size: isize,
   pub custom_dict_avoid_context_seed: bool,
+  pub compound_dictionary: BrotliDecoderCompoundDictionary<AllocU8>,
   // less used attributes are in the end of this struct */
   // States inside function calls
   pub substate_metablock_header: BrotliRunningMetablockHeaderState,
@@ -357,6 +411,7 @@ macro_rules! make_brotli_state {
            custom_dict : $custom_dict,
            custom_dict_size : $custom_dict_len as isize,
            custom_dict_avoid_context_seed: $custom_dict_len != 0,
+           compound_dictionary : BrotliDecoderCompoundDictionary::default(),
            /* less used attributes are in the end of this struct */
            /* States inside function calls */
            substate_metablock_header : BrotliRunningMetablockHeaderState::BROTLI_STATE_METABLOCK_HEADER_NONE,
@@ -417,6 +472,31 @@ impl <'brotli_state,
         BrotliInitBitReader(&mut retval.br);
         retval
     }
+    // Attaches one LZ77 prefix ("compound") dictionary chunk. Chunks must be
+    // attached before any data is decompressed; the most recently attached
+    // chunk is the closest in backward-distance space. Returns false (and
+    // frees the chunk) if the chunk cannot be attached.
+    pub fn attach_compound_dictionary_chunk(self : &mut Self,
+                                            chunk: AllocU8::AllocatedMemory) -> bool {
+        let size = chunk.slice().len();
+        // A zero-length chunk is a no-op and not counted toward the limit.
+        if size == 0 {
+            self.alloc_u8.free_cell(chunk);
+            return true;
+        }
+        let addon = &mut self.compound_dictionary;
+        if addon.num_chunks == SHARED_BROTLI_MAX_COMPOUND_DICTS ||
+           size > SHARED_BROTLI_MAX_RAW_DICT_SIZE - addon.total_size {
+            self.alloc_u8.free_cell(chunk);
+            return false;
+        }
+        addon.chunks[addon.num_chunks] = chunk;
+        addon.num_chunks += 1;
+        addon.total_size += size;
+        addon.chunk_offsets[addon.num_chunks] = addon.total_size as u32;
+        addon.block_bits = 255; // invalidate the lazily-computed block map
+        true
+    }
     pub fn BrotliStateMetablockBegin(self : &mut Self) {
         self.meta_block_remaining_len = 0;
         self.block_type_length_state.block_length[0] = 1u32 << 24;
@@ -472,6 +552,11 @@ impl <'brotli_state,
                               AllocHC::AllocatedMemory::default()));
       self.alloc_u8.free_cell(core::mem::replace(&mut self.custom_dict,
                               AllocU8::AllocatedMemory::default()));
+      for chunk in self.compound_dictionary.chunks.iter_mut() {
+        self.alloc_u8.free_cell(core::mem::replace(chunk,
+                                AllocU8::AllocatedMemory::default()));
+      }
+      self.compound_dictionary = BrotliDecoderCompoundDictionary::default();
 
       //FIXME??  BROTLI_FREE(s, s->legacy_input_buffer);
       //FIXME??  BROTLI_FREE(s, s->legacy_output_buffer);
@@ -554,8 +639,9 @@ pub fn BrotliDecoderErrorStr(c: BrotliDecoderErrorCode) -> &'static str {
   BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_PADDING_2 =>"ERROR_FORMAT_PADDING_2\0",
   BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_DISTANCE =>"ERROR_FORMAT_DISTANCE\0",
 
-  /* -17..-18 codes are reserved */
+  /* -17 code is reserved */
 
+  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_COMPOUND_DICTIONARY => "ERROR_COMPOUND_DICTIONARY\0",
   BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET => "ERROR_DICTIONARY_NOT_SET\0",
   BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS => "ERROR_INVALID_ARGUMENTS\0",
 

@@ -986,6 +986,63 @@ fn test_ends_with_truncated_dictionary() {
                                            65536);
 }
 
+// Issue #42: compressed by the C tool with `brotli -w 10 -q 9 -D issue42.dict`;
+// the output (the dictionary repeated 16 times, 64KiB) plus the 4KiB dictionary
+// far exceeds the 1KiB window, so dictionary references remain in use long
+// after the ring buffer has wrapped.
+fn issue42_expanded() -> Vec<u8> {
+  let dict = include_bytes!("../../testdata/issue42.dict");
+  let mut expanded = Vec::<u8>::new();
+  for _ in 0..16 {
+    expanded.extend_from_slice(dict);
+  }
+  expanded
+}
+
+fn decompress_issue42_helper(buffer_size: usize) {
+  let mut input = Buffer::new(include_bytes!("../../testdata/issue42.compressed"));
+  let mut output = Buffer::new(&[]);
+  output.read_offset = 65536;
+  match super::decompress(&mut input,
+                          &mut output,
+                          buffer_size,
+                          include_bytes!("../../testdata/issue42.dict").to_vec()) {
+    Ok(_) => {}
+    Err(e) => panic!("Error {:?}", e),
+  }
+  assert_eq!(output.data.len(), 65536);
+  assert_eq!(output.data, issue42_expanded());
+}
+
+#[test]
+fn test_custom_dict_exceeds_window() {
+  decompress_issue42_helper(65536);
+}
+
+#[test]
+fn test_custom_dict_exceeds_window_tiny_buffers() {
+  // Tiny IO buffers force the interrupted-dictionary-copy resume path
+  // (BROTLI_STATE_COMMAND_POST_WRITE_1) and streaming re-entry.
+  decompress_issue42_helper(1);
+  decompress_issue42_helper(333);
+}
+
+#[test]
+#[cfg(all(feature="std", not(feature="unsafe")))]
+fn test_custom_dict_exceeds_window_reader() {
+  use super::brotli_decompressor::StandardAlloc;
+  let mut alloc = StandardAlloc::default();
+  let dict_bytes = include_bytes!("../../testdata/issue42.dict");
+  let mut dict = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, dict_bytes.len());
+  dict.slice_mut().clone_from_slice(&dict_bytes[..]);
+  let mut reader = Decompressor::new_with_custom_dict(
+      &include_bytes!("../../testdata/issue42.compressed")[..], 4096, dict);
+  let mut decoded = Vec::<u8>::new();
+  reader.read_to_end(&mut decoded).unwrap();
+  assert_eq!(decoded.len(), 65536);
+  assert_eq!(decoded, issue42_expanded());
+}
+
 #[test]
 fn test_random_then_unicode() {
   assert_decompressed_input_matches_output(include_bytes!("../../testdata/random_then_unicode.\

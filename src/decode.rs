@@ -1830,46 +1830,133 @@ fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
       is_last = 1;
     }
   }
-  let max_dict_size = s.ringbuffer_size as usize - 16;
-  {
-    let custom_dict = if s.custom_dict_size as usize > max_dict_size {
-      let cd = fast_slice!((s.custom_dict)[(s.custom_dict_size as usize - max_dict_size); s.custom_dict_size as usize]);
-      s.custom_dict_size = max_dict_size as isize;
-      cd
-    } else {
-      fast_slice!((s.custom_dict)[0; s.custom_dict_size as usize])
-    };
-
-    // We need at least 2 bytes of ring buffer size to get the last two
-    // bytes for context from there
-    if (is_last != 0) {
-      while (s.ringbuffer_size as isize >= (s.custom_dict_size + s.meta_block_remaining_len as isize + 16) * 2 && s.ringbuffer_size as isize > 32) {
-        s.ringbuffer_size >>= 1;
-      }
-    }
-    if s.ringbuffer_size > (1 << s.window_bits) {
-      s.ringbuffer_size = (1 << s.window_bits);
-    }
-
-    s.ringbuffer_mask = s.ringbuffer_size - 1;
-    s.ringbuffer = s.alloc_u8
-      .alloc_cell((s.ringbuffer_size as usize + kRingBufferWriteAheadSlack as usize +
-                   kBrotliMaxDictionaryWordLength as usize));
-    if (s.ringbuffer.slice().len() == 0) {
-      return false;
-    }
-    fast_mut!((s.ringbuffer.slice_mut())[s.ringbuffer_size as usize - 1]) = 0;
-    fast_mut!((s.ringbuffer.slice_mut())[s.ringbuffer_size as usize - 2]) = 0;
-    if custom_dict.len() != 0 {
-      let offset = ((-s.custom_dict_size) & s.ringbuffer_mask as isize) as usize;
-      fast_mut!((s.ringbuffer.slice_mut())[offset ; offset + s.custom_dict_size as usize]).clone_from_slice(custom_dict);
+  // We need at least 2 bytes of ring buffer size to get the last two
+  // bytes for context from there
+  if (is_last != 0) {
+    while (s.ringbuffer_size as isize >= (s.meta_block_remaining_len as isize + 16) * 2 && s.ringbuffer_size as isize > 32) {
+      s.ringbuffer_size >>= 1;
     }
   }
-  if s.custom_dict.slice().len() != 0 {
-    s.alloc_u8.free_cell(core::mem::replace(&mut s.custom_dict,
-                         AllocU8::AllocatedMemory::default()));
+  if s.ringbuffer_size > (1 << s.window_bits) {
+    s.ringbuffer_size = (1 << s.window_bits);
   }
+
+  s.ringbuffer_mask = s.ringbuffer_size - 1;
+  s.ringbuffer = s.alloc_u8
+    .alloc_cell((s.ringbuffer_size as usize + kRingBufferWriteAheadSlack as usize +
+                 kBrotliMaxDictionaryWordLength as usize));
+  if (s.ringbuffer.slice().len() == 0) {
+    return false;
+  }
+  fast_mut!((s.ringbuffer.slice_mut())[s.ringbuffer_size as usize - 1]) = 0;
+  fast_mut!((s.ringbuffer.slice_mut())[s.ringbuffer_size as usize - 2]) = 0;
   true
+}
+
+// Lazily builds compound_dictionary.block_map, a 256-entry table that maps
+// address >> block_bits to the first chunk that might contain that address.
+fn EnsureCompoundDictionaryInitialized<AllocU8: alloc::Allocator<u8>,
+                                       AllocU32: alloc::Allocator<u32>,
+                                       AllocHC: alloc::Allocator<HuffmanCode>>
+  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>) {
+  let addon = &mut s.compound_dictionary;
+  // 256 = (1 << 8) slots in block map.
+  let mut block_bits: u32 = 8;
+  let maximal_address = addon.total_size as u32 - 1;
+  if addon.block_bits != 255 {
+    return;
+  }
+  while (maximal_address >> block_bits) != 0 {
+    block_bits += 1;
+  }
+  block_bits -= 8;
+  addon.block_bits = block_bits;
+  let mut cursor: u32 = 0;
+  let mut index: usize = 0;
+  while cursor <= maximal_address {
+    // chunk_offsets[num_chunks] is a sentinel equal to maximal_address + 1.
+    while fast!((addon.chunk_offsets)[index + 1]) < cursor {
+      index += 1;
+    }
+    fast_mut!((addon.block_map)[(cursor >> block_bits) as usize]) = index as u8;
+    match cursor.checked_add(1 << block_bits) {
+      Some(next) => cursor = next,
+      None => break,
+    }
+  }
+  // Now if X is in the range [0..maximal_address] then
+  // block_map[X >> block_bits] is in [0..num_chunks).
+}
+
+// Prepares a copy of `length` bytes starting at compound dictionary address
+// `address` (0 = first byte of the first chunk). Returns false if the copy
+// would run off the end of the dictionary.
+fn InitializeCompoundDictionaryCopy<AllocU8: alloc::Allocator<u8>,
+                                    AllocU32: alloc::Allocator<u32>,
+                                    AllocHC: alloc::Allocator<HuffmanCode>>
+  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   address: usize,
+   length: usize)
+   -> bool {
+  EnsureCompoundDictionaryInitialized(s);
+  let addon = &mut s.compound_dictionary;
+  if length > addon.total_size - address {
+    return false;
+  }
+  let mut index = fast!((addon.block_map)[address >> addon.block_bits]) as usize;
+  // Several chunks might be mapped to the same block index.
+  while address as u32 >= fast!((addon.chunk_offsets)[index + 1]) {
+    index += 1;
+  }
+  // Update the recent distances cache.
+  fast_mut!((s.dist_rb)[(s.dist_rb_idx & 3) as usize]) = s.distance_code;
+  s.dist_rb_idx += 1;
+  s.meta_block_remaining_len -= length as i32;
+  addon.br_index = index;
+  addon.br_offset = address - fast!((addon.chunk_offsets)[index]) as usize;
+  addon.br_length = length;
+  addon.br_copied = 0;
+  true
+}
+
+// Copies the prepared dictionary reference into the ring buffer at `pos`,
+// stopping at the end of the ring buffer if necessary (the caller flushes
+// and re-invokes). Returns the number of bytes copied.
+fn CopyFromCompoundDictionary<AllocU8: alloc::Allocator<u8>,
+                              AllocU32: alloc::Allocator<u32>,
+                              AllocHC: alloc::Allocator<HuffmanCode>>
+  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   pos: i32)
+   -> i32 {
+  let ringbuffer_size = s.ringbuffer_size as usize;
+  let mut pos = pos as usize;
+  let orig_pos = pos;
+  let addon = &mut s.compound_dictionary;
+  while addon.br_length != addon.br_copied {
+    let chunk = addon.chunks[addon.br_index].slice();
+    let space = ringbuffer_size - pos;
+    let rem_chunk_length = chunk.len() - addon.br_offset;
+    let mut length = addon.br_length - addon.br_copied;
+    if length > rem_chunk_length {
+      length = rem_chunk_length;
+    }
+    if length > space {
+      length = space;
+    }
+    fast_mut!((s.ringbuffer.slice_mut())[pos ; pos + length])
+      .clone_from_slice(fast!((chunk)[addon.br_offset ; addon.br_offset + length]));
+    pos += length;
+    addon.br_offset += length;
+    addon.br_copied += length;
+    if length == rem_chunk_length {
+      addon.br_index += 1;
+      addon.br_offset = 0;
+    }
+    if pos == ringbuffer_size {
+      break;
+    }
+  }
+  (pos - orig_pos) as i32
 }
 
 // Reads 1..256 2-bit context modes.
@@ -2226,6 +2313,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
   let mut pos = s.pos;
   let mut i: i32 = s.loop_counter; // important that this is signed
   let mut result = BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS;
+  let compound_dictionary_size = s.compound_dictionary.total_size as u32;
   let mut saved_literal_hgroup =
     core::mem::replace(&mut s.literal_hgroup,
                        HuffmanTreeGroup::<AllocU32, AllocHC>::default());
@@ -2466,11 +2554,11 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                       pos, s.distance_code);
 
           if (s.max_distance != s.max_backward_distance) {
-            if (pos < s.max_backward_distance_minus_custom_dict_size) {
-              s.max_distance = pos + s.custom_dict_size as i32;
+            s.max_distance = if pos < s.max_backward_distance {
+              pos
             } else {
-              s.max_distance = s.max_backward_distance;
-            }
+              s.max_backward_distance
+            };
           }
           i = s.copy_length;
           // Apply copy of LZ77 back-reference, or static dictionary reference if
@@ -2479,10 +2567,25 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
             if s.distance_code > kBrotliMaxAllowedDistance as i32 {
               return BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_DISTANCE;
             }
-            if (i >= kBrotliMinDictionaryWordLength as i32 &&
+            // Distances in (max_distance, max_distance + compound_dictionary_size]
+            // address the attached compound dictionary, furthest byte first.
+            if (s.distance_code - s.max_distance) as u32 <= compound_dictionary_size {
+              let address = compound_dictionary_size -
+                            (s.distance_code - s.max_distance) as u32;
+              if !InitializeCompoundDictionaryCopy(s, address as usize, i as usize) {
+                result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_COMPOUND_DICTIONARY;
+                break; // return
+              }
+              pos += CopyFromCompoundDictionary(s, pos);
+              if pos >= s.ringbuffer_size {
+                s.state = BrotliRunningState::BROTLI_STATE_COMMAND_POST_WRITE_1;
+                break; // return
+              }
+            } else if (i >= kBrotliMinDictionaryWordLength as i32 &&
                 i <= kBrotliMaxDictionaryWordLength as i32) {
               let mut offset = fast!((kBrotliDictionaryOffsetsByLength)[i as usize]) as i32;
-              let word_id = s.distance_code - s.max_distance - 1;
+              let word_id = s.distance_code - s.max_distance - 1 -
+                            compound_dictionary_size as i32;
               let shift = fast!((kBrotliDictionarySizeBitsByLength)[i as usize]);
               let mask = bit_reader::BitMask(shift as u32) as i32;
               let word_idx = word_id & mask;
@@ -2836,6 +2939,17 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           s.max_backward_distance = (1 << s.window_bits) - kBrotliWindowGap as i32;
           s.max_backward_distance_minus_custom_dict_size = (s.max_backward_distance as isize -
                                                            s.custom_dict_size) as i32;
+          // A dictionary passed at construction time becomes a compound
+          // dictionary chunk; it is kept in its own buffer rather than
+          // prepended to the ring buffer so that it remains addressable
+          // after the ring buffer wraps.
+          if s.custom_dict.slice().len() != 0 {
+            let dict = mem::replace(&mut s.custom_dict, AllocU8::AllocatedMemory::default());
+            if !s.attach_compound_dictionary_chunk(dict) {
+              result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_COMPOUND_DICTIONARY;
+              break;
+            }
+          }
 
           // (formerly) Allocate memory for both block_type_trees and block_len_trees.
           s.block_type_length_state.block_type_trees = s.alloc_hc
@@ -3195,6 +3309,16 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           }
           match s.state {
             BrotliRunningState::BROTLI_STATE_COMMAND_POST_WRITE_1 => {
+              if s.compound_dictionary.br_length != s.compound_dictionary.br_copied {
+                // Resume an interrupted copy from the compound dictionary.
+                let pos = s.pos;
+                let copied = CopyFromCompoundDictionary(&mut s, pos);
+                s.pos += copied;
+                if s.pos >= s.ringbuffer_size {
+                  // Ring buffer is full again; flush it and continue copying.
+                  continue;
+                }
+              }
               if (s.meta_block_remaining_len <= 0) {
                 // Next metablock, if any
                 s.state = BrotliRunningState::BROTLI_STATE_METABLOCK_DONE;
