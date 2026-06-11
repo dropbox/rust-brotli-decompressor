@@ -1043,6 +1043,50 @@ fn test_custom_dict_exceeds_window_reader() {
   assert_eq!(decoded, issue42_expanded());
 }
 
+// Attaching a dictionary in pieces is equivalent to attaching it whole:
+// chunks occupy consecutive ranges of the same backward-distance space.
+#[test]
+#[cfg(all(feature="std", not(feature="unsafe")))]
+fn test_attach_dictionary_in_chunks() {
+  use super::brotli_decompressor::StandardAlloc;
+  let mut alloc = StandardAlloc::default();
+  let dict_bytes = include_bytes!("../../testdata/issue42.dict");
+  let mut reader = Decompressor::new(
+      &include_bytes!("../../testdata/issue42.compressed")[..], 4096);
+  // Uneven splits so copies cross chunk boundaries mid-command.
+  for piece in [&dict_bytes[..1234], &dict_bytes[1234..1235], &dict_bytes[1235..]].iter() {
+    let mut chunk = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, piece.len());
+    chunk.slice_mut().clone_from_slice(piece);
+    assert!(reader.attach_dictionary(chunk));
+  }
+  let mut decoded = Vec::<u8>::new();
+  reader.read_to_end(&mut decoded).unwrap();
+  assert_eq!(decoded.len(), 65536);
+  assert_eq!(decoded, issue42_expanded());
+}
+
+#[test]
+#[cfg(all(feature="std", not(feature="unsafe")))]
+fn test_attach_dictionary_too_late_fails() {
+  use super::brotli_decompressor::StandardAlloc;
+  let mut alloc = StandardAlloc::default();
+  let dict_bytes = include_bytes!("../../testdata/issue42.dict");
+  let mut dict = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, dict_bytes.len());
+  dict.slice_mut().clone_from_slice(&dict_bytes[..]);
+  let mut reader = Decompressor::new_with_custom_dict(
+      &include_bytes!("../../testdata/issue42.compressed")[..], 4096, dict);
+  let mut first = [0u8; 16];
+  let n_read = reader.read(&mut first).unwrap();
+  assert!(n_read > 0);
+  // Decoding has begun; further dictionaries must be rejected.
+  let mut late = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, 4);
+  late.slice_mut().clone_from_slice(b"late");
+  assert!(!reader.attach_dictionary(late));
+  let mut decoded = first[..n_read].to_vec();
+  reader.read_to_end(&mut decoded).unwrap();
+  assert_eq!(decoded, issue42_expanded());
+}
+
 #[test]
 fn test_random_then_unicode() {
   assert_decompressed_input_matches_output(include_bytes!("../../testdata/random_then_unicode.\

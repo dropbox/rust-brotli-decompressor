@@ -460,6 +460,14 @@ impl <'brotli_state,
           BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
         retval.large_window =  true;
         BrotliInitBitReader(&mut retval.br);
+        // The dictionary becomes the furthest compound dictionary chunk;
+        // any subsequently attach_dictionary'd ones are nearer in distance
+        // space.
+        if custom_dict_len != 0 {
+            let dict = core::mem::replace(&mut retval.custom_dict,
+                                          AllocU8::AllocatedMemory::default());
+            retval.attach_compound_dictionary_chunk(dict);
+        }
         retval
     }
     pub fn new_strict(alloc_u8 : AllocU8,
@@ -472,11 +480,28 @@ impl <'brotli_state,
         BrotliInitBitReader(&mut retval.br);
         retval
     }
+    // Attaches a raw LZ77 prefix dictionary, the equivalent of the C API
+    // BrotliDecoderAttachDictionary with BROTLI_SHARED_DICTIONARY_RAW.
+    // Up to SHARED_BROTLI_MAX_COMPOUND_DICTS dictionaries may be attached,
+    // only before any compressed data has been processed. The most recently
+    // attached dictionary is the closest in backward-distance space.
+    // Returns false (and frees the dictionary) if it cannot be attached.
+    pub fn attach_dictionary(self : &mut Self,
+                             dict: AllocU8::AllocatedMemory) -> bool {
+        match self.state {
+            BrotliRunningState::BROTLI_STATE_UNINITED => {},
+            _ => {
+                self.alloc_u8.free_cell(dict);
+                return false;
+            },
+        }
+        self.attach_compound_dictionary_chunk(dict)
+    }
     // Attaches one LZ77 prefix ("compound") dictionary chunk. Chunks must be
     // attached before any data is decompressed; the most recently attached
     // chunk is the closest in backward-distance space. Returns false (and
     // frees the chunk) if the chunk cannot be attached.
-    pub fn attach_compound_dictionary_chunk(self : &mut Self,
+    pub(crate) fn attach_compound_dictionary_chunk(self : &mut Self,
                                             chunk: AllocU8::AllocatedMemory) -> bool {
         let size = chunk.slice().len();
         // A zero-length chunk is a no-op and not counted toward the limit.

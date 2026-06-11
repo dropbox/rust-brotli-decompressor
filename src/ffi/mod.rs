@@ -9,7 +9,7 @@ pub mod interface;
 pub mod alloc_util;
 use self::alloc_util::SubclassableAllocator;
 use alloc::{Allocator, SliceWrapper, SliceWrapperMut, StackAllocator, AllocatedStackMemory, bzero};
-use self::interface::{CAllocator, c_void, BrotliDecoderParameter, BrotliDecoderResult, brotli_alloc_func, brotli_free_func};
+use self::interface::{CAllocator, c_void, BrotliDecoderParameter, BrotliDecoderResult, BrotliSharedDictionaryType, brotli_alloc_func, brotli_free_func};
 use ::BrotliResult;
 use ::BrotliDecoderReturnInfo;
 use ::brotli_decode;
@@ -327,6 +327,35 @@ pub unsafe extern fn BrotliDecoderDestroyInstance(state_ptr: *mut BrotliDecoderS
     } else {
         free_decompressor_no_custom_alloc(state_ptr);
     }
+}
+
+// Attaches a dictionary to the decoder, like the C API of the same name.
+// The data is copied, so unlike the C API it need not outlive the decoder.
+// Only BROTLI_SHARED_DICTIONARY_RAW is currently supported. Must be called
+// before any input is processed. Returns 1 on success, 0 on failure.
+#[no_mangle]
+pub unsafe extern fn BrotliDecoderAttachDictionary(
+    state_ptr: *mut BrotliDecoderState,
+    dict_type: BrotliSharedDictionaryType,
+    data_size: usize,
+    data: *const u8,
+) -> i32 {
+  match dict_type {
+    BrotliSharedDictionaryType::BROTLI_SHARED_DICTIONARY_RAW => {},
+    _ => return 0, // serialized dictionaries are not yet supported
+  }
+  let data_slice = slice_from_raw_parts_or_nil(data, data_size);
+  let dict = {
+    let alloc_u8 = &mut (*state_ptr).decompressor.alloc_u8;
+    let mut dict = alloc_u8.alloc_cell(data_size);
+    if dict.slice().len() != data_size {
+      alloc_u8.free_cell(dict);
+      return 0;
+    }
+    dict.slice_mut().clone_from_slice(data_slice);
+    dict
+  };
+  if (*state_ptr).decompressor.attach_dictionary(dict) {1} else {0}
 }
 
 #[no_mangle]

@@ -61,6 +61,10 @@ impl<R: Read,
                                                                                               "Invalid Data")))
     }
 
+    pub fn attach_dictionary(&mut self, dict: AllocU8::AllocatedMemory) -> bool {
+      self.0.attach_dictionary(dict)
+    }
+
     pub fn get_ref(&self) -> &R {
       &self.0.get_ref().0
     }
@@ -118,6 +122,12 @@ impl<R: Read> Decompressor<R> {
                                                                               dict))
   }
 
+  // Attaches an additional raw LZ77 prefix dictionary; only allowed before
+  // the first read. Returns false if the dictionary could not be attached.
+  pub fn attach_dictionary(&mut self, dict: <StandardAlloc as Allocator<u8>>::AllocatedMemory) -> bool {
+    self.0.attach_dictionary(dict)
+  }
+
   pub fn get_ref(&self) -> &R {
     &self.0.get_ref()
   }
@@ -160,6 +170,12 @@ impl<R: Read> Decompressor<R> {
                                                 HeapAlloc<u32>,
                                                 HeapAlloc<HuffmanCode> >
       ::new_with_custom_dictionary(r, buffer, alloc_u8, alloc_u32, alloc_hc, dict))
+  }
+
+  // Attaches an additional raw LZ77 prefix dictionary; only allowed before
+  // the first read. Returns false if the dictionary could not be attached.
+  pub fn attach_dictionary(&mut self, dict: <HeapAlloc<u8> as Allocator<u8>>::AllocatedMemory) -> bool {
+    self.0.attach_dictionary(dict)
   }
 
   pub fn get_ref(&self) -> &R {
@@ -230,6 +246,12 @@ impl<ErrType,
             error_if_invalid_data : Some(invalid_data_error_type),
             done: false,
         }
+    }
+
+    // Attaches an additional raw LZ77 prefix dictionary; only allowed before
+    // the first read. Returns false if the dictionary could not be attached.
+    pub fn attach_dictionary(&mut self, dict: AllocU8::AllocatedMemory) -> bool {
+      self.state.attach_dictionary(dict)
     }
 
     pub fn get_ref(&self) -> &R {
