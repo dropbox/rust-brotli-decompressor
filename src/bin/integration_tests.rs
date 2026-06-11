@@ -1168,6 +1168,54 @@ fn test_serialized_dictionary_rejects_garbage() {
   assert!(!reader.attach_serialized_dictionary(dict));
 }
 
+// Differential corpus against the reference C implementation. Every *.br in
+// testdata/dict_corpus was compressed by the C encoder with a raw or
+// serialized dictionary attached (randomized dictionaries, qualities and
+// window sizes) and verified against the C decoder at generation time; see
+// scripts/dict_corpus/generate.py for regeneration instructions.
+#[test]
+#[cfg(all(feature="std", not(feature="unsafe")))]
+fn test_dictionary_corpus() {
+  use super::brotli_decompressor::StandardAlloc;
+  use std::fs;
+  let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+      .join("testdata").join("dict_corpus");
+  let mut num_cases = 0;
+  let mut entries: Vec<_> = fs::read_dir(&dir).unwrap()
+      .map(|e| e.unwrap().path()).collect();
+  entries.sort();
+  for path in entries {
+    let name = path.file_name().unwrap().to_str().unwrap().to_string();
+    if !name.ends_with(".br") {
+      continue;
+    }
+    let case_id = name.split('.').next().unwrap();
+    let expected = fs::read(dir.join(format!("{}.content", case_id))).unwrap();
+    let compressed = fs::read(&path).unwrap();
+    let serialized_path = dir.join(format!("{}.serialized.dict", case_id));
+    let raw_path = dir.join(format!("{}.raw.dict", case_id));
+    let mut alloc = StandardAlloc::default();
+    let mut reader = Decompressor::new(&compressed[..], 4096);
+    if serialized_path.exists() {
+      let dict_bytes = fs::read(&serialized_path).unwrap();
+      let mut dict = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, dict_bytes.len());
+      dict.slice_mut().clone_from_slice(&dict_bytes[..]);
+      assert!(reader.attach_serialized_dictionary(dict), "attach failed: {}", name);
+    } else {
+      let dict_bytes = fs::read(&raw_path).unwrap();
+      let mut dict = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, dict_bytes.len());
+      dict.slice_mut().clone_from_slice(&dict_bytes[..]);
+      assert!(reader.attach_dictionary(dict), "attach failed: {}", name);
+    }
+    let mut decoded = Vec::<u8>::new();
+    reader.read_to_end(&mut decoded).unwrap_or_else(|e| panic!("decode failed: {}: {:?}", name, e));
+    assert_eq!(decoded, expected, "mismatch for {}", name);
+    num_cases += 1;
+  }
+  // Guard against the corpus silently going missing.
+  assert!(num_cases >= 20, "only {} corpus cases found", num_cases);
+}
+
 #[test]
 fn test_random_then_unicode() {
   assert_decompressed_input_matches_output(include_bytes!("../../testdata/random_then_unicode.\
