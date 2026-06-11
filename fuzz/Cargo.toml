@@ -12,6 +12,14 @@ libfuzzer-sys = "0.4"
 [dependencies.brotli-decompressor]
 path = ".."
 
+[build-dependencies]
+cc = { version = "1.0", optional = true }
+
+[features]
+# Links the reference C implementation (from a google/brotli checkout, see
+# build.rs) into the fuzz binary for the differential targets.
+c-compat = ["dep:cc"]
+
 # Prevent this from interfering with workspaces
 [workspace]
 members = ["."]
@@ -36,3 +44,10 @@ name = "decompress_with_dictionaries"
 path = "fuzz_targets/decompress_with_dictionaries.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "differential_dictionaries"
+path = "fuzz_targets/differential_dictionaries.rs"
+test = false
+doc = false
+required-features = ["c-compat"]
