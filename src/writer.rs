@@ -53,6 +53,10 @@ impl<W: Write,
                                                                              "Invalid Data")))
     }
 
+    pub fn attach_dictionary(&mut self, dict: AllocU8::AllocatedMemory) -> bool {
+      self.0.attach_dictionary(dict)
+    }
+
     pub fn get_ref(&self) -> &W {
         &self.0.get_ref().0
     }
@@ -130,6 +134,12 @@ impl<W: Write> DecompressorWriter<W> {
                                                                               dict))
   }
 
+  // Attaches an additional raw LZ77 prefix dictionary; only allowed before
+  // the first write. Returns false if the dictionary could not be attached.
+  pub fn attach_dictionary(&mut self, dict: <StandardAlloc as Allocator<u8>>::AllocatedMemory) -> bool {
+    self.0.attach_dictionary(dict)
+  }
+
   pub fn get_ref(&self) -> &W {
       self.0.get_ref()
   }
@@ -169,6 +179,12 @@ impl<W: Write> DecompressorWriter<W> {
                                                 HeapAlloc<u32>,
                                                 HeapAlloc<HuffmanCode> >
       ::new_with_custom_dictionary(w, buffer, alloc_u8, alloc_u32, alloc_hc, dict))
+  }
+
+  // Attaches an additional raw LZ77 prefix dictionary; only allowed before
+  // the first write. Returns false if the dictionary could not be attached.
+  pub fn attach_dictionary(&mut self, dict: <HeapAlloc<u8> as Allocator<u8>>::AllocatedMemory) -> bool {
+    self.0.attach_dictionary(dict)
   }
 
   pub fn get_ref(&self) -> &W {
@@ -286,6 +302,12 @@ impl<ErrType,
            BrotliResult::ResultFailure => return self.error_if_invalid_data.take().map(|e|Err(e)).unwrap_or(Ok(()))
            }
         }
+    }
+
+    // Attaches an additional raw LZ77 prefix dictionary; only allowed before
+    // the first write. Returns false if the dictionary could not be attached.
+    pub fn attach_dictionary(&mut self, dict: AllocU8::AllocatedMemory) -> bool {
+      self.state.attach_dictionary(dict)
     }
 
     pub fn get_ref(&self) -> &W {
