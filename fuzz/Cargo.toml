@@ -30,3 +30,9 @@ name = "decompress_into_fixed"
 path = "fuzz_targets/decompress_into_fixed.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "decompress_with_dictionaries"
+path = "fuzz_targets/decompress_with_dictionaries.rs"
+test = false
+doc = false

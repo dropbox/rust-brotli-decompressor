@@ -3,6 +3,24 @@
 [![crates.io](https://img.shields.io/crates/v/brotli-decompressor.svg)](https://crates.io/crates/brotli-decompressor)
 [![Build Status](https://travis-ci.org/dropbox/rust-brotli-decompressor.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli-decompressor)
 
+## What's new in version 6.0.0
+* Fix #42: custom dictionaries now remain addressable after the ring buffer
+  wraps. Dictionaries are kept in their own buffers (the C implementation's
+  "compound dictionary" scheme) instead of being copied into the ring buffer,
+  so streams where output + dictionary exceed the window decode correctly,
+  and dictionaries larger than the window are no longer truncated.
+* New attach_dictionary API on BrotliState, Decompressor and
+  DecompressorWriter: attach up to 15 raw LZ77 prefix dictionaries before
+  decoding, equivalent to the C BrotliDecoderAttachDictionary with
+  BROTLI_SHARED_DICTIONARY_RAW (also exported over the FFI).
+* Issue #27: serialized shared dictionaries (the 0x91 0x00 container from
+  draft-vandevenne-shared-brotli-format) are supported via
+  attach_serialized_dictionary / BROTLI_SHARED_DICTIONARY_SERIALIZED,
+  including embedded LZ77 prefix dictionaries, custom word lists, custom
+  transform lists (including the parameterized SHIFT transforms) and
+  context-based dictionary selection. The tool accepts
+  -serialized_dict=<file>.
+
 ## What's new in version 5.0.3
 Stricter downstream for alloc-no-stdlib and alloc-stdlib so they don't span
 versions.
