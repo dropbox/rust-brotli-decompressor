@@ -1216,6 +1216,33 @@ fn test_dictionary_corpus() {
   assert!(num_cases >= 20, "only {} corpus cases found", num_cases);
 }
 
+// Deterministic mutation sweep: corrupting any byte of a valid serialized
+// dictionary may make attach or decode fail, but must never panic or
+// produce out-of-bounds access.
+#[test]
+#[cfg(all(feature="std", not(feature="unsafe")))]
+fn test_serialized_dictionary_mutation_robustness() {
+  use super::brotli_decompressor::StandardAlloc;
+  let dict_bytes = include_bytes!("../../testdata/shared_custom.dict");
+  let compressed = include_bytes!("../../testdata/shared_custom.compressed");
+  let mut alloc = StandardAlloc::default();
+  for pos in 0..dict_bytes.len() {
+    for delta in [1u8, 0x80].iter() {
+      let mut mutated = dict_bytes.to_vec();
+      mutated[pos] = mutated[pos].wrapping_add(*delta);
+      let mut dict = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, mutated.len());
+      dict.slice_mut().clone_from_slice(&mutated[..]);
+      let mut reader = Decompressor::new(&compressed[..], 4096);
+      if !reader.attach_serialized_dictionary(dict) {
+        continue;
+      }
+      let mut decoded = Vec::<u8>::new();
+      // Either outcome is fine; only panics/UB would be bugs.
+      let _ = reader.read_to_end(&mut decoded);
+    }
+  }
+}
+
 #[test]
 fn test_random_then_unicode() {
   assert_decompressed_input_matches_output(include_bytes!("../../testdata/random_then_unicode.\

@@ -1,6 +1,6 @@
 [package]
 name = "brotli-decompressor"
-version = "5.0.3"
+version = "6.0.0"
 
 authors = ["Daniel Reiter Horn <danielrh@dropbox.com>", "The Brotli Authors"]
 description = "A brotli decompressor that with an interface avoiding the rust stdlib. This makes it suitable for embedded devices and kernels. It is designed with a pluggable allocator so that the standard lib's allocator may be employed. The default build also includes a stdlib allocator and stream interface. Disable this with --features=no-stdlib. Alternatively, --features=unsafe turns off array bounds checks and memory initialization but provides a safe interface for the caller.  Without adding the --features=unsafe argument, all included code is safe. For compression in addition to this library, download https://github.com/dropbox/rust-brotli "
@@ -29,8 +29,8 @@ lto=true
 # resolves 3.x), after which StandardAlloc no longer satisfies the Allocator
 # bound. The 3.x generation is served by a separate (future) major of
 # brotli-decompressor.
-"alloc-no-stdlib" = {version=">=2.0.4, <3"}
-"alloc-stdlib" = {version=">=0.2.2, <0.3", optional=true}
+"alloc-no-stdlib" = {version=">=3.0.0, <4.0.0"}
+"alloc-stdlib" = {version=">=0.3.0, <0.4", optional=true}
 
 [features]
 # alloc-no-stdlib 3.x gates CallocBackingStore behind its "unsafe" feature;
