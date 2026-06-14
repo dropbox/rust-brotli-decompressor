@@ -39,6 +39,7 @@ mod huffman;
 mod state;
 mod prefix;
 mod context;
+pub mod shared_dictionary;
 pub mod transform;
 mod test;
 mod decode;
@@ -47,6 +48,7 @@ pub mod reader;
 pub mod writer;
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
 pub use state::BrotliState;
+pub use shared_dictionary::BrotliSharedDictionary;
 #[cfg(feature="ffi-api")]
 pub mod ffi;
 pub use reader::{DecompressorCustomIo};

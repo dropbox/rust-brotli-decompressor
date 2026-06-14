@@ -717,7 +717,7 @@ pub const kTransforms: [Transform; kNumTransforms as usize] = [Transform {
 
 
 
-fn ToUpperCase(p: &mut [u8]) -> i32 {
+pub(crate) fn ToUpperCase(p: &mut [u8]) -> i32 {
   if (fast!((p)[0]) < 0xc0) {
     if (fast!((p)[0]) >= b'a' && fast!((p)[0]) <= b'z') {
       fast_mut!((p)[0]) ^= 32;

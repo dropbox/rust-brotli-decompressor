@@ -329,6 +329,41 @@ pub unsafe extern fn BrotliDecoderDestroyInstance(state_ptr: *mut BrotliDecoderS
     }
 }
 
+// Attaches a dictionary to the decoder, like the C API of the same name.
+// The data is copied, so unlike the C API it need not outlive the decoder.
+// Must be called before any input is processed.
+// Returns 1 on success, 0 on failure.
+#[no_mangle]
+pub unsafe extern fn BrotliDecoderAttachDictionary(
+    state_ptr: *mut BrotliDecoderState,
+    dict_type: i32,
+    data_size: usize,
+    data: *const u8,
+) -> i32 {
+  let is_serialized = match dict_type {
+    0 => false,
+    1 => true,
+    _ => return 0,
+  };
+  let data_slice = slice_from_raw_parts_or_nil(data, data_size);
+  let dict = {
+    let alloc_u8 = &mut (*state_ptr).decompressor.alloc_u8;
+    let mut dict = alloc_u8.alloc_cell(data_size);
+    if dict.slice().len() != data_size {
+      alloc_u8.free_cell(dict);
+      return 0;
+    }
+    dict.slice_mut().clone_from_slice(data_slice);
+    dict
+  };
+  let ok = if is_serialized {
+      (*state_ptr).decompressor.attach_serialized_dictionary(dict)
+  } else {
+      (*state_ptr).decompressor.attach_dictionary(dict)
+  };
+  if ok {1} else {0}
+}
+
 #[no_mangle]
 pub unsafe extern fn BrotliDecoderHasMoreOutput(state_ptr: *const BrotliDecoderState) -> i32 {
   if super::decode::BrotliDecoderHasMoreOutput(&(*state_ptr).decompressor) {1} else {0}
