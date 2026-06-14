@@ -3,6 +3,10 @@
 [![crates.io](https://img.shields.io/crates/v/brotli-decompressor.svg)](https://crates.io/crates/brotli-decompressor)
 [![Build Status](https://travis-ci.org/dropbox/rust-brotli-decompressor.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli-decompressor)
 
+## What's new in version 5.0.2
+forbid(unsafe)
+Fixes for seccomp features.
+
 ## What's new in version 5.0.1
 Fix PADDING_2 error being silently dropped at end of stream
 Fix --no-default-features tests
