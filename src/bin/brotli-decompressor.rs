@@ -1,4 +1,7 @@
 #![allow(unused_imports)]
+// Assert at compile time that the default build contains no unsafe code:
+// the only unsafe in this binary lives behind the "unsafe" and "seccomp" features.
+#![cfg_attr(not(any(feature="unsafe", feature="seccomp")), forbid(unsafe_code))]
 
 mod integration_tests;
 mod error_handling_tests;
