@@ -4,6 +4,13 @@
 [![Build Status](https://travis-ci.org/dropbox/rust-brotli-decompressor.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli-decompressor)
 
 ## What's new in version 6.0.0
+
+* Unlike previous code, these commits were effectively authored by Claude.
+  This represents a change in stance of this project that, in order to keep
+  up with fast changes to the main brotli repository, we will need to employ
+  AI models add rely on guardrails like forbid(unsafe_code) and extensive
+  testing and fuzz testing to ensure the quality of this library.
+  Libraries that do not wish to depend on AI-authored code should remain on 5.x.
 * Fix #42: custom dictionaries now remain addressable after the ring buffer
   wraps. Dictionaries are kept in their own buffers (the C implementation's
   "compound dictionary" scheme) instead of being copied into the ring buffer,
