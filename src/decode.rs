@@ -1693,7 +1693,7 @@ fn WriteRingBuffer<'a,
                    AllocU32: alloc::Allocator<u32>,
                    AllocHC: alloc::Allocator<HuffmanCode>>(
   available_out: &mut usize,
-  opt_output: Option<&mut [u8]>,
+  opt_output: Option<&mut [mem::MaybeUninit<u8>]>,
   output_offset: &mut usize,
   total_out: &mut usize,
   force: bool,
@@ -1711,7 +1711,9 @@ fn WriteRingBuffer<'a,
   let start = fast_slice!((s.ringbuffer)[start_index ; start_index + num_written as usize]);
   if let Some(output) = opt_output {
     fast_mut!((output)[*output_offset ; *output_offset + num_written as usize])
-      .clone_from_slice(start);
+      .iter_mut()
+      .zip(start)
+      .for_each(|(maybe_uninit, byte)| { maybe_uninit.write(*byte); });
   }
   *output_offset += num_written;
   *available_out -= num_written;
@@ -1753,7 +1755,7 @@ fn CopyUncompressedBlockToOutput<AllocU8: alloc::Allocator<u8>,
                                  AllocU32: alloc::Allocator<u32>,
                                  AllocHC: alloc::Allocator<HuffmanCode>>
   (mut available_out: &mut usize,
-   mut output: &mut [u8],
+   mut output: &mut [mem::MaybeUninit<u8>],
    mut output_offset: &mut usize,
    mut total_out: &mut usize,
    mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
@@ -2667,9 +2669,34 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
   (available_in: &mut usize,
    input_offset: &mut usize,
    xinput: &[u8],
+   available_out: &mut usize,
+   output_offset: &mut usize,
+   output: &mut [u8],
+   total_out: &mut usize,
+   s: &mut BrotliState<AllocU8, AllocU32, AllocHC>)
+   -> BrotliResult {
+  BrotliDecompressStreamUninit(
+    available_in,
+    input_offset,
+    xinput,
+    available_out,
+    output_offset,
+    // SAFETY: brotli never writes uninitialized buffer to already initialized `output`
+    unsafe { &mut *(output as *mut _ as *mut [mem::MaybeUninit<u8>]) },
+    total_out,
+    s,
+  )
+}
+
+pub fn BrotliDecompressStreamUninit<AllocU8: alloc::Allocator<u8>,
+                              AllocU32: alloc::Allocator<u32>,
+                              AllocHC: alloc::Allocator<HuffmanCode>>
+  (available_in: &mut usize,
+   input_offset: &mut usize,
+   xinput: &[u8],
    mut available_out: &mut usize,
    mut output_offset: &mut usize,
-   mut output: &mut [u8],
+   mut output: &mut [mem::MaybeUninit<u8>],
    mut total_out: &mut usize,
    mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>)
    -> BrotliResult {
