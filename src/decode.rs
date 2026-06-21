@@ -2085,44 +2085,20 @@ fn CheckInputAmount(safe: bool, br: &bit_reader::BrotliBitReader, num: u32) -> b
 fn memmove16(data: &mut [u8], u32off_dst: u32, u32off_src: u32) {
   let off_dst = u32off_dst as usize;
   let off_src = u32off_src as usize;
-  // data[off_dst + 15] = data[off_src + 15];
-  // data[off_dst + 14] = data[off_src + 14];
-  // data[off_dst + 13] = data[off_src + 13];
-  // data[off_dst + 12] = data[off_src + 12];
-  //
-  // data[off_dst + 11] = data[off_src + 11];
-  // data[off_dst + 10] = data[off_src + 10];
-  // data[off_dst + 9] = data[off_src + 9];
-  // data[off_dst + 8] = data[off_src + 8];
-  //
-  // data[off_dst + 7] = data[off_src + 7];
-  // data[off_dst + 6] = data[off_src + 6];
-  // data[off_dst + 5] = data[off_src + 5];
-  // data[off_dst + 4] = data[off_src + 4];
-  //
-  // data[off_dst + 3] = data[off_src + 3];
-  // data[off_dst + 2] = data[off_src + 2];
-  // data[off_dst + 1] = data[off_src + 1];
-  //
-  let mut local_array: [u8; 16] = fast_uninitialized!(16);
-  local_array.clone_from_slice(fast!((data)[off_src as usize ; off_src as usize + 16]));
-  fast_mut!((data)[off_dst as usize ; off_dst as usize + 16]).clone_from_slice(&local_array);
 
+  #[cfg(not(feature = "unsafe"))]
+  data.copy_within(off_src..off_src + 16, off_dst);
 
+  #[cfg(feature = "unsafe")]
+  unsafe {
+    let ptr = data.as_mut_ptr();
+    core::ptr::copy(ptr.add(off_src), ptr.add(off_dst), 16);
+  }
 }
 
-
-#[cfg(not(feature="unsafe"))]
+#[cfg(not(feature = "unsafe"))]
 fn memcpy_within_slice(data: &mut [u8], off_dst: usize, off_src: usize, size: usize) {
-  if off_dst > off_src {
-    let (src, dst) = data.split_at_mut(off_dst);
-    let src_slice = fast!((src)[off_src ; off_src + size]);
-    fast_mut!((dst)[0;size]).clone_from_slice(src_slice);
-  } else {
-    let (dst, src) = data.split_at_mut(off_src);
-    let src_slice = fast!((src)[0;size]);
-    fast_mut!((dst)[off_dst;off_dst + size]).clone_from_slice(src_slice);
-  }
+  data.copy_within(off_src..off_src + size, off_dst);
 }
 
 #[cfg(feature="unsafe")]
