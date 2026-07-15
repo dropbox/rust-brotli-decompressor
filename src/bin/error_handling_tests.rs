@@ -218,3 +218,39 @@ fn test_padding_2_rejection() {
         );
     }
 }
+
+// A metablock whose commands emit more than the MLEN declared in its header is
+// invalid: RFC 7932 §9.3 says a command that "would cause MLEN to be exceeded"
+// means "the stream should be rejected as invalid." The C reference and
+// andybalholm/brotli (Go) reject it as BLOCK_LENGTH_2; this decoder previously
+// accepted it because the only negative-`meta_block_remaining_len` guard was in
+// WriteRingBuffer, which is not reached when the whole output fits in the ring
+// buffer before the final flush. This vector was found by differential fuzzing
+// against andybalholm.
+#[test]
+fn test_rejects_metablock_length_overflow() {
+    fn unhex(s: &str) -> Vec<u8> {
+        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    }
+    let corrupt = unhex(
+        "0b2b01008cd4484d73bb8171bab646fb2203e581794e0cb52237983782d1e0880c00200849a0f3a41ab32b9\
+         8909e575ad3dc35383ab3bc757871fff6ab3a7135eeae1f988262c82ca1426ff34692b30a2beadb7a8589f9\
+         b5dd93eba74fd1f0b376393efe188bc0d3b812b5c91988a7e5965437750e8c4c2f6d1e9cdfbdfe2876540ed\
+         bcb1b222168125320d7593de1a4cc82f2bad61e7e7c6e75e7f8eaf1e35ff7d2663edc7f2803c751396295d1\
+         e18fa5e614573576f40f4f2d6eec9fddbe7ccb5658f49bf30b24c02822832fd35adca1c48cfcb2da966e6e6\
+         c7665fbe8f2e1fd4f73937adadfbe080dc352d822a5c1ee8ba664175536b4f70d4d2eacef9dde3c7f496690\
+         77ebe909e02024813e3000b81200c0488dd434b70b8000286308abc0fb1d453300b81200c0488dd434b70b8\
+         0002863088be0b73600b81200c0488dd434b70b80002863088be0b73600b81200c0488dd434b70b80002863\
+         088be0b73600b81200c0488dd434b70b80c88fc6428cc0bb0103",
+    );
+
+    let mut d = brotli_decompressor::Decompressor::new(Cursor::new(corrupt), 4096);
+    let mut sink = Vec::new();
+    let err = d.read_to_end(&mut sink).err();
+    assert_eq!(
+        err.as_ref().map(|e| e.kind()),
+        Some(io::ErrorKind::InvalidData),
+        "decoder must reject a metablock that overshoots its declared length; got {:?}",
+        err.as_ref().map_or_else(|| format!("Ok({} bytes)", sink.len()), |e| format!("{:?}", e)),
+    );
+}

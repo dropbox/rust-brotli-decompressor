@@ -3222,6 +3222,20 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           break;
         }
         BrotliRunningState::BROTLI_STATE_METABLOCK_DONE => {
+          // RFC 7932 §9.3: "if the number of literals to insert, the copy
+          // length, or the resulting dictionary word length would cause MLEN to
+          // be exceeded, then the stream should be rejected as invalid." When a
+          // command overshoots the declared meta-block length, the command loop
+          // exits to this state with meta_block_remaining_len < 0. The only
+          // negative-length guard was in WriteRingBuffer, which is not reached
+          // when the whole output fits in the ring buffer before the final
+          // flush, so such malformed streams decoded as success. The C
+          // reference and andybalholm/brotli (Go) reject them as BLOCK_LENGTH_2;
+          // mirror that check here, before cleanup.
+          if (s.meta_block_remaining_len < 0) {
+            result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2;
+            break;
+          }
           s.BrotliStateCleanupAfterMetablock();
           if (s.is_last_metablock == 0) {
             s.state = BrotliRunningState::BROTLI_STATE_METABLOCK_BEGIN;
