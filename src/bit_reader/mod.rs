@@ -257,6 +257,7 @@ pub fn BrotliGet16BitsUnmasked(br: &mut BrotliBitReader, input: &[u8]) -> u32 {
 }
 
 // Returns the specified number of bits from br without advancing bit pos.
+#[inline(always)]
 pub fn BrotliGetBits(br: &mut BrotliBitReader, n_bits: u32, input: &[u8]) -> u32 {
   BrotliFillBitWindow(br, n_bits, input);
   (BrotliGetBitsUnmasked(br) as u32) & BitMask(n_bits)
