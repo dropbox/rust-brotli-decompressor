@@ -456,6 +456,7 @@ fn SafeReadSymbol(table: &[HuffmanCode],
 }
 
 // Makes a look-up in first level Huffman table. Peeks 8 bits.
+#[inline(always)]
 fn PreloadSymbol(safe: bool,
                  table: &[HuffmanCode],
                  br: &mut bit_reader::BrotliBitReader,
@@ -473,6 +474,7 @@ fn PreloadSymbol(safe: bool,
 
 // Decodes the next Huffman code using data prepared by PreloadSymbol.
 // Reads 0 - 15 bits. Also peeks 8 following bits.
+#[inline(always)]
 fn ReadPreloadedSymbol(table: &[HuffmanCode],
                        br: &mut bit_reader::BrotliBitReader,
                        bits: &mut u32,
@@ -1947,6 +1949,7 @@ pub fn SafeReadBits(br: &mut bit_reader::BrotliBitReader,
 }
 
 // Precondition: s.distance_code < 0
+#[inline(always)]
 pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
                             AllocU32: alloc::Allocator<u32>,
                             AllocHC: alloc::Allocator<HuffmanCode>>
@@ -2014,7 +2017,7 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
   true
 }
 
-
+#[inline(always)]
 pub fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
                            AllocU32: alloc::Allocator<u32>,
                            AllocHC: alloc::Allocator<HuffmanCode>>
@@ -2073,10 +2076,12 @@ pub fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
 }
 
 
+#[inline(always)]
 fn WarmupBitReader(safe: bool, br: &mut bit_reader::BrotliBitReader, input: &[u8]) -> bool {
   safe || bit_reader::BrotliWarmupBitReader(br, input)
 }
 
+#[inline(always)]
 fn CheckInputAmount(safe: bool, br: &bit_reader::BrotliBitReader, num: u32) -> bool {
   safe || bit_reader::BrotliCheckInputAmount(br, num)
 }
@@ -2107,11 +2112,9 @@ fn memmove16(data: &mut [u8], u32off_dst: u32, u32off_src: u32) {
   let mut local_array: [u8; 16] = fast_uninitialized!(16);
   local_array.clone_from_slice(fast!((data)[off_src as usize ; off_src as usize + 16]));
   fast_mut!((data)[off_dst as usize ; off_dst as usize + 16]).clone_from_slice(&local_array);
-
-
 }
 
-
+#[inline(always)]
 #[cfg(not(feature="unsafe"))]
 fn memcpy_within_slice(data: &mut [u8], off_dst: usize, off_src: usize, size: usize) {
   if off_dst > off_src {
@@ -2125,6 +2128,7 @@ fn memcpy_within_slice(data: &mut [u8], off_dst: usize, off_src: usize, size: us
   }
 }
 
+#[inline(always)]
 #[cfg(feature="unsafe")]
 fn memcpy_within_slice(data: &mut [u8], off_dst: usize, off_src: usize, size: usize) {
   let ptr = data.as_mut_ptr();
@@ -2212,6 +2216,7 @@ pub fn BrotliDecoderGetErrorCode<AllocU8: alloc::Allocator<u8>,
   s.error_code
 }
 
+#[inline(always)]
 fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                            AllocU32: alloc::Allocator<u32>,
                            AllocHC: alloc::Allocator<HuffmanCode>>
