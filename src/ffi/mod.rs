@@ -30,6 +30,53 @@ pub unsafe fn slice_from_raw_parts_or_nil_mut<'a, T>(data: *mut T, len: usize) -
     slice::from_raw_parts_mut(data, len)
 }
 
+trait MaxSliceLen {
+    const MAX_SLICE_LEN: usize;
+}
+
+impl<T> MaxSliceLen for T {
+    const MAX_SLICE_LEN: usize = if core::mem::size_of::<T>() == 0 {
+        usize::MAX
+    } else {
+        (isize::MAX as usize) / core::mem::size_of::<T>()
+    };
+}
+
+// Rejects the pointer/length pairs that would make `slice::from_raw_parts` trip a
+// non-unwinding "unsafe precondition" panic not catchable by `catch_unwind`.
+fn is_valid_slice_ptr<T>(data: *const T, len: usize) -> bool {
+    if len == 0 {
+        return true;
+    }
+    if data.is_null() {
+        return false;
+    }
+    if len > T::MAX_SLICE_LEN {
+        return false;
+    }
+    (data as usize).checked_add(len * core::mem::size_of::<T>()).is_some()
+}
+
+unsafe fn checked_slice_from_raw_parts_or_nil<'a, T>(
+    data: *const T,
+    len: usize,
+) -> Option<&'a [T]> {
+    if !is_valid_slice_ptr(data, len) {
+        return None;
+    }
+    Some(slice_from_raw_parts_or_nil(data, len))
+}
+
+unsafe fn checked_slice_from_raw_parts_or_nil_mut<'a, T>(
+    data: *mut T,
+    len: usize,
+) -> Option<&'a mut [T]> {
+    if !is_valid_slice_ptr(data, len) {
+        return None;
+    }
+    Some(slice_from_raw_parts_or_nil_mut(data, len))
+}
+
 #[cfg(feature="std")]
 type BrotliAdditionalErrorData = boxed::Box<dyn any::Any + Send + 'static>;
 #[cfg(not(feature="std"))]
@@ -218,6 +265,17 @@ pub unsafe extern fn BrotliDecoderDecompressStream(
     available_out: *mut usize,
     output_buf_ptr: *mut*mut u8,
     mut total_out: *mut usize) -> BrotliDecoderResult {
+    if state_ptr.is_null() ||
+       available_in.is_null() ||
+       input_buf_ptr.is_null() ||
+       available_out.is_null() ||
+       output_buf_ptr.is_null() {
+        if !state_ptr.is_null() {
+            (*state_ptr).decompressor.error_code =
+                BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS;
+        }
+        return BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR;
+    }
     match catch_panic(move || {
     let mut input_offset = 0usize;
     let mut output_offset = 0usize;
@@ -226,9 +284,31 @@ pub unsafe extern fn BrotliDecoderDecompressStream(
         total_out = &mut fallback_total_out;
     }
     let result: BrotliDecoderResult;
+    let input_ptr = *input_buf_ptr;
+    let output_ptr = *output_buf_ptr;
     {
-        let input_buf = slice_from_raw_parts_or_nil(*input_buf_ptr, *available_in);
-        let output_buf = slice_from_raw_parts_or_nil_mut(*output_buf_ptr, *available_out);
+        let input_buf = match checked_slice_from_raw_parts_or_nil(
+            input_ptr,
+            *available_in,
+        ) {
+            Some(input_buf) => input_buf,
+            None => {
+                (*state_ptr).decompressor.error_code =
+                    BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS;
+                return BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR;
+            },
+        };
+        let output_buf = match checked_slice_from_raw_parts_or_nil_mut(
+            output_ptr,
+            *available_out,
+        ) {
+            Some(output_buf) => output_buf,
+            None => {
+                (*state_ptr).decompressor.error_code =
+                    BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS;
+                return BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR;
+            },
+        };
             result = super::decode::BrotliDecompressStream(
                 &mut *available_in,
                 &mut input_offset,
@@ -240,8 +320,8 @@ pub unsafe extern fn BrotliDecoderDecompressStream(
                 &mut (*state_ptr).decompressor,
             ).into();
     }
-    *input_buf_ptr = (*input_buf_ptr).offset(input_offset as isize);
-    *output_buf_ptr = (*output_buf_ptr).offset(output_offset as isize);
+    *input_buf_ptr = input_ptr.offset(input_offset as isize);
+    *output_buf_ptr = output_ptr.offset(output_offset as isize);
                                            result
     }) {
         Ok(ret) => ret,
