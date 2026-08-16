@@ -1844,7 +1844,7 @@ fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
 
     // We need at least 2 bytes of ring buffer size to get the last two
     // bytes for context from there
-    if (is_last != 0) {
+    if is_last != 0 && s.canny_ringbuffer_allocation {
       while (s.ringbuffer_size as isize >= (s.custom_dict_size + s.meta_block_remaining_len as isize + 16) * 2 && s.ringbuffer_size as isize > 32) {
         s.ringbuffer_size >>= 1;
       }
@@ -1872,6 +1872,28 @@ fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
                          AllocU8::AllocatedMemory::default()));
   }
   true
+}
+
+#[cfg(all(test, feature="std"))]
+mod tests {
+  use super::*;
+
+  fn ringbuffer_size(canny: bool) -> i32 {
+    let mut state = BrotliState::new(::StandardAlloc::default(),
+                                     ::StandardAlloc::default(),
+                                     ::StandardAlloc::default());
+    state.window_bits = 16;
+    state.is_last_metablock = 1;
+    state.canny_ringbuffer_allocation = canny;
+    assert!(BrotliAllocateRingBuffer(&mut state, &[]));
+    state.ringbuffer_size
+  }
+
+  #[test]
+  fn canny_ring_buffer() {
+    assert_eq!(ringbuffer_size(true), 32);
+    assert_eq!(ringbuffer_size(false), 1 << 16);
+  }
 }
 
 // Reads 1..256 2-bit context modes.
@@ -3285,4 +3307,3 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
 
   SaveErrorCode!(s, result)
 }
-

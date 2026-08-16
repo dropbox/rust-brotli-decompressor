@@ -115,14 +115,16 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
         opaque:opaque,
       };
       let custom_dictionary = <SubclassableAllocator as Allocator<u8>>::AllocatedMemory::default();
+      let mut decompressor = ::BrotliState::new_with_custom_dictionary(
+        SubclassableAllocator::new(allocators.clone()),
+        SubclassableAllocator::new(allocators.clone()),
+        SubclassableAllocator::new(allocators.clone()),
+        custom_dictionary,
+      );
+      decompressor.large_window = false;
       let to_box = BrotliDecoderState {
         custom_allocator: allocators.clone(),
-        decompressor: ::BrotliState::new_with_custom_dictionary(
-          SubclassableAllocator::new(allocators.clone()),
-          SubclassableAllocator::new(allocators.clone()),
-          SubclassableAllocator::new(allocators.clone()),
-          custom_dictionary,
-        ),
+        decompressor: decompressor,
       };
       if let Some(alloc) = alloc_func {
         if free_func.is_none() {
@@ -145,10 +147,26 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
 }
 
 #[no_mangle]
-pub unsafe extern fn BrotliDecoderSetParameter(_state_ptr: *mut BrotliDecoderState,
-                                       _selector: BrotliDecoderParameter,
-                                       _value: u32) {
-  // not implemented
+pub unsafe extern "C" fn BrotliDecoderSetParameter(state_ptr: *mut BrotliDecoderState,
+                                             selector: BrotliDecoderParameter,
+                                             value: u32) -> i32 {
+  if state_ptr.is_null() {
+    return 0;
+  }
+  let state = &mut (*state_ptr).decompressor;
+  match &state.state {
+    &super::state::BrotliRunningState::BROTLI_STATE_UNINITED => {},
+    _ => return 0,
+  }
+  match selector {
+    BrotliDecoderParameter::BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION => {
+      state.canny_ringbuffer_allocation = value == 0;
+    },
+    BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW => {
+      state.large_window = value != 0;
+    },
+  }
+  1
 }
 
 #[no_mangle]
@@ -454,4 +472,50 @@ pub extern fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) -> *const u8 {
 #[no_mangle]
 pub extern fn BrotliDecoderVersion() -> u32 {
   0x1000f00
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn set_parameter() {
+    let set_parameter: unsafe extern "C" fn(
+      *mut BrotliDecoderState,
+      BrotliDecoderParameter,
+      u32,
+    ) -> i32 = BrotliDecoderSetParameter;
+
+    unsafe {
+      let state = BrotliDecoderCreateInstance(None, None, core::ptr::null_mut());
+      assert!(!state.is_null());
+      assert!(!(*state).decompressor.large_window);
+      assert!((*state).decompressor.canny_ringbuffer_allocation);
+
+      assert_eq!(set_parameter(
+        state,
+        BrotliDecoderParameter::BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION,
+        1,
+      ), 1);
+      assert!(!(*state).decompressor.canny_ringbuffer_allocation);
+
+      assert_eq!(set_parameter(
+        state,
+        BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW,
+        1,
+      ), 1);
+      assert!((*state).decompressor.large_window);
+
+      (*state).decompressor.state =
+        super::super::state::BrotliRunningState::BROTLI_STATE_INITIALIZE;
+      assert_eq!(set_parameter(
+        state,
+        BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW,
+        0,
+      ), 0);
+      assert!((*state).decompressor.large_window);
+
+      BrotliDecoderDestroyInstance(state);
+    }
+  }
 }
