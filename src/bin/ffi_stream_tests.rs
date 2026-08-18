@@ -7,7 +7,7 @@ use std::ptr;
 use brotli_decompressor::ffi::interface::BrotliDecoderResult;
 use brotli_decompressor::ffi::{
   BrotliDecoderCreateInstance, BrotliDecoderDecompressStream, BrotliDecoderDestroyInstance,
-  BrotliDecoderErrorCode,
+  BrotliDecoderErrorCode, BrotliDecoderIsUsed,
 };
 
 #[test]
@@ -108,5 +108,38 @@ fn stream_advances_the_original_output_pointer() {
     output,
     output_storage.wrapping_add(mem::size_of::<*mut u8>()),
   );
+  unsafe { BrotliDecoderDestroyInstance(state) };
+}
+
+#[test]
+fn is_used_remains_true_after_byte_aligned_decode() {
+  static ENCODED_FF_BYTES: &'static [u8] = b"\x1f\x07\x00\xf8\x27\xfe\x43\x84\x00\x00";
+
+  let state = unsafe { BrotliDecoderCreateInstance(None, None, ptr::null_mut()) };
+  assert!(!state.is_null());
+  assert_eq!(unsafe { BrotliDecoderIsUsed(state) }, 0);
+
+  let mut available_in = ENCODED_FF_BYTES.len();
+  let mut input = ENCODED_FF_BYTES.as_ptr();
+  let mut decoded = [0u8; 8];
+  let mut available_out = decoded.len();
+  let mut output = decoded.as_mut_ptr();
+  let result = unsafe {
+    BrotliDecoderDecompressStream(
+      state,
+      &mut available_in,
+      &mut input,
+      &mut available_out,
+      &mut output,
+      ptr::null_mut(),
+    )
+  };
+
+  assert_eq!(
+    result as i32,
+    BrotliDecoderResult::BROTLI_DECODER_RESULT_SUCCESS as i32,
+  );
+  assert_eq!(decoded, [0xff; 8]);
+  assert_eq!(unsafe { BrotliDecoderIsUsed(state) }, 1);
   unsafe { BrotliDecoderDestroyInstance(state) };
 }
