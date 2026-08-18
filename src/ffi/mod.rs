@@ -399,8 +399,12 @@ pub unsafe extern fn BrotliDecoderFreeU8(state_ptr: *mut BrotliDecoderState, dat
 #[no_mangle]
 pub unsafe extern fn BrotliDecoderMallocUsize(state_ptr: *mut BrotliDecoderState, size: usize) -> *mut usize {
     if let Some(alloc_fn) = (*state_ptr).custom_allocator.alloc_func {
+        let alloc_size = match size.checked_mul(core::mem::size_of::<usize>()) {
+            Some(alloc_size) => alloc_size,
+            None => return core::ptr::null_mut(),
+        };
         return core::mem::transmute::<*mut c_void, *mut usize>(alloc_fn((*state_ptr).custom_allocator.opaque,
-                                                                         size * core::mem::size_of::<usize>()));
+                                                                         alloc_size));
     } else {
         return alloc_util::alloc_stdlib(size);
     }
