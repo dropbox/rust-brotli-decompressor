@@ -337,8 +337,8 @@ pub fn copy_from_to<R: io::Read, W: io::Write>(mut r: R, mut w: W) -> io::Result
 pub struct BrotliDecoderReturnInfo {
     pub decoded_size: usize,
     pub error_string: [u8;256],
-    pub error_code: state::BrotliDecoderErrorCode,
     pub result: BrotliResult,
+    pub error_code: state::BrotliDecoderErrorCode,
 }
 impl BrotliDecoderReturnInfo {
     fn new<AllocU8: Allocator<u8>,
