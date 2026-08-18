@@ -1930,6 +1930,61 @@ mod tests {
     assert_large_remaining_copy_is_clamped(
       16, 15, BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT);
   }
+
+  #[test]
+  fn stream_rejects_wrapping_output_range() {
+    let mut state = BrotliState::new(::StandardAlloc::default(),
+                                     ::StandardAlloc::default(),
+                                     ::StandardAlloc::default());
+    let input = [0x06u8];
+    let mut output = [0u8; 1];
+    let mut available_in = input.len();
+    let mut input_offset = 0usize;
+    let mut available_out = usize::MAX;
+    let mut output_offset = 1usize;
+    let mut total_out = 0usize;
+
+    let result = BrotliDecompressStream(&mut available_in,
+                                        &mut input_offset,
+                                        &input,
+                                        &mut available_out,
+                                        &mut output_offset,
+                                        &mut output,
+                                        &mut total_out,
+                                        &mut state);
+
+    assert_eq!(result as i32, BrotliResult::ResultFailure as i32);
+    assert_eq!(state.error_code as i32,
+               BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS as i32);
+  }
+
+  #[test]
+  fn stream_rejects_wrapping_input_range() {
+    let mut state = BrotliState::new(::StandardAlloc::default(),
+                                     ::StandardAlloc::default(),
+                                     ::StandardAlloc::default());
+    let input = [0x06u8];
+    let mut output = [0u8; 1];
+    // The end wraps to zero on 32-bit and is out of bounds on 64-bit.
+    let mut available_in = u32::MAX as usize;
+    let mut input_offset = 1usize;
+    let mut available_out = output.len();
+    let mut output_offset = 0usize;
+    let mut total_out = 0usize;
+
+    let result = BrotliDecompressStream(&mut available_in,
+                                        &mut input_offset,
+                                        &input,
+                                        &mut available_out,
+                                        &mut output_offset,
+                                        &mut output,
+                                        &mut total_out,
+                                        &mut state);
+
+    assert_eq!(result as i32, BrotliResult::ResultFailure as i32);
+    assert_eq!(state.error_code as i32,
+               BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS as i32);
+  }
 }
 
 // Reads 1..256 2-bit context modes.
@@ -2747,11 +2802,13 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
   if *input_offset as u64 >= (1u64 << 32) {
     return SaveErrorCode!(s, BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS);
   }
-  if *input_offset + *available_in > xinput.len() {
-    return SaveErrorCode!(s, BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS);
+  match input_offset.checked_add(*available_in) {
+    Some(end) if end <= xinput.len() => {}
+    _ => return SaveErrorCode!(s, BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS),
   }
-  if *output_offset + *available_out > output.len() {
-    return SaveErrorCode!(s, BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS);
+  match output_offset.checked_add(*available_out) {
+    Some(end) if end <= output.len() => {}
+    _ => return SaveErrorCode!(s, BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS),
   }
   if s.buffer_length == 0 {
     local_input = xinput;
