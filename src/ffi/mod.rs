@@ -131,6 +131,9 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
             panic!("either both alloc and free must exist or neither");
         }
         let ptr = alloc(allocators.opaque, core::mem::size_of::<BrotliDecoderState>());
+        if ptr.is_null() {
+            return core::ptr::null_mut();
+        }
         let brotli_decoder_state_ptr = core::mem::transmute::<*mut c_void, *mut BrotliDecoderState>(ptr);
         core::ptr::write(brotli_decoder_state_ptr, to_box);
         brotli_decoder_state_ptr
