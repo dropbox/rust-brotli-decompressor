@@ -2213,11 +2213,8 @@ pub fn BrotliDecoderIsUsed<AllocU8: alloc::Allocator<u8>,
                            AllocU32: alloc::Allocator<u32>,
                            AllocHC: alloc::Allocator<HuffmanCode>>(
   s: &BrotliState<AllocU8, AllocU32, AllocHC>) -> bool {
-  if let BrotliRunningState::BROTLI_STATE_UNINITED = s.state {
-    false
-  } else {
-    bit_reader::BrotliGetAvailableBits(&s.br) != 0
-  }
+  !matches!(s.state, BrotliRunningState::BROTLI_STATE_UNINITED)
+    || bit_reader::BrotliGetAvailableBits(&s.br) != 0
 }
 
 pub fn BrotliDecoderIsFinished<AllocU8: alloc::Allocator<u8>,
