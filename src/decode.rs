@@ -2909,6 +2909,10 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           }
           s.block_type_length_state.block_len_trees = s.alloc_hc
             .alloc_cell(3 * huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
+          if (s.block_type_length_state.block_len_trees.slice().len() == 0) {
+            result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES;
+            break;
+          }
 
           s.state = BrotliRunningState::BROTLI_STATE_METABLOCK_BEGIN;
           // No break, continue to next state
