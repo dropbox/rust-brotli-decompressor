@@ -12,6 +12,11 @@ libfuzzer-sys = "0.4"
 [dependencies.brotli-decompressor]
 path = ".."
 
+[features]
+# Links the system brotli (>= 1.1.0, e.g. libbrotli-dev; see build.rs) into
+# the fuzz binary for the differential targets.
+c-compat = []
+
 # Prevent this from interfering with workspaces
 [workspace]
 members = ["."]
@@ -30,3 +35,16 @@ name = "decompress_into_fixed"
 path = "fuzz_targets/decompress_into_fixed.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "decompress_with_dictionaries"
+path = "fuzz_targets/decompress_with_dictionaries.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "differential_dictionaries"
+path = "fuzz_targets/differential_dictionaries.rs"
+test = false
+doc = false
+required-features = ["c-compat"]

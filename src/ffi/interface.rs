@@ -14,6 +14,16 @@ pub enum BrotliDecoderParameter {
 
 
 #[repr(C)]
+#[allow(dead_code)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BrotliSharedDictionaryType {
+    // Raw LZ77 prefix dictionary.
+    BROTLI_SHARED_DICTIONARY_RAW = 0,
+    // Serialized shared dictionary in the 0x91 0x00 shared-brotli container.
+    BROTLI_SHARED_DICTIONARY_SERIALIZED = 1,
+}
+
+#[repr(C)]
 pub enum BrotliDecoderResult {
     BROTLI_DECODER_RESULT_ERROR = 0,
     BROTLI_DECODER_RESULT_SUCCESS = 1,

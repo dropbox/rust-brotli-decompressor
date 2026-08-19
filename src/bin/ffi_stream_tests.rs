@@ -1,14 +1,275 @@
 #![cfg(test)]
 #![cfg(all(feature = "ffi-api", feature = "std"))]
 
+use std::alloc::{alloc, dealloc, Layout};
 use std::mem;
 use std::ptr;
+use std::vec::Vec;
 
-use brotli_decompressor::ffi::interface::BrotliDecoderResult;
+use brotli_decompressor::ffi::interface::{c_void, BrotliDecoderResult};
 use brotli_decompressor::ffi::{
-  BrotliDecoderCreateInstance, BrotliDecoderDecompressStream, BrotliDecoderDestroyInstance,
-  BrotliDecoderErrorCode, BrotliDecoderIsUsed,
+  BrotliDecoderAttachDictionary, BrotliDecoderCreateInstance, BrotliDecoderDecompressStream,
+  BrotliDecoderDestroyInstance, BrotliDecoderErrorCode, BrotliDecoderIsUsed,
 };
+
+struct FailingAllocator {
+  allocation_calls: usize,
+  fail_at: Option<usize>,
+  allocations: Vec<(*mut u8, Layout)>,
+}
+
+impl FailingAllocator {
+  fn new(fail_at: Option<usize>) -> Self {
+    FailingAllocator {
+      allocation_calls: 0,
+      fail_at: fail_at,
+      allocations: Vec::new(),
+    }
+  }
+
+  fn fail_next(&mut self) {
+    self.fail_at = Some(self.allocation_calls);
+  }
+}
+
+extern "C" fn test_alloc(opaque: *mut c_void, size: usize) -> *mut c_void {
+  let allocator = unsafe { &mut *(opaque as *mut FailingAllocator) };
+  let call = allocator.allocation_calls;
+  allocator.allocation_calls += 1;
+  if allocator.fail_at == Some(call) {
+    return ptr::null_mut();
+  }
+  let layout = Layout::from_size_align(size, 64).unwrap();
+  let allocation = unsafe { alloc(layout) };
+  if !allocation.is_null() {
+    allocator.allocations.push((allocation, layout));
+  }
+  allocation as *mut c_void
+}
+
+extern "C" fn test_free(opaque: *mut c_void, allocation: *mut c_void) {
+  if allocation.is_null() {
+    return;
+  }
+  let allocator = unsafe { &mut *(opaque as *mut FailingAllocator) };
+  let allocation = allocation as *mut u8;
+  let index = allocator.allocations.iter()
+    .position(|&(candidate, _)| candidate == allocation)
+    .expect("free of unknown test allocation");
+  let (_, layout) = allocator.allocations.swap_remove(index);
+  unsafe { dealloc(allocation, layout) };
+}
+
+#[test]
+fn create_instance_returns_null_when_custom_allocator_is_exhausted() {
+  // Failure 0 is the eagerly-created Huffman table; failure 1 is the outer
+  // BrotliDecoderState allocation after that table was created.
+  for fail_at in 0..2 {
+    let mut allocator = FailingAllocator::new(Some(fail_at));
+    let opaque = &mut allocator as *mut FailingAllocator as *mut c_void;
+    let state = unsafe {
+      BrotliDecoderCreateInstance(Some(test_alloc), Some(test_free), opaque)
+    };
+
+    assert!(state.is_null(), "allocation {} unexpectedly succeeded", fail_at);
+    assert!(allocator.allocations.is_empty(),
+            "allocation {} leaked memory", fail_at);
+  }
+}
+
+#[test]
+fn attach_dictionary_returns_false_when_custom_allocator_is_exhausted() {
+  let mut allocator = FailingAllocator::new(None);
+  let opaque = &mut allocator as *mut FailingAllocator as *mut c_void;
+  let state = unsafe {
+    BrotliDecoderCreateInstance(Some(test_alloc), Some(test_free), opaque)
+  };
+  assert!(!state.is_null());
+
+  allocator.fail_next();
+  let dictionary = [0x61u8];
+  assert_eq!(unsafe {
+    BrotliDecoderAttachDictionary(state, 0, dictionary.len(), dictionary.as_ptr())
+  }, 0);
+
+  unsafe { BrotliDecoderDestroyInstance(state) };
+  assert!(allocator.allocations.is_empty());
+}
+
+#[test]
+fn serialized_attach_frees_everything_at_each_allocation_failure() {
+  // shared_custom has all three attach-time allocations: the copied blob, the
+  // u32 metadata arena, and its copied raw-prefix chunk. Before the allocator
+  // null check this class of failure aborted inside slice::from_raw_parts_mut.
+  let dictionary = include_bytes!("../../testdata/shared_custom.dict");
+  for attach_allocation in 0..3 {
+    let mut allocator = FailingAllocator::new(None);
+    let opaque = &mut allocator as *mut FailingAllocator as *mut c_void;
+    let state = unsafe {
+      BrotliDecoderCreateInstance(Some(test_alloc), Some(test_free), opaque)
+    };
+    assert!(!state.is_null());
+    let persistent_allocations = allocator.allocations.len();
+    allocator.fail_at = Some(allocator.allocation_calls + attach_allocation);
+
+    assert_eq!(unsafe {
+      BrotliDecoderAttachDictionary(state, 1, dictionary.len(), dictionary.as_ptr())
+    }, 0, "attach allocation {} unexpectedly succeeded", attach_allocation);
+    assert_eq!(allocator.allocations.len(), persistent_allocations,
+               "attach allocation {} leaked memory", attach_allocation);
+
+    unsafe { BrotliDecoderDestroyInstance(state) };
+    assert!(allocator.allocations.is_empty());
+  }
+}
+
+#[test]
+fn create_instance_rejects_mismatched_allocator_callbacks_without_allocating() {
+  let mut allocator = FailingAllocator::new(None);
+  let opaque = &mut allocator as *mut FailingAllocator as *mut c_void;
+  let state = unsafe { BrotliDecoderCreateInstance(Some(test_alloc), None, opaque) };
+  assert!(state.is_null());
+  assert_eq!(allocator.allocation_calls, 0);
+  assert!(allocator.allocations.is_empty());
+}
+
+fn ffi_attach_and_decode(dict_type: i32,
+                         dictionary: &[u8],
+                         compressed: &[u8],
+                         expected: &[u8]) {
+  let state = unsafe { BrotliDecoderCreateInstance(None, None, ptr::null_mut()) };
+  assert!(!state.is_null());
+  assert_eq!(unsafe {
+    BrotliDecoderAttachDictionary(state, dict_type, dictionary.len(), dictionary.as_ptr())
+  }, 1);
+
+  let mut available_in = compressed.len();
+  let mut input = compressed.as_ptr();
+  let mut decoded = vec![0u8; expected.len() + 1];
+  let mut available_out = decoded.len();
+  let mut output = decoded.as_mut_ptr();
+  let mut total_out = 0usize;
+  let result = unsafe {
+    BrotliDecoderDecompressStream(
+      state,
+      &mut available_in,
+      &mut input,
+      &mut available_out,
+      &mut output,
+      &mut total_out,
+    )
+  };
+  assert_eq!(result as i32,
+             BrotliDecoderResult::BROTLI_DECODER_RESULT_SUCCESS as i32);
+  assert_eq!(available_in, 0);
+  assert_eq!(total_out, expected.len());
+  assert_eq!(&decoded[..total_out], expected);
+  unsafe { BrotliDecoderDestroyInstance(state) };
+}
+
+#[test]
+fn ffi_raw_dictionary_attach_decodes_reference_stream() {
+  let dictionary = include_bytes!("../../testdata/issue42.dict");
+  let compressed = include_bytes!("../../testdata/issue42.compressed");
+  let mut expected = Vec::<u8>::new();
+  for _ in 0..16 {
+    expected.extend_from_slice(dictionary);
+  }
+  ffi_attach_and_decode(0, dictionary, compressed, &expected);
+}
+
+#[test]
+fn ffi_serialized_dictionary_attach_decodes_reference_stream() {
+  ffi_attach_and_decode(
+      1,
+      include_bytes!("../../testdata/shared_custom.dict"),
+      include_bytes!("../../testdata/shared_custom.compressed"),
+      include_bytes!("../../testdata/shared_content"));
+}
+
+#[test]
+fn ffi_attach_validates_type_state_pointer_data_pointer_and_empty_input() {
+  assert_eq!(unsafe {
+    BrotliDecoderAttachDictionary(ptr::null_mut(), 0, 0, ptr::null())
+  }, 0);
+
+  let state = unsafe { BrotliDecoderCreateInstance(None, None, ptr::null_mut()) };
+  assert!(!state.is_null());
+  for invalid_type in [-1, 2, i32::max_value()].iter() {
+    assert_eq!(unsafe {
+      BrotliDecoderAttachDictionary(state, *invalid_type, 0, ptr::null())
+    }, 0);
+  }
+  assert_eq!(unsafe {
+    BrotliDecoderAttachDictionary(state, 0, 1, ptr::null())
+  }, 0);
+  // Empty raw dictionaries are successful no-ops and do not consume a chunk;
+  // an empty serialized dictionary is malformed.
+  assert_eq!(unsafe {
+    BrotliDecoderAttachDictionary(state, 0, 0, ptr::null())
+  }, 1);
+  assert_eq!(unsafe {
+    BrotliDecoderAttachDictionary(state, 1, 0, ptr::null())
+  }, 0);
+  unsafe { BrotliDecoderDestroyInstance(state) };
+  unsafe { BrotliDecoderDestroyInstance(ptr::null_mut()) };
+}
+
+#[test]
+fn ffi_attach_rejects_second_custom_dictionary_and_sixteenth_raw_chunk() {
+  let serialized = include_bytes!("../../testdata/shared_custom.dict");
+  let state = unsafe { BrotliDecoderCreateInstance(None, None, ptr::null_mut()) };
+  assert!(!state.is_null());
+  assert_eq!(unsafe {
+    BrotliDecoderAttachDictionary(state, 1, serialized.len(), serialized.as_ptr())
+  }, 1);
+  assert_eq!(unsafe {
+    BrotliDecoderAttachDictionary(state, 1, serialized.len(), serialized.as_ptr())
+  }, 0);
+  unsafe { BrotliDecoderDestroyInstance(state) };
+
+  let state = unsafe { BrotliDecoderCreateInstance(None, None, ptr::null_mut()) };
+  assert!(!state.is_null());
+  let byte = [0x61u8];
+  for chunk in 0..15 {
+    assert_eq!(unsafe {
+      BrotliDecoderAttachDictionary(state, 0, byte.len(), byte.as_ptr())
+    }, 1, "raw chunk {} was rejected", chunk);
+  }
+  assert_eq!(unsafe {
+    BrotliDecoderAttachDictionary(state, 0, byte.len(), byte.as_ptr())
+  }, 0);
+  unsafe { BrotliDecoderDestroyInstance(state) };
+}
+
+#[test]
+fn ffi_attach_after_decoding_is_rejected() {
+  static ENCODED_FF_BYTES: &'static [u8] = b"\x1f\x07\x00\xf8\x27\xfe\x43\x84\x00\x00";
+  let state = unsafe { BrotliDecoderCreateInstance(None, None, ptr::null_mut()) };
+  assert!(!state.is_null());
+  let mut available_in = ENCODED_FF_BYTES.len();
+  let mut input = ENCODED_FF_BYTES.as_ptr();
+  let mut decoded = [0u8; 8];
+  let mut available_out = decoded.len();
+  let mut output = decoded.as_mut_ptr();
+  let result = unsafe {
+    BrotliDecoderDecompressStream(
+      state,
+      &mut available_in,
+      &mut input,
+      &mut available_out,
+      &mut output,
+      ptr::null_mut(),
+    )
+  };
+  assert_eq!(result as i32,
+             BrotliDecoderResult::BROTLI_DECODER_RESULT_SUCCESS as i32);
+  let dictionary = [0x61u8];
+  assert_eq!(unsafe {
+    BrotliDecoderAttachDictionary(state, 0, dictionary.len(), dictionary.as_ptr())
+  }, 0);
+  unsafe { BrotliDecoderDestroyInstance(state) };
+}
 
 #[test]
 fn stream_rejects_null_input_buffer_with_nonzero_length() {
