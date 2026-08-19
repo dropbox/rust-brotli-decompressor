@@ -1747,6 +1747,14 @@ fn WrapRingBuffer<AllocU8: alloc::Allocator<u8>,
   if s.should_wrap_ringbuffer {
     let (ring_buffer_start, ring_buffer_end) = s.ringbuffer.slice_mut().split_at_mut(s.ringbuffer_size as usize);
     let pos = s.pos as usize;
+    // A transformed custom-dictionary word can overshoot the end by at most
+    // 540 bytes (255-byte prefix + 31-byte word + 255-byte suffix, starting at
+    // the final ring-buffer byte). Wrapping is only done at the full window
+    // size, whose minimum is 1 << kBrotliLargeMinWbits == 1024.
+    debug_assert!(pos <= ring_buffer_start.len(),
+                  "ring-buffer overshoot exceeds one full window");
+    debug_assert!(pos <= ring_buffer_end.len(),
+                  "ring-buffer overshoot exceeds write-ahead slack");
     ring_buffer_start.split_at_mut(pos).0.clone_from_slice(ring_buffer_end.split_at(pos).0);
     s.should_wrap_ringbuffer = false;
   }
@@ -2555,17 +2563,6 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
           } else {
             let mut p1 = fast_slice!((s.ringbuffer)[((pos - 1) & s.ringbuffer_mask) as usize]);
             let mut p2 = fast_slice!((s.ringbuffer)[((pos - 2) & s.ringbuffer_mask) as usize]);
-            if s.custom_dict_avoid_context_seed && pos < 2 {
-                mark_unlikely();
-                p2 = 0;
-                p1 = 0;
-            }
-            if pos > 1
-            {
-                // have already set both seed bytes and can now move on to using
-                // the ringbuffer.
-                s.custom_dict_avoid_context_seed = false;
-            }
             let mut inner_return: bool = false;
             let mut inner_continue: bool = false;
             loop {
@@ -3149,8 +3146,6 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
         }
         BrotliRunningState::BROTLI_STATE_INITIALIZE => {
           s.max_backward_distance = (1 << s.window_bits) - kBrotliWindowGap as i32;
-          s.max_backward_distance_minus_custom_dict_size = (s.max_backward_distance as isize -
-                                                           s.custom_dict_size) as i32;
           // A dictionary passed at construction time becomes a compound
           // dictionary chunk; it is kept in its own buffer rather than
           // prepended to the ring buffer so that it remains addressable

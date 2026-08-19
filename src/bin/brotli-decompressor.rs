@@ -362,7 +362,7 @@ pub fn decompress_serialized_dict<InputType, OutputType>(r: &mut InputType,
 
 fn main() {
   let mut dictionary = Vec::<u8>::new();
-  let mut serialized_dictionary = Vec::<u8>::new();
+  let mut serialized_dictionary: Option<Vec<u8>> = None;
   let mut double_dash = false;
   let mut input: Option<File> = None;
   let mut output: Option<File> = None;
@@ -380,11 +380,13 @@ fn main() {
       continue;
     }
     if argument.starts_with("-serialized_dict=") && !double_dash {
-      if !serialized_dictionary.is_empty() {
+      if serialized_dictionary.is_some() {
         panic!("Only one serialized dictionary may be attached");
       }
       let mut dict_file = File::open(&Path::new(&argument[17..])).unwrap();
-      dict_file.read_to_end(&mut serialized_dictionary).unwrap();
+      let mut serialized = Vec::<u8>::new();
+      dict_file.read_to_end(&mut serialized).unwrap();
+      serialized_dictionary = Some(serialized);
       continue;
     }
     if input.is_none() {
@@ -397,7 +399,7 @@ fn main() {
   }
   #[cfg(not(feature="seccomp"))]
   {
-    if !serialized_dictionary.is_empty() {
+    if let Some(serialized_dictionary) = serialized_dictionary {
       match (input, output) {
         (None, _) => decompress_serialized_dict(&mut io::stdin(), &mut io::stdout(), 65536, dictionary, serialized_dictionary).unwrap(),
         (Some(mut i), None) => decompress_serialized_dict(&mut i, &mut io::stdout(), 65536, dictionary, serialized_dictionary).unwrap(),
@@ -405,29 +407,16 @@ fn main() {
       }
       return;
     }
-    if input.is_none() {
-      decompress(&mut io::stdin(), &mut io::stdout(), 65536, dictionary).unwrap();
-    } else {
-      if output.is_none() {
-        decompress(&mut input.unwrap(), &mut io::stdout(), 65536, dictionary).unwrap();
-      } else {
-        decompress(&mut input.unwrap(), &mut output.unwrap(), 65536, dictionary).unwrap();
-      }
-    }
   }
   #[cfg(feature="seccomp")]
   {
-    if !serialized_dictionary.is_empty() {
+    if serialized_dictionary.is_some() {
       panic!("serialized dictionaries unsupported with seccomp");
     }
-    if input.is_none() {
-      decompress(&mut io::stdin(), &mut io::stdout(), 65536, dictionary).unwrap();
-    } else {
-      if output.is_none() {
-        decompress(&mut input.unwrap(), &mut io::stdout(), 65536, dictionary).unwrap();
-      } else {
-        decompress(&mut input.unwrap(), &mut output.unwrap(), 65536, dictionary).unwrap();
-      }
-    }
+  }
+  match (input, output) {
+    (None, _) => decompress(&mut io::stdin(), &mut io::stdout(), 65536, dictionary).unwrap(),
+    (Some(mut i), None) => decompress(&mut i, &mut io::stdout(), 65536, dictionary).unwrap(),
+    (Some(mut i), Some(mut o)) => decompress(&mut i, &mut o, 65536, dictionary).unwrap(),
   }
 }

@@ -116,33 +116,24 @@ impl<Ty:Sized+Default+Clone> alloc::Allocator<Ty> for SubclassableAllocator {
 
 
 #[cfg(not(feature="std"))]
-static mut G_SLICE:&'static mut[u8] = &mut[];
-#[cfg(not(feature="std"))]
 pub struct MemoryBlock<Ty:Sized+Default>(*mut[Ty]);
 #[cfg(not(feature="std"))]
 impl<Ty:Sized+Default> Default for MemoryBlock<Ty> {
     fn default() -> Self {
-        MemoryBlock(unsafe{core::mem::transmute::<*mut [u8], *mut[Ty]>(G_SLICE.as_mut())})
+        MemoryBlock(core::ptr::slice_from_raw_parts_mut(
+            core::ptr::NonNull::<Ty>::dangling().as_ptr(), 0))
     }
 }
 #[cfg(not(feature="std"))]
 impl<Ty:Sized+Default> alloc::SliceWrapper<Ty> for MemoryBlock<Ty> {
     fn slice(&self) -> &[Ty] {
-        if unsafe{(*self.0).len()} == 0 {
-            &[]
-        } else {
-            unsafe{super::slice_from_raw_parts_or_nil(&(*self.0)[0], (*self.0).len())}
-        }
+        unsafe { &*self.0 }
     }
 }
 #[cfg(not(feature="std"))]
 impl<Ty:Sized+Default> alloc::SliceWrapperMut<Ty> for MemoryBlock<Ty> {
     fn slice_mut(&mut self) -> &mut [Ty] {
-        if unsafe{(*self.0).len()} == 0 {
-            &mut []
-        } else {
-            unsafe{super::slice_from_raw_parts_or_nil_mut(&mut (*self.0)[0], (*self.0).len())}
-        }
+        unsafe { &mut *self.0 }
     }
 }
 
@@ -162,14 +153,14 @@ extern "C" fn eh_personality() {
 impl<Ty:Sized+Default> core::ops::Index<usize> for MemoryBlock<Ty> {
     type Output = Ty;
     fn index(&self, index:usize) -> &Ty {
-        unsafe{&(*self.0)[index]}
+        unsafe { &(&*self.0)[index] }
     }
 }
 #[cfg(not(feature="std"))]
 impl<Ty:Sized+Default> core::ops::IndexMut<usize> for MemoryBlock<Ty> {
 
     fn index_mut(&mut self, index:usize) -> &mut Ty {
-        unsafe{&mut (*self.0)[index]}
+        unsafe { &mut (&mut *self.0)[index] }
     }
 }
 
@@ -194,7 +185,7 @@ impl<Ty:Sized+Default+Clone> alloc::Allocator<Ty> for SubclassableAllocator {
             for item in slice_ref.iter_mut() {
                 unsafe{core::ptr::write(item, Ty::default())};
             }
-            return MemoryBlock(slice_ref.as_mut())
+            return MemoryBlock(slice_ref as *mut [Ty])
         } else {
             panic!("Must provide allocators in no-stdlib code");
         }

@@ -39,7 +39,7 @@ mod huffman;
 mod state;
 mod prefix;
 mod context;
-pub mod shared_dictionary;
+mod shared_dictionary;
 pub mod transform;
 mod test;
 mod decode;

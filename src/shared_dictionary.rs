@@ -45,7 +45,7 @@ const BROTLI_TRANSFORM_OMIT_FIRST_9: u8 = 20;
 //   0..8    size_bits_by_length for lengths 0..32, one byte per length
 //   8..40   offsets_by_length for lengths 0..32
 //   40      offset of the concatenated word data within the blob
-pub const WORD_LIST_STRIDE: usize = 41;
+pub(crate) const WORD_LIST_STRIDE: usize = 41;
 const WL_SIZE_BITS: usize = 0;
 const WL_OFFSETS: usize = 8;
 const WL_DATA_OFFSET: usize = 40;
@@ -56,7 +56,7 @@ const WL_DATA_OFFSET: usize = 40;
 //   3       offset of the prefix/suffix stringlet region in the blob
 //   4       cutOffTransforms[0] (index of ["", IDENTITY, ""]) as i16, or -1
 //   5..133  prefix_suffix_map: 256 u16 offsets, two per u32, little-end first
-pub const TRANSFORM_LIST_STRIDE: usize = 133;
+pub(crate) const TRANSFORM_LIST_STRIDE: usize = 133;
 const TL_NUM_TRANSFORMS: usize = 0;
 const TL_TRANSFORMS_OFFSET: usize = 1;
 const TL_PARAMS_OFFSET: usize = 2;
@@ -107,10 +107,10 @@ impl<AllocU8: alloc::Allocator<u8>,
      AllocU32: alloc::Allocator<u32>> BrotliSharedDictionary<AllocU8, AllocU32> {
   // True if a custom word list or transform list replaces the built-in
   // static dictionary; the decoder then takes the generalized lookup path.
-  pub fn is_custom(&self) -> bool {
+  pub(crate) fn is_custom(&self) -> bool {
     self.num_word_lists != 0 || self.num_transform_lists != 0
   }
-  pub fn words_of(&self, dict_id: u8) -> DictWords<'_> {
+  pub(crate) fn words_of(&self, dict_id: u8) -> DictWords<'_> {
     let index = self.words_index[dict_id as usize];
     if index >= self.num_word_lists {
       DictWords::Builtin
@@ -122,7 +122,7 @@ impl<AllocU8: alloc::Allocator<u8>,
       })
     }
   }
-  pub fn transforms_of(&self, dict_id: u8) -> DictTransforms<'_> {
+  pub(crate) fn transforms_of(&self, dict_id: u8) -> DictTransforms<'_> {
     let index = self.transforms_index[dict_id as usize];
     if index >= self.num_transform_lists {
       DictTransforms::Builtin
@@ -138,7 +138,7 @@ impl<AllocU8: alloc::Allocator<u8>,
 }
 
 #[derive(Clone, Copy)]
-pub struct CustomWords<'a> {
+pub(crate) struct CustomWords<'a> {
   meta: &'a [u32],
   blob: &'a [u8],
 }
@@ -156,13 +156,13 @@ impl<'a> CustomWords<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub enum DictWords<'a> {
+pub(crate) enum DictWords<'a> {
   Builtin,
   Custom(CustomWords<'a>),
 }
 
 impl<'a> DictWords<'a> {
-  pub fn size_bits_by_length(&self, len: i32) -> u8 {
+  pub(crate) fn size_bits_by_length(&self, len: i32) -> u8 {
     match *self {
       DictWords::Builtin => {
         if len as u32 > kBrotliMaxDictionaryWordLength as u32 {
@@ -174,7 +174,7 @@ impl<'a> DictWords<'a> {
       DictWords::Custom(ref words) => words.size_bits_by_length(len),
     }
   }
-  pub fn word(&self, len: i32, word_idx: i32) -> &'a [u8] {
+  pub(crate) fn word(&self, len: i32, word_idx: i32) -> &'a [u8] {
     match *self {
       DictWords::Builtin => {
         let offset = kBrotliDictionaryOffsetsByLength[len as usize] as usize +
@@ -187,7 +187,7 @@ impl<'a> DictWords<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub struct CustomTransforms<'a> {
+pub(crate) struct CustomTransforms<'a> {
   meta: &'a [u32],
   blob: &'a [u8],
 }
@@ -275,26 +275,26 @@ impl<'a> CustomTransforms<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub enum DictTransforms<'a> {
+pub(crate) enum DictTransforms<'a> {
   Builtin,
   Custom(CustomTransforms<'a>),
 }
 
 impl<'a> DictTransforms<'a> {
-  pub fn num_transforms(&self) -> i32 {
+  pub(crate) fn num_transforms(&self) -> i32 {
     match *self {
       DictTransforms::Builtin => kNumTransforms,
       DictTransforms::Custom(ref transforms) => transforms.num_transforms(),
     }
   }
   // The transform index that is ["", IDENTITY, ""] (plain copy), or -1.
-  pub fn cutoff_identity(&self) -> i32 {
+  pub(crate) fn cutoff_identity(&self) -> i32 {
     match *self {
       DictTransforms::Builtin => 0,
       DictTransforms::Custom(ref transforms) => transforms.cutoff_identity(),
     }
   }
-  pub fn apply(&self, dst: &mut [u8], word: &[u8], len: i32, transform_idx: i32) -> i32 {
+  pub(crate) fn apply(&self, dst: &mut [u8], word: &[u8], len: i32, transform_idx: i32) -> i32 {
     match *self {
       DictTransforms::Builtin => TransformDictionaryWord(dst, word, len, transform_idx),
       DictTransforms::Custom(ref transforms) => transforms.apply(dst, word, len, transform_idx),
@@ -561,16 +561,16 @@ fn parse_transforms_list(reader: &mut Reader, mut out: Option<&mut [u32]>) -> Re
   Ok(())
 }
 
-pub struct ParsedSerializedDictionary {
+pub(crate) struct ParsedSerializedDictionary {
   // Offset and length of the embedded LZ77 prefix dictionary, if any.
-  pub prefix: Option<(usize, usize)>,
-  pub num_word_lists: u8,
-  pub num_transform_lists: u8,
+  pub(crate) prefix: Option<(usize, usize)>,
+  pub(crate) num_word_lists: u8,
+  pub(crate) num_transform_lists: u8,
 }
 
 // First pass: validates the container far enough to learn the word list and
 // transform list counts (and thus the arena size), like DryParseDictionary.
-pub fn dry_parse_serialized_dictionary(data: &[u8]) -> Result<ParsedSerializedDictionary, ()> {
+pub(crate) fn dry_parse_serialized_dictionary(data: &[u8]) -> Result<ParsedSerializedDictionary, ()> {
   // Check magic header bytes.
   if data.len() < 2 || data[0] != 0x91 || data[1] != 0 {
     return Err(());
@@ -615,16 +615,49 @@ pub fn dry_parse_serialized_dictionary(data: &[u8]) -> Result<ParsedSerializedDi
 // num_word_lists * WORD_LIST_STRIDE + num_transform_lists * TRANSFORM_LIST_STRIDE
 // zero-initialized u32s. Must be called with the summary returned by
 // dry_parse_serialized_dictionary for the same data.
-pub fn parse_serialized_dictionary_into<AllocU8: alloc::Allocator<u8>,
-                                        AllocU32: alloc::Allocator<u32>>(
+pub(crate) fn parse_serialized_dictionary_into<AllocU8: alloc::Allocator<u8>,
+                                               AllocU32: alloc::Allocator<u32>>(
     data: &[u8],
     summary: &ParsedSerializedDictionary,
     dict: &mut BrotliSharedDictionary<AllocU8, AllocU32>)
     -> Result<(), ()> {
+  if data.len() < 2 || data[0] != 0x91 || data[1] != 0 {
+    return Err(());
+  }
+  if summary.num_word_lists as usize > SHARED_BROTLI_NUM_DICTIONARY_CONTEXTS ||
+     summary.num_transform_lists as usize > SHARED_BROTLI_NUM_DICTIONARY_CONTEXTS {
+    return Err(());
+  }
+  let arena_size = (summary.num_word_lists as usize)
+      .checked_mul(WORD_LIST_STRIDE)
+      .and_then(|word_size| {
+        (summary.num_transform_lists as usize)
+            .checked_mul(TRANSFORM_LIST_STRIDE)
+            .and_then(|transform_size| word_size.checked_add(transform_size))
+      })
+      .ok_or(())?;
+  if dict.meta.slice().len() != arena_size {
+    return Err(());
+  }
+
   let mut reader = Reader { data: data, pos: 2 };
   let chunk_size = reader.read_varint32()?;
-  reader.pos += chunk_size as usize;
+  if chunk_size > 1073741823 {
+    return Err(());
+  }
+  let prefix = if chunk_size == 0 {
+    None
+  } else {
+    Some((reader.pos, chunk_size as usize))
+  };
+  reader.pos = reader.pos.checked_add(chunk_size as usize).ok_or(())?;
+  if reader.pos > data.len() || prefix != summary.prefix {
+    return Err(());
+  }
   let num_word_lists = reader.read_u8()?;
+  if num_word_lists != summary.num_word_lists {
+    return Err(());
+  }
   dict.num_word_lists = num_word_lists;
   for i in 0..num_word_lists as usize {
     let start = i * WORD_LIST_STRIDE;
@@ -632,11 +665,10 @@ pub fn parse_serialized_dictionary_into<AllocU8: alloc::Allocator<u8>,
                     Some(&mut dict.meta.slice_mut()[start..start + WORD_LIST_STRIDE]))?;
   }
   let num_transform_lists = reader.read_u8()?;
-  dict.num_transform_lists = num_transform_lists;
-  if num_word_lists != summary.num_word_lists ||
-     num_transform_lists != summary.num_transform_lists {
+  if num_transform_lists != summary.num_transform_lists {
     return Err(());
   }
+  dict.num_transform_lists = num_transform_lists;
   let tl_base = num_word_lists as usize * WORD_LIST_STRIDE;
   for i in 0..num_transform_lists as usize {
     let start = tl_base + i * TRANSFORM_LIST_STRIDE;
@@ -826,6 +858,30 @@ mod tests {
     let len = blob.len();
     blob[len - 3] = 2; // words index; only one word list, so 2 > 1 is invalid
     assert!(parse(&blob[..]).is_err());
+  }
+
+  #[test]
+  fn test_second_pass_rejects_mismatched_summary_before_arena_access() {
+    let blob = serialized_with_custom_lists();
+    // Deliberately claim there are no lists and provide the corresponding
+    // zero-length arena. The count must be rejected before list 0 is indexed.
+    let summary = ParsedSerializedDictionary {
+      prefix: None,
+      num_word_lists: 0,
+      num_transform_lists: 0,
+    };
+    let mut dict = BrotliSharedDictionary::<StandardAlloc, StandardAlloc>::default();
+    assert!(parse_serialized_dictionary_into(&blob, &summary, &mut dict).is_err());
+
+    // A matching summary with a short arena is likewise a normal parse error,
+    // not an indexing panic.
+    let summary = dry_parse_serialized_dictionary(&blob).unwrap();
+    let arena_size = summary.num_word_lists as usize * WORD_LIST_STRIDE +
+                     summary.num_transform_lists as usize * TRANSFORM_LIST_STRIDE;
+    let mut alloc = StandardAlloc::default();
+    dict.meta = <StandardAlloc as Allocator<u32>>::alloc_cell(
+        &mut alloc, arena_size - 1);
+    assert!(parse_serialized_dictionary_into(&blob, &summary, &mut dict).is_err());
   }
 
   #[test]

@@ -226,7 +226,6 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub buffer_length: u32,
   pub pos: i32,
   pub max_backward_distance: i32,
-  pub max_backward_distance_minus_custom_dict_size: i32,
   pub max_distance: i32,
   pub ringbuffer_size: i32,
   pub ringbuffer_mask: i32,
@@ -310,8 +309,6 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
 
   // For custom dictionaries
   pub custom_dict: AllocU8::AllocatedMemory,
-  pub custom_dict_size: isize,
-  pub custom_dict_avoid_context_seed: bool,
   pub compound_dictionary: BrotliDecoderCompoundDictionary<AllocU8>,
   // Custom word/transform lists from an attached serialized shared
   // dictionary; selects the built-in static dictionary when empty.
@@ -337,7 +334,7 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub trivial_literal_contexts: [u32; 8],
 }
 macro_rules! make_brotli_state {
- ($alloc_u8 : expr, $alloc_u32 : expr, $alloc_hc : expr, $custom_dict : expr, $custom_dict_len: expr) => (BrotliState::<AllocU8, AllocU32, AllocHC>{
+ ($alloc_u8 : expr, $alloc_u32 : expr, $alloc_hc : expr, $custom_dict : expr) => (BrotliState::<AllocU8, AllocU32, AllocHC>{
             state : BrotliRunningState::BROTLI_STATE_UNINITED,
             loop_counter : 0,
             br : BrotliBitReader::default(),
@@ -348,7 +345,6 @@ macro_rules! make_brotli_state {
             buffer_length : 0,
             pos : 0,
             max_backward_distance : 0,
-            max_backward_distance_minus_custom_dict_size : 0,
             max_distance : 0,
             ringbuffer_size : 0,
             ringbuffer_mask: 0,
@@ -416,8 +412,6 @@ macro_rules! make_brotli_state {
 
            /* For custom dictionaries */
            custom_dict : $custom_dict,
-           custom_dict_size : $custom_dict_len as isize,
-           custom_dict_avoid_context_seed: $custom_dict_len != 0,
            compound_dictionary : BrotliDecoderCompoundDictionary::default(),
            dictionary : BrotliSharedDictionary::default(),
            /* less used attributes are in the end of this struct */
@@ -452,7 +446,7 @@ impl <'brotli_state,
     pub fn new(alloc_u8 : AllocU8,
            alloc_u32 : AllocU32,
            alloc_hc : AllocHC) -> Self{
-        let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default(), 0);
+        let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default());
         retval.large_window = true;
         retval.context_map_table = retval.alloc_hc.alloc_cell(
           BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
@@ -464,7 +458,7 @@ impl <'brotli_state,
            alloc_hc : AllocHC,
            custom_dict: AllocU8::AllocatedMemory) -> Self{
         let custom_dict_len = custom_dict.slice().len();
-        let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, custom_dict, custom_dict_len);
+        let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, custom_dict);
         retval.context_map_table = retval.alloc_hc.alloc_cell(
           BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
         retval.large_window =  true;
@@ -472,17 +466,21 @@ impl <'brotli_state,
         // The dictionary becomes the furthest compound dictionary chunk;
         // any subsequently attach_dictionary'd ones are nearer in distance
         // space.
-        if custom_dict_len != 0 {
+        if custom_dict_len != 0 && custom_dict_len <= SHARED_BROTLI_MAX_RAW_DICT_SIZE {
             let dict = core::mem::replace(&mut retval.custom_dict,
                                           AllocU8::AllocatedMemory::default());
-            retval.attach_compound_dictionary_chunk(dict);
+            // A fresh state has no chunks, so the size check above makes this
+            // infallible. Oversized dictionaries remain in `custom_dict` and
+            // are rejected through the normal decoder error path at startup.
+            let attached = retval.attach_compound_dictionary_chunk(dict);
+            debug_assert!(attached);
         }
         retval
     }
     pub fn new_strict(alloc_u8 : AllocU8,
            alloc_u32 : AllocU32,
            alloc_hc : AllocHC) -> Self{
-        let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default(), 0);
+        let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default());
         retval.context_map_table = retval.alloc_hc.alloc_cell(
           BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
         retval.large_window =  false;

@@ -999,6 +999,74 @@ fn issue42_expanded() -> Vec<u8> {
   expanded
 }
 
+type DictionaryTestState = BrotliState<HeapAllocator<u8>,
+                                       HeapAllocator<u32>,
+                                       HeapAllocator<HuffmanCode>>;
+
+fn new_dictionary_test_state() -> DictionaryTestState {
+  BrotliState::new(HeapAllocator::<u8> { default_value: 0 },
+                   HeapAllocator::<u32> { default_value: 0 },
+                   HeapAllocator::<HuffmanCode> { default_value: HuffmanCode::default() })
+}
+
+fn new_dictionary_test_state_with_custom_dict(bytes: &[u8]) -> DictionaryTestState {
+  let mut alloc_u8 = HeapAllocator::<u8> { default_value: 0 };
+  let mut dict = alloc_u8.alloc_cell(bytes.len());
+  dict.slice_mut().clone_from_slice(bytes);
+  BrotliState::new_with_custom_dictionary(
+      alloc_u8,
+      HeapAllocator::<u32> { default_value: 0 },
+      HeapAllocator::<HuffmanCode> { default_value: HuffmanCode::default() },
+      dict)
+}
+
+fn attach_test_dictionary(state: &mut DictionaryTestState,
+                          bytes: &[u8],
+                          serialized: bool) -> bool {
+  let mut dict = state.alloc_u8.alloc_cell(bytes.len());
+  dict.slice_mut().clone_from_slice(bytes);
+  if serialized {
+    state.attach_serialized_dictionary(dict)
+  } else {
+    state.attach_dictionary(dict)
+  }
+}
+
+// Exercise the allocator-generic streaming core directly. In an `unsafe`
+// feature build this reaches the unchecked indexing macros, unlike the former
+// StandardAlloc-only reader tests.
+fn decode_dictionary_test_state(state: &mut DictionaryTestState,
+                                compressed: &[u8]) -> Result<Vec<u8>, ()> {
+  let mut available_in = compressed.len();
+  let mut input_offset = 0usize;
+  let mut total_out = 0usize;
+  let mut decoded = Vec::<u8>::new();
+  loop {
+    let mut output = [0u8; 4096];
+    let mut available_out = output.len();
+    let mut output_offset = 0usize;
+    let result = BrotliDecompressStream(&mut available_in,
+                                        &mut input_offset,
+                                        compressed,
+                                        &mut available_out,
+                                        &mut output_offset,
+                                        &mut output,
+                                        &mut total_out,
+                                        state);
+    decoded.extend_from_slice(&output[..output_offset]);
+    match result {
+      BrotliResult::ResultSuccess => return Ok(decoded),
+      BrotliResult::ResultFailure => return Err(()),
+      BrotliResult::NeedsMoreOutput => {},
+      BrotliResult::NeedsMoreInput => {
+        if available_in == 0 {
+          return Err(());
+        }
+      },
+    }
+  }
+}
+
 fn decompress_issue42_helper(buffer_size: usize) {
   let mut input = Buffer::new(include_bytes!("../../testdata/issue42.compressed"));
   let mut output = Buffer::new(&[]);
@@ -1028,62 +1096,64 @@ fn test_custom_dict_exceeds_window_tiny_buffers() {
 }
 
 #[test]
-#[cfg(all(feature="std", not(feature="unsafe")))]
-fn test_custom_dict_exceeds_window_reader() {
-  use super::brotli_decompressor::StandardAlloc;
-  let mut alloc = StandardAlloc::default();
+fn test_custom_dict_exceeds_window_state_constructor() {
   let dict_bytes = include_bytes!("../../testdata/issue42.dict");
-  let mut dict = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, dict_bytes.len());
-  dict.slice_mut().clone_from_slice(&dict_bytes[..]);
-  let mut reader = Decompressor::new_with_custom_dict(
-      &include_bytes!("../../testdata/issue42.compressed")[..], 4096, dict);
-  let mut decoded = Vec::<u8>::new();
-  reader.read_to_end(&mut decoded).unwrap();
+  let mut state = new_dictionary_test_state_with_custom_dict(dict_bytes);
+  let decoded = decode_dictionary_test_state(
+      &mut state, include_bytes!("../../testdata/issue42.compressed")).unwrap();
   assert_eq!(decoded.len(), 65536);
   assert_eq!(decoded, issue42_expanded());
+}
+
+// Matches google-brotli/java/org/brotli/dec/CompoundDictionaryTest.java.
+const GOOGLE_BROTLI_ONE_COPY: [u8; 11] = [
+  0xa1, 0xa8, 0x00, 0xc0, 0x2f, 0x01, 0x10, 0xc4, 0x44, 0x09, 0x00
+];
+const GOOGLE_BROTLI_COMPOUND_TEXT: &[u8] = b"Kot lomom kolol slona!";
+
+#[test]
+fn test_google_brotli_compound_dictionary_one_piece() {
+  let mut state = new_dictionary_test_state();
+  assert!(attach_test_dictionary(&mut state, GOOGLE_BROTLI_COMPOUND_TEXT, false));
+  let decoded = decode_dictionary_test_state(&mut state, &GOOGLE_BROTLI_ONE_COPY).unwrap();
+  assert_eq!(decoded, GOOGLE_BROTLI_COMPOUND_TEXT);
+}
+
+#[test]
+fn test_google_brotli_compound_dictionary_two_pieces() {
+  let mut state = new_dictionary_test_state();
+  assert!(attach_test_dictionary(
+      &mut state, &GOOGLE_BROTLI_COMPOUND_TEXT[..13], false));
+  assert!(attach_test_dictionary(
+      &mut state, &GOOGLE_BROTLI_COMPOUND_TEXT[13..], false));
+  let decoded = decode_dictionary_test_state(&mut state, &GOOGLE_BROTLI_ONE_COPY).unwrap();
+  assert_eq!(decoded, GOOGLE_BROTLI_COMPOUND_TEXT);
 }
 
 // Attaching a dictionary in pieces is equivalent to attaching it whole:
 // chunks occupy consecutive ranges of the same backward-distance space.
 #[test]
-#[cfg(all(feature="std", not(feature="unsafe")))]
 fn test_attach_dictionary_in_chunks() {
-  use super::brotli_decompressor::StandardAlloc;
-  let mut alloc = StandardAlloc::default();
   let dict_bytes = include_bytes!("../../testdata/issue42.dict");
-  let mut reader = Decompressor::new(
-      &include_bytes!("../../testdata/issue42.compressed")[..], 4096);
+  let mut state = new_dictionary_test_state();
   // Uneven splits so copies cross chunk boundaries mid-command.
   for piece in [&dict_bytes[..1234], &dict_bytes[1234..1235], &dict_bytes[1235..]].iter() {
-    let mut chunk = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, piece.len());
-    chunk.slice_mut().clone_from_slice(piece);
-    assert!(reader.attach_dictionary(chunk));
+    assert!(attach_test_dictionary(&mut state, piece, false));
   }
-  let mut decoded = Vec::<u8>::new();
-  reader.read_to_end(&mut decoded).unwrap();
+  let decoded = decode_dictionary_test_state(
+      &mut state, include_bytes!("../../testdata/issue42.compressed")).unwrap();
   assert_eq!(decoded.len(), 65536);
   assert_eq!(decoded, issue42_expanded());
 }
 
 #[test]
-#[cfg(all(feature="std", not(feature="unsafe")))]
 fn test_attach_dictionary_too_late_fails() {
-  use super::brotli_decompressor::StandardAlloc;
-  let mut alloc = StandardAlloc::default();
   let dict_bytes = include_bytes!("../../testdata/issue42.dict");
-  let mut dict = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, dict_bytes.len());
-  dict.slice_mut().clone_from_slice(&dict_bytes[..]);
-  let mut reader = Decompressor::new_with_custom_dict(
-      &include_bytes!("../../testdata/issue42.compressed")[..], 4096, dict);
-  let mut first = [0u8; 16];
-  let n_read = reader.read(&mut first).unwrap();
-  assert!(n_read > 0);
+  let mut state = new_dictionary_test_state_with_custom_dict(dict_bytes);
+  let decoded = decode_dictionary_test_state(
+      &mut state, include_bytes!("../../testdata/issue42.compressed")).unwrap();
   // Decoding has begun; further dictionaries must be rejected.
-  let mut late = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, 4);
-  late.slice_mut().clone_from_slice(b"late");
-  assert!(!reader.attach_dictionary(late));
-  let mut decoded = first[..n_read].to_vec();
-  reader.read_to_end(&mut decoded).unwrap();
+  assert!(!attach_test_dictionary(&mut state, b"late", false));
   assert_eq!(decoded, issue42_expanded());
 }
 
@@ -1095,21 +1165,14 @@ fn test_attach_dictionary_too_late_fails() {
 // shared_context additionally selects between the custom and the built-in
 // dictionary through a context map (and exercises the cross-dictionary
 // fallback scan).
-#[cfg(all(feature="std", not(feature="unsafe")))]
 fn serialized_dict_helper(serialized_dict: &[u8], compressed: &[u8], expected: &[u8]) {
-  use super::brotli_decompressor::StandardAlloc;
-  let mut alloc = StandardAlloc::default();
-  let mut dict = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, serialized_dict.len());
-  dict.slice_mut().clone_from_slice(serialized_dict);
-  let mut reader = Decompressor::new(compressed, 4096);
-  assert!(reader.attach_serialized_dictionary(dict));
-  let mut decoded = Vec::<u8>::new();
-  reader.read_to_end(&mut decoded).unwrap();
+  let mut state = new_dictionary_test_state();
+  assert!(attach_test_dictionary(&mut state, serialized_dict, true));
+  let decoded = decode_dictionary_test_state(&mut state, compressed).unwrap();
   assert_eq!(decoded, expected);
 }
 
 #[test]
-#[cfg(all(feature="std", not(feature="unsafe")))]
 fn test_serialized_dictionary_custom_words() {
   serialized_dict_helper(include_bytes!("../../testdata/shared_custom.dict"),
                          include_bytes!("../../testdata/shared_custom.compressed"),
@@ -1117,7 +1180,6 @@ fn test_serialized_dictionary_custom_words() {
 }
 
 #[test]
-#[cfg(all(feature="std", not(feature="unsafe")))]
 fn test_serialized_dictionary_context_map() {
   serialized_dict_helper(include_bytes!("../../testdata/shared_context.dict"),
                          include_bytes!("../../testdata/shared_context.compressed"),
@@ -1127,7 +1189,6 @@ fn test_serialized_dictionary_context_map() {
 // A serialized dictionary containing only an LZ77 prefix chunk is equivalent
 // to attaching the same bytes as a raw dictionary.
 #[test]
-#[cfg(all(feature="std", not(feature="unsafe")))]
 fn test_serialized_dictionary_prefix_only_matches_raw() {
   let raw = include_bytes!("../../testdata/issue42.dict");
   let mut serialized = Vec::<u8>::new();
@@ -1153,19 +1214,14 @@ fn test_serialized_dictionary_prefix_only_matches_raw() {
 }
 
 #[test]
-#[cfg(all(feature="std", not(feature="unsafe")))]
 fn test_serialized_dictionary_rejects_garbage() {
-  use super::brotli_decompressor::StandardAlloc;
-  let mut alloc = StandardAlloc::default();
+  let mut state = new_dictionary_test_state();
   // bad magic
-  let mut dict = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, 4);
-  dict.slice_mut().clone_from_slice(&[0x90, 0x00, 0x00, 0x00]);
-  let mut reader = Decompressor::new(&include_bytes!("../../testdata/issue42.compressed")[..], 4096);
-  assert!(!reader.attach_serialized_dictionary(dict));
+  assert!(!attach_test_dictionary(
+      &mut state, &[0x90, 0x00, 0x00, 0x00], true));
   // truncated prefix chunk
-  let mut dict = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, 4);
-  dict.slice_mut().clone_from_slice(&[0x91, 0x00, 0x40, 0x00]);
-  assert!(!reader.attach_serialized_dictionary(dict));
+  assert!(!attach_test_dictionary(
+      &mut state, &[0x91, 0x00, 0x40, 0x00], true));
 }
 
 // Differential corpus against the reference C implementation. Every *.br in
@@ -1174,9 +1230,7 @@ fn test_serialized_dictionary_rejects_garbage() {
 // window sizes) and verified against the C decoder at generation time; see
 // scripts/dict_corpus/generate.py for regeneration instructions.
 #[test]
-#[cfg(all(feature="std", not(feature="unsafe")))]
 fn test_dictionary_corpus() {
-  use super::brotli_decompressor::StandardAlloc;
   use std::fs;
   let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
       .join("testdata").join("dict_corpus");
@@ -1194,21 +1248,26 @@ fn test_dictionary_corpus() {
     let compressed = fs::read(&path).unwrap();
     let serialized_path = dir.join(format!("{}.serialized.dict", case_id));
     let raw_path = dir.join(format!("{}.raw.dict", case_id));
-    let mut alloc = StandardAlloc::default();
-    let mut reader = Decompressor::new(&compressed[..], 4096);
+    let mut state = new_dictionary_test_state();
     if serialized_path.exists() {
       let dict_bytes = fs::read(&serialized_path).unwrap();
-      let mut dict = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, dict_bytes.len());
-      dict.slice_mut().clone_from_slice(&dict_bytes[..]);
-      assert!(reader.attach_serialized_dictionary(dict), "attach failed: {}", name);
+      assert!(attach_test_dictionary(&mut state, &dict_bytes, true),
+              "attach failed: {}", name);
     } else {
       let dict_bytes = fs::read(&raw_path).unwrap();
-      let mut dict = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, dict_bytes.len());
-      dict.slice_mut().clone_from_slice(&dict_bytes[..]);
-      assert!(reader.attach_dictionary(dict), "attach failed: {}", name);
+      // Constructor-supplied and explicitly attached dictionaries must have
+      // identical literal-context behavior; neither seeds the ring buffer.
+      let mut constructor_state = new_dictionary_test_state_with_custom_dict(&dict_bytes);
+      let constructor_decoded = decode_dictionary_test_state(
+          &mut constructor_state, &compressed)
+          .unwrap_or_else(|_| panic!("constructor decode failed: {}", name));
+      assert_eq!(constructor_decoded, expected,
+                 "constructor mismatch for {}", name);
+      assert!(attach_test_dictionary(&mut state, &dict_bytes, false),
+              "attach failed: {}", name);
     }
-    let mut decoded = Vec::<u8>::new();
-    reader.read_to_end(&mut decoded).unwrap_or_else(|e| panic!("decode failed: {}: {:?}", name, e));
+    let decoded = decode_dictionary_test_state(&mut state, &compressed)
+        .unwrap_or_else(|_| panic!("decode failed: {}", name));
     assert_eq!(decoded, expected, "mismatch for {}", name);
     num_cases += 1;
   }
@@ -1220,25 +1279,19 @@ fn test_dictionary_corpus() {
 // dictionary may make attach or decode fail, but must never panic or
 // produce out-of-bounds access.
 #[test]
-#[cfg(all(feature="std", not(feature="unsafe")))]
 fn test_serialized_dictionary_mutation_robustness() {
-  use super::brotli_decompressor::StandardAlloc;
   let dict_bytes = include_bytes!("../../testdata/shared_custom.dict");
   let compressed = include_bytes!("../../testdata/shared_custom.compressed");
-  let mut alloc = StandardAlloc::default();
   for pos in 0..dict_bytes.len() {
     for delta in [1u8, 0x80].iter() {
       let mut mutated = dict_bytes.to_vec();
       mutated[pos] = mutated[pos].wrapping_add(*delta);
-      let mut dict = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, mutated.len());
-      dict.slice_mut().clone_from_slice(&mutated[..]);
-      let mut reader = Decompressor::new(&compressed[..], 4096);
-      if !reader.attach_serialized_dictionary(dict) {
+      let mut state = new_dictionary_test_state();
+      if !attach_test_dictionary(&mut state, &mutated, true) {
         continue;
       }
-      let mut decoded = Vec::<u8>::new();
       // Either outcome is fine; only panics/UB would be bugs.
-      let _ = reader.read_to_end(&mut decoded);
+      let _ = decode_dictionary_test_state(&mut state, compressed);
     }
   }
 }
