@@ -63,10 +63,15 @@ void negative_test() {
     unsigned char obuffer[4096];
     size_t total_out = 0;
     const unsigned char *i_ptr = &brotli_file[0];
+    BrotliDecoderReturnInfo return_info =
+        BrotliDecoderDecompressWithReturnInfo(
+            sizeof(brotli_file), brotli_file, sizeof(obuffer), obuffer);
 
     unsigned char *o_ptr = &obuffer[0];
     const char * to_be_printed;
     BrotliDecoderResult rest = BrotliDecoderDecompressStream(state, &avail_in, &i_ptr, &avail_out, &o_ptr, &total_out);
+    assert(return_info.result == BROTLI_DECODER_RESULT_ERROR);
+    assert(return_info.code == BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT);
     assert(rest ==  BROTLI_DECODER_RESULT_ERROR);
     to_be_printed = BrotliDecoderGetErrorString(state);
     assert(strcmp(to_be_printed, "ERROR_FORMAT_CONTEXT_MAP_REPEAT") == 0);

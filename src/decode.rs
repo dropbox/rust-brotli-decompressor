@@ -458,6 +458,7 @@ fn SafeReadSymbol(table: &[HuffmanCode],
 }
 
 // Makes a look-up in first level Huffman table. Peeks 8 bits.
+#[inline(always)]
 fn PreloadSymbol(safe: bool,
                  table: &[HuffmanCode],
                  br: &mut bit_reader::BrotliBitReader,
@@ -475,6 +476,7 @@ fn PreloadSymbol(safe: bool,
 
 // Decodes the next Huffman code using data prepared by PreloadSymbol.
 // Reads 0 - 15 bits. Also peeks 8 following bits.
+#[inline(always)]
 fn ReadPreloadedSymbol(table: &[HuffmanCode],
                        br: &mut bit_reader::BrotliBitReader,
                        bits: &mut u32,
@@ -1765,20 +1767,16 @@ fn CopyUncompressedBlockToOutput<AllocU8: alloc::Allocator<u8>,
   loop {
     match s.substate_uncompressed {
       BrotliRunningUncompressedState::BROTLI_STATE_UNCOMPRESSED_NONE => {
-        let mut nbytes = bit_reader::BrotliGetRemainingBytes(&s.br) as i32;
-        if (nbytes > s.meta_block_remaining_len) {
-          nbytes = s.meta_block_remaining_len;
-        }
-        if (s.pos + nbytes > s.ringbuffer_size) {
-          nbytes = s.ringbuffer_size - s.pos;
-        }
+        let remaining = bit_reader::BrotliGetRemainingBytes(&s.br);
+        let mut nbytes = core::cmp::min(remaining, s.meta_block_remaining_len as u32);
+        nbytes = core::cmp::min(nbytes, (s.ringbuffer_size - s.pos) as u32);
         // Copy remaining bytes from s.br.buf_ to ringbuffer.
         bit_reader::BrotliCopyBytes(fast_mut!((s.ringbuffer.slice_mut())[s.pos as usize;]),
                                     &mut s.br,
-                                    nbytes as u32,
+                                    nbytes,
                                     input);
-        s.pos += nbytes;
-        s.meta_block_remaining_len -= nbytes;
+        s.pos += nbytes as i32;
+        s.meta_block_remaining_len -= nbytes as i32;
         if s.pos < (1 << s.window_bits) {
           if (s.meta_block_remaining_len == 0) {
             return BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS;
@@ -1836,7 +1834,7 @@ fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
   }
   // We need at least 2 bytes of ring buffer size to get the last two
   // bytes for context from there
-  if (is_last != 0) {
+  if is_last != 0 && s.canny_ringbuffer_allocation {
     while (s.ringbuffer_size as isize >= (s.meta_block_remaining_len as isize + 16) * 2 && s.ringbuffer_size as isize > 32) {
       s.ringbuffer_size >>= 1;
     }
@@ -1963,6 +1961,68 @@ fn CopyFromCompoundDictionary<AllocU8: alloc::Allocator<u8>,
   (pos - orig_pos) as i32
 }
 
+#[cfg(all(test, feature="std"))]
+mod tests {
+  use super::*;
+
+  fn ringbuffer_size(canny: bool) -> i32 {
+    let mut state = BrotliState::new(::StandardAlloc::default(),
+                                     ::StandardAlloc::default(),
+                                     ::StandardAlloc::default());
+    state.window_bits = 16;
+    state.is_last_metablock = 1;
+    state.canny_ringbuffer_allocation = canny;
+    assert!(BrotliAllocateRingBuffer(&mut state, &[]));
+    state.ringbuffer_size
+  }
+
+  #[test]
+  fn canny_ring_buffer() {
+    assert_eq!(ringbuffer_size(true), 32);
+    assert_eq!(ringbuffer_size(false), 1 << 16);
+  }
+
+  fn assert_large_remaining_copy_is_clamped(meta_block_remaining_len: i32,
+                                            pos: i32,
+                                            expected_result: BrotliDecoderErrorCode) {
+    let mut s = BrotliState::new(::StandardAlloc::default(),
+                                 ::StandardAlloc::default(),
+                                 ::StandardAlloc::default());
+    s.ringbuffer_size = 16;
+    s.window_bits = 5;
+    s.ringbuffer = s.alloc_u8.alloc_cell(s.ringbuffer_size as usize);
+    s.meta_block_remaining_len = meta_block_remaining_len;
+    s.pos = pos;
+    s.br.avail_in = 1u32 << 31;
+
+    let input = [0x5au8];
+    let mut available_out = 0usize;
+    let mut output = [0u8; 0];
+    let mut output_offset = 0usize;
+    let mut total_out = 0usize;
+    let result = CopyUncompressedBlockToOutput(&mut available_out,
+                                               &mut output,
+                                               &mut output_offset,
+                                               &mut total_out,
+                                               &mut s,
+                                               &input);
+
+    assert_eq!(result as i32, expected_result as i32);
+    assert_eq!(s.br.avail_in, (1u32 << 31) - 1);
+    assert_eq!(s.meta_block_remaining_len, meta_block_remaining_len - 1);
+    assert_eq!(s.pos, pos + 1);
+    assert_eq!(s.ringbuffer.slice()[pos as usize], input[0]);
+  }
+
+  #[test]
+  fn uncompressed_copy_clamps_unsigned_remaining_bytes() {
+    assert_large_remaining_copy_is_clamped(
+      1, 0, BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS);
+    assert_large_remaining_copy_is_clamped(
+      16, 15, BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT);
+  }
+}
+
 // Reads 1..256 2-bit context modes.
 pub fn ReadContextModes<AllocU8: alloc::Allocator<u8>,
                         AllocU32: alloc::Allocator<u32>,
@@ -2038,6 +2098,7 @@ pub fn SafeReadBits(br: &mut bit_reader::BrotliBitReader,
 }
 
 // Precondition: s.distance_code < 0
+#[inline(always)]
 pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
                             AllocU32: alloc::Allocator<u32>,
                             AllocHC: alloc::Allocator<HuffmanCode>>
@@ -2105,7 +2166,7 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
   true
 }
 
-
+#[inline(always)]
 pub fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
                            AllocU32: alloc::Allocator<u32>,
                            AllocHC: alloc::Allocator<HuffmanCode>>
@@ -2164,10 +2225,12 @@ pub fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
 }
 
 
+#[inline(always)]
 fn WarmupBitReader(safe: bool, br: &mut bit_reader::BrotliBitReader, input: &[u8]) -> bool {
   safe || bit_reader::BrotliWarmupBitReader(br, input)
 }
 
+#[inline(always)]
 fn CheckInputAmount(safe: bool, br: &bit_reader::BrotliBitReader, num: u32) -> bool {
   safe || bit_reader::BrotliCheckInputAmount(br, num)
 }
@@ -2198,11 +2261,9 @@ fn memmove16(data: &mut [u8], u32off_dst: u32, u32off_src: u32) {
   let mut local_array: [u8; 16] = fast_uninitialized!(16);
   local_array.clone_from_slice(fast!((data)[off_src as usize ; off_src as usize + 16]));
   fast_mut!((data)[off_dst as usize ; off_dst as usize + 16]).clone_from_slice(&local_array);
-
-
 }
 
-
+#[inline(always)]
 #[cfg(not(feature="unsafe"))]
 fn memcpy_within_slice(data: &mut [u8], off_dst: usize, off_src: usize, size: usize) {
   if off_dst > off_src {
@@ -2216,6 +2277,7 @@ fn memcpy_within_slice(data: &mut [u8], off_dst: usize, off_src: usize, size: us
   }
 }
 
+#[inline(always)]
 #[cfg(feature="unsafe")]
 fn memcpy_within_slice(data: &mut [u8], off_dst: usize, off_src: usize, size: usize) {
   let ptr = data.as_mut_ptr();
@@ -2278,11 +2340,8 @@ pub fn BrotliDecoderIsUsed<AllocU8: alloc::Allocator<u8>,
                            AllocU32: alloc::Allocator<u32>,
                            AllocHC: alloc::Allocator<HuffmanCode>>(
   s: &BrotliState<AllocU8, AllocU32, AllocHC>) -> bool {
-  if let BrotliRunningState::BROTLI_STATE_UNINITED = s.state {
-    false
-  } else {
-    bit_reader::BrotliGetAvailableBits(&s.br) != 0
-  }
+  !matches!(s.state, BrotliRunningState::BROTLI_STATE_UNINITED)
+    || bit_reader::BrotliGetAvailableBits(&s.br) != 0
 }
 
 pub fn BrotliDecoderIsFinished<AllocU8: alloc::Allocator<u8>,
@@ -2303,6 +2362,7 @@ pub fn BrotliDecoderGetErrorCode<AllocU8: alloc::Allocator<u8>,
   s.error_code
 }
 
+#[inline(always)]
 fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                            AllocU32: alloc::Allocator<u32>,
                            AllocHC: alloc::Allocator<HuffmanCode>>
@@ -3055,6 +3115,10 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           }
           s.block_type_length_state.block_len_trees = s.alloc_hc
             .alloc_cell(3 * huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
+          if (s.block_type_length_state.block_len_trees.slice().len() == 0) {
+            result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES;
+            break;
+          }
 
           s.state = BrotliRunningState::BROTLI_STATE_METABLOCK_BEGIN;
           // No break, continue to next state
@@ -3441,9 +3505,17 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           break;
         }
         BrotliRunningState::BROTLI_STATE_METABLOCK_DONE => {
-          if s.meta_block_remaining_len < 0 {
-            // A copy or dictionary word overran the declared metablock
-            // length; the C implementation rejects such streams.
+          // RFC 7932 §9.3: "if the number of literals to insert, the copy
+          // length, or the resulting dictionary word length would cause MLEN to
+          // be exceeded, then the stream should be rejected as invalid." When a
+          // command overshoots the declared meta-block length, the command loop
+          // exits to this state with meta_block_remaining_len < 0. The only
+          // negative-length guard was in WriteRingBuffer, which is not reached
+          // when the whole output fits in the ring buffer before the final
+          // flush, so such malformed streams decoded as success. The C
+          // reference and andybalholm/brotli (Go) reject them as BLOCK_LENGTH_2;
+          // mirror that check here, before cleanup.
+          if (s.meta_block_remaining_len < 0) {
             result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2;
             break;
           }
@@ -3491,4 +3563,3 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
 
   SaveErrorCode!(s, result)
 }
-

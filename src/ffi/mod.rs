@@ -30,6 +30,56 @@ pub unsafe fn slice_from_raw_parts_or_nil_mut<'a, T>(data: *mut T, len: usize) -
     slice::from_raw_parts_mut(data, len)
 }
 
+trait MaxSliceLen {
+    const MAX_SLICE_LEN: usize;
+}
+
+impl<T> MaxSliceLen for T {
+    const MAX_SLICE_LEN: usize = if core::mem::size_of::<T>() == 0 {
+        usize::MAX
+    } else {
+        (isize::MAX as usize) / core::mem::size_of::<T>()
+    };
+}
+
+// Rejects the pointer/length pairs that would make `slice::from_raw_parts` trip a
+// non-unwinding "unsafe precondition" panic not catchable by `catch_unwind`.
+fn is_valid_slice_ptr<T>(data: *const T, len: usize) -> bool {
+    if len == 0 {
+        return true;
+    }
+    if data.is_null() {
+        return false;
+    }
+    if (data as usize) % core::mem::align_of::<T>() != 0 {
+        return false;
+    }
+    if len > T::MAX_SLICE_LEN {
+        return false;
+    }
+    (data as usize).checked_add(len * core::mem::size_of::<T>()).is_some()
+}
+
+unsafe fn checked_slice_from_raw_parts_or_nil<'a, T>(
+    data: *const T,
+    len: usize,
+) -> Option<&'a [T]> {
+    if !is_valid_slice_ptr(data, len) {
+        return None;
+    }
+    Some(slice_from_raw_parts_or_nil(data, len))
+}
+
+unsafe fn checked_slice_from_raw_parts_or_nil_mut<'a, T>(
+    data: *mut T,
+    len: usize,
+) -> Option<&'a mut [T]> {
+    if !is_valid_slice_ptr(data, len) {
+        return None;
+    }
+    Some(slice_from_raw_parts_or_nil_mut(data, len))
+}
+
 #[cfg(feature="std")]
 type BrotliAdditionalErrorData = boxed::Box<dyn any::Any + Send + 'static>;
 #[cfg(not(feature="std"))]
@@ -61,27 +111,32 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
     free_func: brotli_free_func,
     opaque: *mut c_void,
 ) -> *mut BrotliDecoderState {
-    match catch_panic_state(|| {
+    match catch_panic(|| {
       let allocators = CAllocator {
         alloc_func:alloc_func,
         free_func:free_func,
         opaque:opaque,
       };
       let custom_dictionary = <SubclassableAllocator as Allocator<u8>>::AllocatedMemory::default();
+      let mut decompressor = ::BrotliState::new_with_custom_dictionary(
+        SubclassableAllocator::new(allocators.clone()),
+        SubclassableAllocator::new(allocators.clone()),
+        SubclassableAllocator::new(allocators.clone()),
+        custom_dictionary,
+      );
+      decompressor.large_window = false;
       let to_box = BrotliDecoderState {
         custom_allocator: allocators.clone(),
-        decompressor: ::BrotliState::new_with_custom_dictionary(
-          SubclassableAllocator::new(allocators.clone()),
-          SubclassableAllocator::new(allocators.clone()),
-          SubclassableAllocator::new(allocators.clone()),
-          custom_dictionary,
-        ),
+        decompressor: decompressor,
       };
       if let Some(alloc) = alloc_func {
         if free_func.is_none() {
             panic!("either both alloc and free must exist or neither");
         }
         let ptr = alloc(allocators.opaque, core::mem::size_of::<BrotliDecoderState>());
+        if ptr.is_null() {
+            return core::ptr::null_mut();
+        }
         let brotli_decoder_state_ptr = core::mem::transmute::<*mut c_void, *mut BrotliDecoderState>(ptr);
         core::ptr::write(brotli_decoder_state_ptr, to_box);
         brotli_decoder_state_ptr
@@ -98,10 +153,26 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
 }
 
 #[no_mangle]
-pub unsafe extern fn BrotliDecoderSetParameter(_state_ptr: *mut BrotliDecoderState,
-                                       _selector: BrotliDecoderParameter,
-                                       _value: u32) {
-  // not implemented
+pub unsafe extern "C" fn BrotliDecoderSetParameter(state_ptr: *mut BrotliDecoderState,
+                                             selector: BrotliDecoderParameter,
+                                             value: u32) -> i32 {
+  if state_ptr.is_null() {
+    return 0;
+  }
+  let state = &mut (*state_ptr).decompressor;
+  match &state.state {
+    &super::state::BrotliRunningState::BROTLI_STATE_UNINITED => {},
+    _ => return 0,
+  }
+  match selector {
+    BrotliDecoderParameter::BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION => {
+      state.canny_ringbuffer_allocation = value == 0;
+    },
+    BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW => {
+      state.large_window = value != 0;
+    },
+  }
+  1
 }
 
 #[no_mangle]
@@ -117,14 +188,59 @@ pub unsafe extern fn BrotliDecoderDecompressPrealloc(
   scratch_hc_size: usize,
   scratch_hc_buffer: *mut HuffmanCode,
 ) -> BrotliDecoderReturnInfo {
-  let input = slice_from_raw_parts_or_nil(encoded_buffer, encoded_size);
-  let output = slice_from_raw_parts_or_nil_mut(decoded_buffer, decoded_size);
-  let scratch_u8 = slice_from_raw_parts_or_nil_mut(scratch_u8_buffer, scratch_u8_size);
-  let scratch_u32 = slice_from_raw_parts_or_nil_mut(scratch_u32_buffer, scratch_u32_size);
-  let scratch_hc = slice_from_raw_parts_or_nil_mut(scratch_hc_buffer, scratch_hc_size);
-  ::brotli_decode_prealloc(input, output, scratch_u8, scratch_u32, scratch_hc)
+  catch_panic_return_info(move || {
+    let input = match checked_slice_from_raw_parts_or_nil(encoded_buffer, encoded_size) {
+      Some(input) => input,
+      None => return invalid_argument_return_info(),
+    };
+    let output = match checked_slice_from_raw_parts_or_nil_mut(decoded_buffer, decoded_size) {
+      Some(output) => output,
+      None => return invalid_argument_return_info(),
+    };
+    let scratch_u8 = match checked_slice_from_raw_parts_or_nil_mut(
+      scratch_u8_buffer,
+      scratch_u8_size,
+    ) {
+      Some(scratch_u8) => scratch_u8,
+      None => return invalid_argument_return_info(),
+    };
+    let scratch_u32 = match checked_slice_from_raw_parts_or_nil_mut(
+      scratch_u32_buffer,
+      scratch_u32_size,
+    ) {
+      Some(scratch_u32) => scratch_u32,
+      None => return invalid_argument_return_info(),
+    };
+    let scratch_hc = match checked_slice_from_raw_parts_or_nil_mut(
+      scratch_hc_buffer,
+      scratch_hc_size,
+    ) {
+      Some(scratch_hc) => scratch_hc,
+      None => return invalid_argument_return_info(),
+    };
+    ::brotli_decode_prealloc(input, output, scratch_u8, scratch_u32, scratch_hc)
+  })
 }
 
+unsafe fn brotli_decoder_decompress_with_return_info(
+  encoded_size: usize,
+  encoded_buffer: *const u8,
+  decoded_size: usize,
+  decoded_buffer: *mut u8,
+) -> BrotliDecoderReturnInfo {
+  let input = match checked_slice_from_raw_parts_or_nil(encoded_buffer, encoded_size) {
+    Some(input) => input,
+    None => return invalid_argument_return_info(),
+  };
+  let output_scratch = match checked_slice_from_raw_parts_or_nil_mut(
+    decoded_buffer,
+    decoded_size,
+  ) {
+    Some(output_scratch) => output_scratch,
+    None => return invalid_argument_return_info(),
+  };
+  ::brotli_decode(input, output_scratch)
+}
 
 #[no_mangle]
 pub unsafe extern fn BrotliDecoderDecompressWithReturnInfo(
@@ -133,9 +249,14 @@ pub unsafe extern fn BrotliDecoderDecompressWithReturnInfo(
   decoded_size: usize,
   decoded_buffer: *mut u8,
 ) -> BrotliDecoderReturnInfo {
-  let input = slice_from_raw_parts_or_nil(encoded_buffer, encoded_size);
-  let output_scratch = slice_from_raw_parts_or_nil_mut(decoded_buffer, decoded_size);
-  ::brotli_decode(input, output_scratch)
+  catch_panic_return_info(move || {
+    brotli_decoder_decompress_with_return_info(
+      encoded_size,
+      encoded_buffer,
+      decoded_size,
+      decoded_buffer,
+    )
+  })
 }
 
 #[no_mangle]
@@ -145,48 +266,101 @@ pub unsafe extern fn BrotliDecoderDecompress(
   decoded_size: *mut usize,
   decoded_buffer: *mut u8,
 ) -> BrotliDecoderResult {
-  let res = BrotliDecoderDecompressWithReturnInfo(encoded_size, encoded_buffer, *decoded_size, decoded_buffer);
-  *decoded_size = res.decoded_size;  
-  match res.result {
-      BrotliResult::ResultSuccess => BrotliDecoderResult::BROTLI_DECODER_RESULT_SUCCESS,
-      _ => BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR
+  if !is_valid_slice_ptr(decoded_size as *const usize, 1) {
+    return BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR;
+  }
+  match catch_panic(move || {
+    let res = brotli_decoder_decompress_with_return_info(
+      encoded_size,
+      encoded_buffer,
+      *decoded_size,
+      decoded_buffer,
+    );
+    *decoded_size = res.decoded_size;
+    match res.result {
+        BrotliResult::ResultSuccess => BrotliDecoderResult::BROTLI_DECODER_RESULT_SUCCESS,
+        _ => BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR
+    }
+  }) {
+      Ok(ret) => ret,
+      Err(mut readable_err) => {
+          error_print(core::ptr::null_mut(), &mut readable_err);
+          *decoded_size = 0;
+          BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR
+      },
   }
 }
 
 #[cfg(all(feature="std", not(feature="pass-through-ffi-panics")))]
-fn catch_panic<F:FnOnce()->BrotliDecoderResult+panic::UnwindSafe>(f: F) -> thread::Result<BrotliDecoderResult> {
+fn catch_panic<T, F>(f: F) -> thread::Result<T>
+where F: FnOnce() -> T + panic::UnwindSafe {
     panic::catch_unwind(f)
 }
 
+fn copy_error_string(src: &[u8]) -> [u8;256] {
+    let mut dst = [0u8;256];
+    let xlen = core::cmp::min(src.len(), dst.len() - 1);
+    dst.split_at_mut(xlen).0.clone_from_slice(src.split_at(xlen).0);
+    dst
+}
+
+fn invalid_argument_return_info() -> BrotliDecoderReturnInfo {
+    let error_code = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS;
+    BrotliDecoderReturnInfo {
+        decoded_size: 0,
+        error_string: copy_error_string(::state::BrotliDecoderErrorStr(error_code).as_bytes()),
+        error_code: error_code,
+        result: BrotliResult::ResultFailure,
+    }
+}
+
 #[cfg(all(feature="std", not(feature="pass-through-ffi-panics")))]
-fn catch_panic_state<F:FnOnce()->*mut BrotliDecoderState+panic::UnwindSafe>(f: F) -> thread::Result<*mut BrotliDecoderState> {
-    panic::catch_unwind(f)
+fn panic_return_info(err: &BrotliAdditionalErrorData) -> BrotliDecoderReturnInfo {
+    let error_string = if let Some(st) = err.downcast_ref::<&str>() {
+        copy_error_string(st.as_bytes())
+    } else if let Some(st) = err.downcast_ref::<string::String>() {
+        copy_error_string(st.as_bytes())
+    } else {
+        copy_error_string(
+          ::state::BrotliDecoderErrorStr(
+            BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_UNREACHABLE,
+          ).as_bytes(),
+        )
+    };
+    BrotliDecoderReturnInfo {
+        decoded_size: 0,
+        error_string: error_string,
+        error_code: BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_UNREACHABLE,
+        result: BrotliResult::ResultFailure,
+    }
+}
+
+#[cfg(all(feature="std", not(feature="pass-through-ffi-panics")))]
+fn catch_panic_return_info<F>(f: F) -> BrotliDecoderReturnInfo
+where F: FnOnce() -> BrotliDecoderReturnInfo + panic::UnwindSafe {
+    match catch_panic(f) {
+        Ok(ret) => ret,
+        Err(mut readable_err) => {
+            let ret = panic_return_info(&readable_err);
+            unsafe {
+                error_print(core::ptr::null_mut(), &mut readable_err);
+            }
+            ret
+        },
+    }
 }
 
 #[cfg(all(feature="std", not(feature="pass-through-ffi-panics")))]
 unsafe fn error_print(state_ptr: *mut BrotliDecoderState, err: &mut BrotliAdditionalErrorData) {
     if let Some(st) = err.downcast_ref::<&str>() {
         if !state_ptr.is_null() {
-          let mut str_cpy = [0u8;256];
-          let src:&[u8] = st.as_ref();
-          let xlen = core::cmp::min(src.len(), str_cpy.len() - 1);
-          str_cpy.split_at_mut(xlen).0.clone_from_slice(
-                src.split_at(xlen).0);
-          str_cpy[xlen] = 0; // null terminate
-          (*state_ptr).decompressor.mtf_or_error_string = Err(str_cpy);
+          (*state_ptr).decompressor.mtf_or_error_string = Err(copy_error_string(st.as_bytes()));
         }
         let _ign = writeln!(&mut io::stderr(), "panic: {}", st);
     } else {
         if let Some(st) = err.downcast_ref::<string::String>() {
-
           if !state_ptr.is_null() {
-            let mut str_cpy = [0u8;256];
-            let src: &[u8] = st.as_ref();
-            let xlen = core::cmp::min(src.len(), str_cpy.len() - 1);
-            str_cpy.split_at_mut(xlen).0.clone_from_slice(
-                src.split_at(xlen).0);
-            str_cpy[xlen] = 0; // null terminate
-            (*state_ptr).decompressor.mtf_or_error_string = Err(str_cpy);
+            (*state_ptr).decompressor.mtf_or_error_string = Err(copy_error_string(st.as_bytes()));
           }
           let _ign = writeln!(&mut io::stderr(), "Internal Error {:?}", st);
         } else {
@@ -197,13 +371,15 @@ unsafe fn error_print(state_ptr: *mut BrotliDecoderState, err: &mut BrotliAdditi
 
 // can't catch panics in a reliable way without std:: configure with panic=abort. These shouldn't happen
 #[cfg(any(not(feature="std"), feature="pass-through-ffi-panics"))]
-fn catch_panic<F:FnOnce()->BrotliDecoderResult>(f: F) -> Result<BrotliDecoderResult, BrotliAdditionalErrorData> {
+fn catch_panic<T, F>(f: F) -> Result<T, BrotliAdditionalErrorData>
+where F: FnOnce() -> T {
     Ok(f())
 }
 
 #[cfg(any(not(feature="std"), feature="pass-through-ffi-panics"))]
-fn catch_panic_state<F:FnOnce()->*mut BrotliDecoderState>(f: F) -> Result<*mut BrotliDecoderState, BrotliAdditionalErrorData> {
-    Ok(f())
+fn catch_panic_return_info<F>(f: F) -> BrotliDecoderReturnInfo
+where F: FnOnce() -> BrotliDecoderReturnInfo {
+    f()
 }
 
 #[cfg(any(not(feature="std"), feature="pass-through-ffi-panics"))]
@@ -218,6 +394,17 @@ pub unsafe extern fn BrotliDecoderDecompressStream(
     available_out: *mut usize,
     output_buf_ptr: *mut*mut u8,
     mut total_out: *mut usize) -> BrotliDecoderResult {
+    if state_ptr.is_null() ||
+       available_in.is_null() ||
+       input_buf_ptr.is_null() ||
+       available_out.is_null() ||
+       output_buf_ptr.is_null() {
+        if !state_ptr.is_null() {
+            (*state_ptr).decompressor.error_code =
+                BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS;
+        }
+        return BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR;
+    }
     match catch_panic(move || {
     let mut input_offset = 0usize;
     let mut output_offset = 0usize;
@@ -226,9 +413,31 @@ pub unsafe extern fn BrotliDecoderDecompressStream(
         total_out = &mut fallback_total_out;
     }
     let result: BrotliDecoderResult;
+    let input_ptr = *input_buf_ptr;
+    let output_ptr = *output_buf_ptr;
     {
-        let input_buf = slice_from_raw_parts_or_nil(*input_buf_ptr, *available_in);
-        let output_buf = slice_from_raw_parts_or_nil_mut(*output_buf_ptr, *available_out);
+        let input_buf = match checked_slice_from_raw_parts_or_nil(
+            input_ptr,
+            *available_in,
+        ) {
+            Some(input_buf) => input_buf,
+            None => {
+                (*state_ptr).decompressor.error_code =
+                    BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS;
+                return BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR;
+            },
+        };
+        let output_buf = match checked_slice_from_raw_parts_or_nil_mut(
+            output_ptr,
+            *available_out,
+        ) {
+            Some(output_buf) => output_buf,
+            None => {
+                (*state_ptr).decompressor.error_code =
+                    BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS;
+                return BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR;
+            },
+        };
             result = super::decode::BrotliDecompressStream(
                 &mut *available_in,
                 &mut input_offset,
@@ -240,8 +449,8 @@ pub unsafe extern fn BrotliDecoderDecompressStream(
                 &mut (*state_ptr).decompressor,
             ).into();
     }
-    *input_buf_ptr = (*input_buf_ptr).offset(input_offset as isize);
-    *output_buf_ptr = (*output_buf_ptr).offset(output_offset as isize);
+    *input_buf_ptr = input_ptr.offset(input_offset as isize);
+    *output_buf_ptr = output_ptr.offset(output_offset as isize);
                                            result
     }) {
         Ok(ret) => ret,
@@ -301,8 +510,12 @@ pub unsafe extern fn BrotliDecoderFreeU8(state_ptr: *mut BrotliDecoderState, dat
 #[no_mangle]
 pub unsafe extern fn BrotliDecoderMallocUsize(state_ptr: *mut BrotliDecoderState, size: usize) -> *mut usize {
     if let Some(alloc_fn) = (*state_ptr).custom_allocator.alloc_func {
+        let alloc_size = match size.checked_mul(core::mem::size_of::<usize>()) {
+            Some(alloc_size) => alloc_size,
+            None => return core::ptr::null_mut(),
+        };
         return core::mem::transmute::<*mut c_void, *mut usize>(alloc_fn((*state_ptr).custom_allocator.opaque,
-                                                                         size * core::mem::size_of::<usize>()));
+                                                                         alloc_size));
     } else {
         return alloc_util::alloc_stdlib(size);
     }
@@ -409,4 +622,169 @@ pub extern fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) -> *const u8 {
 #[no_mangle]
 pub extern fn BrotliDecoderVersion() -> u32 {
   0x1000f00
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn assert_invalid_argument(ret: BrotliDecoderReturnInfo) {
+    assert_eq!(ret.decoded_size, 0);
+    assert_eq!(
+      ret.error_code as i32,
+      BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS as i32,
+    );
+    let expected = ::state::BrotliDecoderErrorStr(
+      BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS,
+    ).as_bytes();
+    assert_eq!(&ret.error_string[..expected.len()], expected);
+    match ret.result {
+      BrotliResult::ResultFailure => {},
+      _ => panic!("expected invalid arguments to return failure"),
+    }
+  }
+
+  #[test]
+  fn one_shot_rejects_null_input_buffer() {
+    let ret = unsafe {
+      BrotliDecoderDecompressWithReturnInfo(
+        1,
+        core::ptr::null(),
+        0,
+        core::ptr::null_mut(),
+      )
+    };
+
+    assert_invalid_argument(ret);
+  }
+
+  #[test]
+  fn prealloc_rejects_misaligned_scratch_buffer() {
+    let mut scratch_u32 = [0u32; 2];
+    let misaligned_scratch_u32 =
+      unsafe { (scratch_u32.as_mut_ptr() as *mut u8).add(1) as *mut u32 };
+    let ret = unsafe {
+      BrotliDecoderDecompressPrealloc(
+        0,
+        core::ptr::null(),
+        0,
+        core::ptr::null_mut(),
+        0,
+        core::ptr::null_mut(),
+        1,
+        misaligned_scratch_u32,
+        0,
+        core::ptr::null_mut(),
+      )
+    };
+
+    assert_invalid_argument(ret);
+  }
+
+  #[test]
+  fn one_shot_rejects_null_decoded_size() {
+    let ret = unsafe {
+      BrotliDecoderDecompress(
+        0,
+        core::ptr::null(),
+        core::ptr::null_mut(),
+        core::ptr::null_mut(),
+      )
+    };
+
+    assert_eq!(
+      ret as i32,
+      BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR as i32,
+    );
+  }
+
+  #[cfg(all(feature="std", not(feature="pass-through-ffi-panics")))]
+  #[test]
+  fn one_shot_panic_returns_error_info() {
+    let ret = catch_panic_return_info(|| -> BrotliDecoderReturnInfo {
+      panic!("ffi one-shot panic");
+    });
+
+    assert_eq!(ret.decoded_size, 0);
+    assert_eq!(
+      ret.error_code as i32,
+      BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_UNREACHABLE as i32,
+    );
+    assert_eq!(&ret.error_string[..18], b"ffi one-shot panic");
+    assert_eq!(ret.error_string[18], 0);
+    match ret.result {
+      BrotliResult::ResultFailure => {},
+      _ => panic!("expected one-shot panic to return failure"),
+    }
+  }
+
+  #[cfg(all(feature="std", not(feature="pass-through-ffi-panics")))]
+  #[test]
+  fn prealloc_catches_scratch_exhaustion() {
+    let ret = unsafe {
+      BrotliDecoderDecompressPrealloc(
+        0,
+        core::ptr::null(),
+        0,
+        core::ptr::null_mut(),
+        0,
+        core::ptr::null_mut(),
+        0,
+        core::ptr::null_mut(),
+        0,
+        core::ptr::null_mut(),
+      )
+    };
+
+    assert_eq!(ret.decoded_size, 0);
+    assert_eq!(
+      ret.error_code as i32,
+      BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_UNREACHABLE as i32,
+    );
+    match ret.result {
+      BrotliResult::ResultFailure => {},
+      _ => panic!("expected scratch exhaustion to return failure"),
+    }
+  }
+
+  #[test]
+  fn set_parameter() {
+    let set_parameter: unsafe extern "C" fn(
+      *mut BrotliDecoderState,
+      BrotliDecoderParameter,
+      u32,
+    ) -> i32 = BrotliDecoderSetParameter;
+
+    unsafe {
+      let state = BrotliDecoderCreateInstance(None, None, core::ptr::null_mut());
+      assert!(!state.is_null());
+      assert!(!(*state).decompressor.large_window);
+      assert!((*state).decompressor.canny_ringbuffer_allocation);
+
+      assert_eq!(set_parameter(
+        state,
+        BrotliDecoderParameter::BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION,
+        1,
+      ), 1);
+      assert!(!(*state).decompressor.canny_ringbuffer_allocation);
+
+      assert_eq!(set_parameter(
+        state,
+        BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW,
+        1,
+      ), 1);
+      assert!((*state).decompressor.large_window);
+
+      (*state).decompressor.state =
+        super::super::state::BrotliRunningState::BROTLI_STATE_INITIALIZE;
+      assert_eq!(set_parameter(
+        state,
+        BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW,
+        0,
+      ), 0);
+      assert!((*state).decompressor.large_window);
+
+      BrotliDecoderDestroyInstance(state);
+    }
+  }
 }
