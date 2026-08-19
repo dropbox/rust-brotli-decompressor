@@ -1,14 +1,85 @@
 #![cfg(test)]
 #![cfg(all(feature = "ffi-api", feature = "std"))]
 
+use std::alloc::{alloc, dealloc, Layout};
 use std::mem;
 use std::ptr;
+use std::vec::Vec;
 
-use brotli_decompressor::ffi::interface::BrotliDecoderResult;
+use brotli_decompressor::ffi::interface::{c_void, BrotliDecoderResult};
 use brotli_decompressor::ffi::{
-  BrotliDecoderCreateInstance, BrotliDecoderDecompressStream, BrotliDecoderDestroyInstance,
-  BrotliDecoderErrorCode, BrotliDecoderIsUsed,
+  BrotliDecoderAttachDictionary, BrotliDecoderCreateInstance, BrotliDecoderDecompressStream,
+  BrotliDecoderDestroyInstance, BrotliDecoderErrorCode, BrotliDecoderIsUsed,
 };
+
+struct FailingAllocator {
+  fail_next: bool,
+  allocations: Vec<(*mut u8, Layout)>,
+}
+
+extern "C" fn test_alloc(opaque: *mut c_void, size: usize) -> *mut c_void {
+  let allocator = unsafe { &mut *(opaque as *mut FailingAllocator) };
+  if allocator.fail_next {
+    allocator.fail_next = false;
+    return ptr::null_mut();
+  }
+  let layout = Layout::from_size_align(size, 64).unwrap();
+  let allocation = unsafe { alloc(layout) };
+  if !allocation.is_null() {
+    allocator.allocations.push((allocation, layout));
+  }
+  allocation as *mut c_void
+}
+
+extern "C" fn test_free(opaque: *mut c_void, allocation: *mut c_void) {
+  if allocation.is_null() {
+    return;
+  }
+  let allocator = unsafe { &mut *(opaque as *mut FailingAllocator) };
+  let allocation = allocation as *mut u8;
+  let index = allocator.allocations.iter()
+    .position(|&(candidate, _)| candidate == allocation)
+    .expect("free of unknown test allocation");
+  let (_, layout) = allocator.allocations.swap_remove(index);
+  unsafe { dealloc(allocation, layout) };
+}
+
+#[test]
+fn create_instance_returns_null_when_custom_allocator_is_exhausted() {
+  let mut allocator = FailingAllocator {
+    fail_next: true,
+    allocations: Vec::new(),
+  };
+  let opaque = &mut allocator as *mut FailingAllocator as *mut c_void;
+  let state = unsafe {
+    BrotliDecoderCreateInstance(Some(test_alloc), Some(test_free), opaque)
+  };
+
+  assert!(state.is_null());
+  assert!(allocator.allocations.is_empty());
+}
+
+#[test]
+fn attach_dictionary_returns_false_when_custom_allocator_is_exhausted() {
+  let mut allocator = FailingAllocator {
+    fail_next: false,
+    allocations: Vec::new(),
+  };
+  let opaque = &mut allocator as *mut FailingAllocator as *mut c_void;
+  let state = unsafe {
+    BrotliDecoderCreateInstance(Some(test_alloc), Some(test_free), opaque)
+  };
+  assert!(!state.is_null());
+
+  allocator.fail_next = true;
+  let dictionary = [0x61u8];
+  assert_eq!(unsafe {
+    BrotliDecoderAttachDictionary(state, 0, dictionary.len(), dictionary.as_ptr())
+  }, 0);
+
+  unsafe { BrotliDecoderDestroyInstance(state) };
+  assert!(allocator.allocations.is_empty());
+}
 
 #[test]
 fn stream_rejects_null_input_buffer_with_nonzero_length() {

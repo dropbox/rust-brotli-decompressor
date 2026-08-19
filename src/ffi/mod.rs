@@ -124,6 +124,9 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
         SubclassableAllocator::new(allocators.clone()),
         custom_dictionary,
       );
+      if decompressor.context_map_table.slice().len() == 0 {
+        return core::ptr::null_mut();
+      }
       decompressor.large_window = false;
       let to_box = BrotliDecoderState {
         custom_allocator: allocators.clone(),
@@ -547,34 +550,52 @@ pub unsafe extern fn BrotliDecoderDestroyInstance(state_ptr: *mut BrotliDecoderS
 // Must be called before any input is processed.
 // Returns 1 on success, 0 on failure.
 #[no_mangle]
-pub unsafe extern fn BrotliDecoderAttachDictionary(
+pub unsafe extern "C" fn BrotliDecoderAttachDictionary(
     state_ptr: *mut BrotliDecoderState,
     dict_type: i32,
     data_size: usize,
     data: *const u8,
 ) -> i32 {
+  if state_ptr.is_null() {
+    return 0;
+  }
   let is_serialized = match dict_type {
     0 => false,
     1 => true,
     _ => return 0,
   };
-  let data_slice = slice_from_raw_parts_or_nil(data, data_size);
-  let dict = {
-    let alloc_u8 = &mut (*state_ptr).decompressor.alloc_u8;
-    let mut dict = alloc_u8.alloc_cell(data_size);
-    if dict.slice().len() != data_size {
-      alloc_u8.free_cell(dict);
-      return 0;
+  let data_slice = match checked_slice_from_raw_parts_or_nil(data, data_size) {
+    Some(data_slice) => data_slice,
+    None => return 0,
+  };
+  match catch_panic(move || {
+    match (*state_ptr).decompressor.state {
+      super::state::BrotliRunningState::BROTLI_STATE_UNINITED => {},
+      _ => return 0,
     }
-    dict.slice_mut().clone_from_slice(data_slice);
-    dict
-  };
-  let ok = if is_serialized {
-      (*state_ptr).decompressor.attach_serialized_dictionary(dict)
-  } else {
-      (*state_ptr).decompressor.attach_dictionary(dict)
-  };
-  if ok {1} else {0}
+    let dict = {
+      let alloc_u8 = &mut (*state_ptr).decompressor.alloc_u8;
+      let mut dict = alloc_u8.alloc_cell(data_size);
+      if dict.slice().len() != data_size {
+        alloc_u8.free_cell(dict);
+        return 0;
+      }
+      dict.slice_mut().clone_from_slice(data_slice);
+      dict
+    };
+    let ok = if is_serialized {
+        (*state_ptr).decompressor.attach_serialized_dictionary(dict)
+    } else {
+        (*state_ptr).decompressor.attach_dictionary(dict)
+    };
+    if ok {1} else {0}
+  }) {
+    Ok(ret) => ret,
+    Err(mut readable_err) => {
+      error_print(state_ptr, &mut readable_err);
+      0
+    },
+  }
 }
 
 #[no_mangle]
