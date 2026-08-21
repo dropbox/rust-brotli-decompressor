@@ -1985,6 +1985,36 @@ mod tests {
     assert_eq!(state.error_code as i32,
                BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS as i32);
   }
+
+  #[test]
+  fn format_distance_error_restores_huffman_tree_groups() {
+    let mut state = BrotliState::new(::StandardAlloc::default(),
+                                     ::StandardAlloc::default(),
+                                     ::StandardAlloc::default());
+    state.BrotliHuffmanTreeGroupInit(state::WhichTreeGroup::LITERAL, 1, 0, 1);
+    state.BrotliHuffmanTreeGroupInit(state::WhichTreeGroup::INSERT_COPY, 1, 0, 2);
+    state.BrotliHuffmanTreeGroupInit(state::WhichTreeGroup::DISTANCE, 1, 0, 3);
+    let expected_code_lengths = [
+      state.literal_hgroup.codes.slice().len(),
+      state.insert_copy_hgroup.codes.slice().len(),
+      state.distance_hgroup.codes.slice().len(),
+    ];
+
+    state.state = BrotliRunningState::BROTLI_STATE_COMMAND_POST_DECODE_LITERALS;
+    state.distance_code = 1;
+    state.dist_rb_idx = 1;
+    state.dist_rb[0] = i32::MAX;
+    state.max_distance = 0;
+    state.max_backward_distance = 0;
+
+    let result = ProcessCommandsInternal(true, &mut state, &[]);
+
+    assert_eq!(result as i32,
+               BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_DISTANCE as i32);
+    assert_eq!(state.literal_hgroup.codes.slice().len(), expected_code_lengths[0]);
+    assert_eq!(state.insert_copy_hgroup.codes.slice().len(), expected_code_lengths[1]);
+    assert_eq!(state.distance_hgroup.codes.slice().len(), expected_code_lengths[2]);
+  }
 }
 
 // Reads 1..256 2-bit context modes.
@@ -2592,7 +2622,8 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
           // the distance is larger than the max LZ77 distance
           if (s.distance_code > s.max_distance) {
             if s.distance_code > kBrotliMaxAllowedDistance as i32 {
-              return BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_DISTANCE;
+              result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_DISTANCE;
+              break;
             }
             if (i >= kBrotliMinDictionaryWordLength as i32 &&
                 i <= kBrotliMaxDictionaryWordLength as i32) {
