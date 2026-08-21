@@ -240,3 +240,27 @@ pub fn alloc_stdlib<T:Sized+Default+Copy+Clone>(size: usize) -> *mut T {
         slice_ptr
     }).unwrap_or(core::ptr::null_mut())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ::alloc::{Allocator, SliceWrapper};
+
+    extern "C" fn failing_alloc(_data: *mut c_void, _size: usize) -> *mut c_void {
+        core::ptr::null_mut()
+    }
+
+    #[test]
+    fn failed_custom_allocation_returns_empty_block() {
+        let c_allocator = CAllocator {
+            alloc_func: Some(failing_alloc),
+            free_func: None,
+            opaque: core::ptr::null_mut(),
+        };
+        let mut allocator = unsafe { SubclassableAllocator::new(c_allocator) };
+        let block =
+            <SubclassableAllocator as Allocator<u8>>::alloc_cell(&mut allocator, 1);
+
+        assert_eq!(block.slice().len(), 0);
+    }
+}
