@@ -10,7 +10,8 @@ use brotli_decompressor::ffi::interface::{c_void, BrotliDecoderResult};
 use brotli_decompressor::ffi::{
   BrotliDecoderAttachDictionary, BrotliDecoderCreateInstance,
   BrotliDecoderDecompressStream, BrotliDecoderDestroyInstance,
-  BrotliDecoderErrorCode, BrotliDecoderIsUsed,
+  BrotliDecoderErrorCode, BrotliDecoderFreeU8, BrotliDecoderFreeUsize,
+  BrotliDecoderIsUsed,
 };
 use brotli_decompressor::SliceWrapper;
 
@@ -314,6 +315,18 @@ fn ffi_attach_after_decoding_is_rejected() {
     BrotliDecoderAttachDictionary(state, 0, dictionary.len(), dictionary.as_ptr())
   }, 0);
   unsafe { BrotliDecoderDestroyInstance(state) };
+}
+
+#[test]
+fn default_allocator_free_ignores_null() {
+  let state = unsafe { BrotliDecoderCreateInstance(None, None, ptr::null_mut()) };
+  assert!(!state.is_null());
+
+  unsafe {
+    BrotliDecoderFreeU8(state, ptr::null_mut(), 64);
+    BrotliDecoderFreeUsize(state, ptr::null_mut(), 64);
+    BrotliDecoderDestroyInstance(state);
+  }
 }
 
 #[test]
