@@ -3404,10 +3404,14 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                                    num_distance_codes as u16,
                                    max_distance_symbol as u16,
                                    s.num_dist_htrees as u16);
-            if (s.literal_hgroup.codes.slice().len() == 0 ||
+            if (s.literal_hgroup.htrees.slice().len() == 0 ||
+                s.literal_hgroup.codes.slice().len() == 0 ||
+                s.insert_copy_hgroup.htrees.slice().len() == 0 ||
                 s.insert_copy_hgroup.codes.slice().len() == 0 ||
+                s.distance_hgroup.htrees.slice().len() == 0 ||
                 s.distance_hgroup.codes.slice().len() == 0) {
-              return SaveErrorCode!(s, BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_UNREACHABLE);
+              return SaveErrorCode!(
+                s, BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS);
             }
 
           /*{
