@@ -10,10 +10,11 @@ toolchain at test time.
 
 usage: generate.py /path/to/google-brotli-checkout
 
-Requires gcc. Deterministic given the same C implementation version.
+Requires gcc. Deterministic given the same C and Python implementation versions.
 """
 import os
 import random
+import shutil
 import struct
 import subprocess
 import sys
@@ -92,7 +93,8 @@ def gen_serialized(seed):
                 out += struct.pack(
                     '<H', rng.randrange(1, 1000) if ttype in (21, 22) else 0)
         transform_lists.append(bytes(out))
-    prefix = bytes(random.Random(seed + 1).choice(b'abcdefgh ')
+    prefix_rng = random.Random(seed + 1)
+    prefix = bytes(prefix_rng.choice(b'abcdefgh ')
                    for _ in range(rng.choice([0, 200, 3000])))
     blob = bytearray(b'\x91\x00')
     blob += varint(len(prefix)) + prefix
@@ -182,7 +184,11 @@ def main():
     build_harness(sys.argv[1])
     os.makedirs(CORPUS_DIR, exist_ok=True)
     for stale in os.listdir(CORPUS_DIR):
-        os.unlink(os.path.join(CORPUS_DIR, stale))
+        stale_path = os.path.join(CORPUS_DIR, stale)
+        if os.path.isdir(stale_path):
+            shutil.rmtree(stale_path)
+        else:
+            os.unlink(stale_path)
     windows = [12, 18, 22]
     for i in range(8):
         blob, content = gen_serialized(i * 1000)

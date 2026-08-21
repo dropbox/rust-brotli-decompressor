@@ -19,7 +19,7 @@ pub enum BrotliDecoderParameter {
 pub enum BrotliSharedDictionaryType {
     // Raw LZ77 prefix dictionary.
     BROTLI_SHARED_DICTIONARY_RAW = 0,
-    // Serialized shared dictionary; not yet supported.
+    // Serialized shared dictionary in the 0x91 0x00 shared-brotli container.
     BROTLI_SHARED_DICTIONARY_SERIALIZED = 1,
 }
 
