@@ -7,8 +7,20 @@ use std::ptr;
 use brotli_decompressor::ffi::interface::BrotliDecoderResult;
 use brotli_decompressor::ffi::{
   BrotliDecoderCreateInstance, BrotliDecoderDecompressStream, BrotliDecoderDestroyInstance,
-  BrotliDecoderErrorCode, BrotliDecoderIsUsed,
+  BrotliDecoderErrorCode, BrotliDecoderFreeU8, BrotliDecoderFreeUsize, BrotliDecoderIsUsed,
 };
+
+#[test]
+fn default_allocator_free_ignores_null() {
+  let state = unsafe { BrotliDecoderCreateInstance(None, None, ptr::null_mut()) };
+  assert!(!state.is_null());
+
+  unsafe {
+    BrotliDecoderFreeU8(state, ptr::null_mut(), 64);
+    BrotliDecoderFreeUsize(state, ptr::null_mut(), 64);
+    BrotliDecoderDestroyInstance(state);
+  }
+}
 
 #[test]
 fn stream_rejects_null_input_buffer_with_nonzero_length() {
