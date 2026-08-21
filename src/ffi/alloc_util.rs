@@ -214,6 +214,9 @@ pub fn alloc_stdlib<T:Sized+Default+Copy+Clone>(_size: usize) -> *mut T {
 
 #[cfg(feature="std")]
 pub unsafe fn free_stdlib<T>(ptr: *mut T, size: usize) {
+    if ptr.is_null() {
+        return;
+    }
     let slice_ref = super::slice_from_raw_parts_or_nil_mut(ptr, size);
     let _ = Box::from_raw(slice_ref); // free on drop
 }
