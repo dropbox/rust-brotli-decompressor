@@ -19,6 +19,36 @@ struct FailSecondBlockTreeAllocation<AllocHC> {
   block_tree_allocations: u8,
 }
 
+struct FailFirstHtreeAllocation<AllocU32> {
+  alloc: AllocU32,
+  failed: bool,
+}
+
+impl<AllocU32> FailFirstHtreeAllocation<AllocU32> {
+  fn new(alloc: AllocU32) -> Self {
+    FailFirstHtreeAllocation {
+      alloc,
+      failed: false,
+    }
+  }
+}
+
+impl<AllocU32: Allocator<u32>> Allocator<u32> for FailFirstHtreeAllocation<AllocU32> {
+  type AllocatedMemory = AllocU32::AllocatedMemory;
+
+  fn alloc_cell(&mut self, len: usize) -> Self::AllocatedMemory {
+    if !self.failed {
+      self.failed = true;
+      return Self::AllocatedMemory::default();
+    }
+    self.alloc.alloc_cell(len)
+  }
+
+  fn free_cell(&mut self, data: Self::AllocatedMemory) {
+    self.alloc.free_cell(data);
+  }
+}
+
 impl<AllocHC> FailSecondBlockTreeAllocation<AllocHC> {
   fn new(alloc: AllocHC) -> Self {
     FailSecondBlockTreeAllocation {
@@ -113,6 +143,46 @@ fn test_block_len_trees_allocation_failure() {
   match state.error_code {
     super::state::BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES => {}
     _ => panic!("unexpected decoder error after block_len_trees allocation failure"),
+  }
+}
+
+#[test]
+fn test_hgroup_htrees_allocation_failure() {
+  let input = [0x1b, 0x13, 0x00, 0x00, 0xa4, 0xb0, 0xb2, 0xea, 0x81, 0x47, 0x02, 0x8a];
+  let mut output = [0u8; 20];
+  let mut stack_u8_buffer = define_allocator_memory_pool!(4096, u8, [0; 16 * 1024], stack);
+  let mut stack_u32_buffer = define_allocator_memory_pool!(4096, u32, [0; 4 * 1024], stack);
+  let mut stack_hc_buffer = define_allocator_memory_pool!(4096,
+                                                          HuffmanCode,
+                                                          [HuffmanCode::default(); 20 * 1024],
+                                                          stack);
+  let stack_u8_allocator = MemPool::<u8>::new_allocator(&mut stack_u8_buffer, bzero);
+  let stack_u32_allocator =
+    FailFirstHtreeAllocation::new(MemPool::<u32>::new_allocator(&mut stack_u32_buffer, bzero));
+  let stack_hc_allocator = MemPool::<HuffmanCode>::new_allocator(&mut stack_hc_buffer, bzero);
+  let mut state = BrotliState::new(stack_u8_allocator, stack_u32_allocator, stack_hc_allocator);
+  let mut available_in = input.len();
+  let mut input_offset = 0;
+  let mut available_out = output.len();
+  let mut output_offset = 0;
+  let mut total_out = 0;
+
+  let result = BrotliDecompressStream(&mut available_in,
+                                      &mut input_offset,
+                                      &input,
+                                      &mut available_out,
+                                      &mut output_offset,
+                                      &mut output,
+                                      &mut total_out,
+                                      &mut state);
+
+  match result {
+    BrotliResult::ResultFailure => {}
+    _ => panic!("hgroup htrees allocation failure must fail decoding"),
+  }
+  match state.error_code {
+    super::state::BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS => {}
+    _ => panic!("unexpected decoder error after hgroup htrees allocation failure"),
   }
 }
 
