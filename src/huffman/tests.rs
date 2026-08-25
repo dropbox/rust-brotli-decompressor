@@ -1,6 +1,23 @@
 #[cfg(test)]
 
 use super::*;
+
+#[test]
+fn invalid_huffman_inputs_return_errors() {
+  let mut table = [HuffmanCode::default(); 8];
+  let values = [0u16; 4];
+  assert_eq!(BrotliBuildSimpleHuffmanTable(&mut table, 3, &values, 5), 0);
+  assert_eq!(BrotliBuildSimpleHuffmanTable(&mut table[..4], 3, &values, 4), 0);
+
+  let code_lengths = [0u8; 18];
+  let count = [0u16; 6];
+  assert!(!BrotliBuildCodeLengthsHuffmanTable(
+    &mut table,
+    &code_lengths,
+    &count,
+  ));
+}
+
 #[test]
 fn code_length_ht() {
   let code_lengths: [u8; 19] = [0, 2, 3, 0, 2, 3, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
