@@ -89,6 +89,17 @@ pub fn BrotliGetAvailableBits(br: &BrotliBitReader) -> u32 {
   ((::core::mem::size_of::<reg_t>() as u32) << 3) - br.bit_pos_
 }
 
+pub fn is_valid_bit_reader(br: &BrotliBitReader, input: &[u8]) -> bool {
+  let register_bits = (::core::mem::size_of::<reg_t>() as u32) << 3;
+  if br.bit_pos_ > register_bits {
+    return false;
+  }
+  match (br.next_in as usize).checked_add(br.avail_in as usize) {
+    Some(input_end) => input_end <= input.len(),
+    None => false,
+  }
+}
+
 // Returns amount of unread bytes the bit reader still has buffered from the
 // BrotliInput, including whole bytes in br->val_.
 pub fn BrotliGetRemainingBytes(br: &BrotliBitReader) -> u32 {
@@ -389,15 +400,27 @@ pub fn BrotliJumpToByteBoundary(br: &mut BrotliBitReader) -> bool {
 // Returns -1 if operation is not feasible.
 #[allow(dead_code)]
 pub fn BrotliPeekByte(br: &mut BrotliBitReader, mut offset: u32, input: &[u8]) -> i32 {
+  if !is_valid_bit_reader(br, input) {
+    return -1;
+  }
   let available_bits: u32 = BrotliGetAvailableBits(br);
   let bytes_left: u32 = (available_bits >> 3);
-  assert!((available_bits & 7) == 0);
+  if (available_bits & 7) != 0 {
+    return -1;
+  }
   if offset < bytes_left {
     return ((BrotliGetBitsUnmasked(br) >> ((offset << 3)) as u32) & 0xFF) as i32;
   }
   offset -= bytes_left;
   if offset < br.avail_in {
-    return fast!((input)[br.next_in as usize + offset as usize]) as i32;
+    let input_index = match (br.next_in as usize).checked_add(offset as usize) {
+      Some(index) => index,
+      None => return -1,
+    };
+    return match input.get(input_index) {
+      Some(value) => *value as i32,
+      None => -1,
+    };
   }
   -1
 }
@@ -450,6 +473,26 @@ pub fn BrotliWarmupBitReader(br: &mut BrotliBitReader, input: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn peek_byte_rejects_invalid_state() {
+    let data: [u8; 1] = [0x7f];
+    let mut unaligned_reader = BrotliBitReader {
+      val_: 0,
+      bit_pos_: 1,
+      avail_in: 0,
+      next_in: 0,
+    };
+    assert_eq!(BrotliPeekByte(&mut unaligned_reader, 0, &data), -1);
+
+    let mut out_of_bounds_reader = BrotliBitReader {
+      val_: 0,
+      bit_pos_: 64,
+      avail_in: 1,
+      next_in: 1,
+    };
+    assert_eq!(BrotliPeekByte(&mut out_of_bounds_reader, 0, &data), -1);
+  }
 
   #[test]
   fn warmup_works() {

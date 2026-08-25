@@ -116,6 +116,46 @@ fn test_block_len_trees_allocation_failure() {
   }
 }
 
+#[test]
+fn test_rejects_invalid_carry_buffer_length() {
+  let input = [];
+  let mut output = [];
+  let mut stack_u8_buffer = define_allocator_memory_pool!(4096, u8, [0; 16 * 1024], stack);
+  let mut stack_u32_buffer = define_allocator_memory_pool!(4096, u32, [0; 4 * 1024], stack);
+  let mut stack_hc_buffer = define_allocator_memory_pool!(4096,
+                                                          HuffmanCode,
+                                                          [HuffmanCode::default(); 20 * 1024],
+                                                          stack);
+  let stack_u8_allocator = MemPool::<u8>::new_allocator(&mut stack_u8_buffer, bzero);
+  let stack_u32_allocator = MemPool::<u32>::new_allocator(&mut stack_u32_buffer, bzero);
+  let stack_hc_allocator = MemPool::<HuffmanCode>::new_allocator(&mut stack_hc_buffer, bzero);
+  let mut state = BrotliState::new(stack_u8_allocator, stack_u32_allocator, stack_hc_allocator);
+  state.buffer_length = state.buffer.len() as u32 + 1;
+  let mut available_in = 0;
+  let mut input_offset = 0;
+  let mut available_out = 0;
+  let mut output_offset = 0;
+  let mut total_out = 0;
+
+  let result = BrotliDecompressStream(&mut available_in,
+                                      &mut input_offset,
+                                      &input,
+                                      &mut available_out,
+                                      &mut output_offset,
+                                      &mut output,
+                                      &mut total_out,
+                                      &mut state);
+
+  match result {
+    BrotliResult::ResultFailure => {}
+    _ => panic!("invalid carry-buffer length must fail decoding"),
+  }
+  match state.error_code {
+    super::state::BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_UNREACHABLE => {}
+    _ => panic!("unexpected decoder error for invalid carry-buffer length"),
+  }
+}
+
 // no-std variant of oneshot that seeds the decoder with a custom dictionary.
 fn oneshot_dict(input: &mut [u8], dict: &[u8], mut output: &mut [u8]) -> (BrotliResult, usize, usize) {
   let mut available_out: usize = output.len();
