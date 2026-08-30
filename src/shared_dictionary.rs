@@ -94,13 +94,28 @@ const TL_PREFIX_SUFFIX_MAP: usize = 5;
 // draft instead would reject dictionaries the reference encoder emits, and --
 // worse -- would silently mis-apply any transform whose type byte and suffix
 // id are each in range for the other's field, with no error to show for it.
+// Switching to the draft's order is therefore a one-line edit to the
+// constructor below, and nothing else: callers name the fields, so none of
+// them encodes a byte position.
 const TRANSFORM_TRIPLET_SIZE: usize = 3;
 
-// Returns (prefix_id, transform_type, suffix_id) for transform `idx` of the
-// list whose triplets begin at byte `base` of `data`.
-fn transform_triplet_at(data: &[u8], base: usize, idx: usize) -> (u8, u8, u8) {
+#[derive(Clone, Copy)]
+struct TransformTriplet {
+  prefix_id: u8,
+  transform_type: u8,
+  suffix_id: u8,
+}
+
+// Decodes transform `idx` of the list whose triplets begin at byte `base` of
+// `data`. The three field assignments here are the entire definition of the
+// on-the-wire order.
+fn transform_triplet_at(data: &[u8], base: usize, idx: usize) -> TransformTriplet {
   let offset = base + idx * TRANSFORM_TRIPLET_SIZE;
-  (data[offset], data[offset + 1], data[offset + 2])
+  TransformTriplet {
+    prefix_id: data[offset],
+    transform_type: data[offset + 1],
+    suffix_id: data[offset + 2],
+  }
 }
 
 pub struct BrotliSharedDictionary<AllocU8: alloc::Allocator<u8>,
@@ -244,7 +259,7 @@ impl<'a> CustomTransforms<'a> {
     let len = self.blob[offset] as usize;
     &self.blob[offset + 1..offset + 1 + len]
   }
-  fn transform_triplet(&self, idx: i32) -> (u8, u8, u8) {
+  fn transform_triplet(&self, idx: i32) -> TransformTriplet {
     transform_triplet_at(self.blob, self.meta[TL_TRANSFORMS_OFFSET] as usize, idx as usize)
   }
   fn param(&self, idx: i32) -> u16 {
@@ -252,9 +267,10 @@ impl<'a> CustomTransforms<'a> {
     self.blob[offset] as u16 | ((self.blob[offset + 1] as u16) << 8)
   }
   fn apply(&self, dst: &mut [u8], mut word: &[u8], mut len: i32, transform_idx: i32) -> i32 {
-    let (prefix_id, t, suffix_id) = self.transform_triplet(transform_idx);
+    let triplet = self.transform_triplet(transform_idx);
+    let t = triplet.transform_type;
     let mut idx: usize = 0;
-    for &b in self.stringlet(prefix_id).iter() {
+    for &b in self.stringlet(triplet.prefix_id).iter() {
       dst[idx] = b;
       idx += 1;
     }
@@ -304,7 +320,7 @@ impl<'a> CustomTransforms<'a> {
         }
       }
     }
-    for &b in self.stringlet(suffix_id).iter() {
+    for &b in self.stringlet(triplet.suffix_id).iter() {
       dst[idx] = b;
       idx += 1;
     }
@@ -546,10 +562,10 @@ fn parse_transforms_list(reader: &mut Reader, mut out: Option<&mut [u32]>) -> Re
   reader.pos += num_transforms * TRANSFORM_TRIPLET_SIZE;
   let mut has_params = false;
   for i in 0..num_transforms {
-    let (prefix_id, transform_type, suffix_id) =
-      transform_triplet_at(reader.data, transforms_offset, i);
-    let (prefix_id, suffix_id) = (prefix_id as usize, suffix_id as usize);
-    if prefix_id >= stringlet_count || suffix_id >= stringlet_count {
+    let triplet = transform_triplet_at(reader.data, transforms_offset, i);
+    let transform_type = triplet.transform_type;
+    if triplet.prefix_id as usize >= stringlet_count ||
+       triplet.suffix_id as usize >= stringlet_count {
       return Err(());
     }
     if transform_type >= BROTLI_NUM_TRANSFORM_TYPES {
@@ -567,7 +583,8 @@ fn parse_transforms_list(reader: &mut Reader, mut out: Option<&mut [u32]>) -> Re
     }
     reader.pos += num_transforms * 2;
     for i in 0..num_transforms {
-      let (_, transform_type, _) = transform_triplet_at(reader.data, transforms_offset, i);
+      let transform_type =
+        transform_triplet_at(reader.data, transforms_offset, i).transform_type;
       if transform_type != BROTLI_TRANSFORM_SHIFT_FIRST &&
          transform_type != BROTLI_TRANSFORM_SHIFT_ALL {
         if reader.data[params_offset + i * 2] != 0 ||
@@ -586,9 +603,10 @@ fn parse_transforms_list(reader: &mut Reader, mut out: Option<&mut [u32]>) -> Re
     {
       let view = CustomTransforms { meta: &*meta, blob: reader.data };
       for i in 0..num_transforms {
-        let (prefix_id, transform_type, suffix_id) = view.transform_triplet(i as i32);
-        if transform_type == 0 && view.stringlet(prefix_id).is_empty() &&
-           view.stringlet(suffix_id).is_empty() {
+        let triplet = view.transform_triplet(i as i32);
+        if triplet.transform_type == 0 &&
+           view.stringlet(triplet.prefix_id).is_empty() &&
+           view.stringlet(triplet.suffix_id).is_empty() {
           cutoff = i as i16;
           break;
         }
