@@ -72,6 +72,37 @@ const TL_PREFIX_SUFFIX_OFFSET: usize = 3;
 const TL_CUTOFF_IDENTITY: usize = 4;
 const TL_PREFIX_SUFFIX_MAP: usize = 5;
 
+// Byte layout of one entry in a serialized TRANSFORMS_LIST, and the ONLY place
+// in this crate that knows it. Validation, the identity-cutoff scan and the
+// decode-time lookup all go through transform_triplet_at.
+//
+// SPEC DISCREPANCY -- read before "fixing" this:
+//   draft-vandevenne-shared-brotli-format describes each transform as
+//     1 byte: index of prefix in prefix/suffix data
+//     1 byte: index of suffix in prefix/suffix data
+//     1 byte: operation index
+//   i.e. PREFIX_ID, SUFFIX_ID, TYPE. The reference C implementation instead
+//   reads PREFIX_ID, TYPE, SUFFIX_ID:
+//     #define BROTLI_TRANSFORM_PREFIX_ID(T, I) ((T)->transforms[((I) * 3) + 0])
+//     #define BROTLI_TRANSFORM_TYPE(T, I)      ((T)->transforms[((I) * 3) + 1])
+//     #define BROTLI_TRANSFORM_SUFFIX_ID(T, I) ((T)->transforms[((I) * 3) + 2])
+//   (c/common/transform.h:65-67, used by ParseTransformsList and by the
+//   encoder that writes these dictionaries).
+//
+// This port follows the C implementation, because that is what actually
+// produces and consumes serialized dictionaries in practice. Following the
+// draft instead would reject dictionaries the reference encoder emits, and --
+// worse -- would silently mis-apply any transform whose type byte and suffix
+// id are each in range for the other's field, with no error to show for it.
+const TRANSFORM_TRIPLET_SIZE: usize = 3;
+
+// Returns (prefix_id, transform_type, suffix_id) for transform `idx` of the
+// list whose triplets begin at byte `base` of `data`.
+fn transform_triplet_at(data: &[u8], base: usize, idx: usize) -> (u8, u8, u8) {
+  let offset = base + idx * TRANSFORM_TRIPLET_SIZE;
+  (data[offset], data[offset + 1], data[offset + 2])
+}
+
 pub struct BrotliSharedDictionary<AllocU8: alloc::Allocator<u8>,
                                   AllocU32: alloc::Allocator<u32>> {
   // If set, the context map selects the dictionary for each word, from the
@@ -214,8 +245,7 @@ impl<'a> CustomTransforms<'a> {
     &self.blob[offset + 1..offset + 1 + len]
   }
   fn transform_triplet(&self, idx: i32) -> (u8, u8, u8) {
-    let offset = self.meta[TL_TRANSFORMS_OFFSET] as usize + (idx as usize) * 3;
-    (self.blob[offset], self.blob[offset + 1], self.blob[offset + 2])
+    transform_triplet_at(self.blob, self.meta[TL_TRANSFORMS_OFFSET] as usize, idx as usize)
   }
   fn param(&self, idx: i32) -> u16 {
     let offset = self.meta[TL_PARAMS_OFFSET] as usize + (idx as usize) * 2;
@@ -510,15 +540,15 @@ fn parse_transforms_list(reader: &mut Reader, mut out: Option<&mut [u32]>) -> Re
   let stringlet_count = parse_prefix_suffix_table(reader, out.as_deref_mut())?;
   let num_transforms = reader.read_u8()? as usize;
   let transforms_offset = reader.pos;
-  if reader.pos + num_transforms * 3 > reader.data.len() {
+  if reader.pos + num_transforms * TRANSFORM_TRIPLET_SIZE > reader.data.len() {
     return Err(());
   }
-  reader.pos += num_transforms * 3;
+  reader.pos += num_transforms * TRANSFORM_TRIPLET_SIZE;
   let mut has_params = false;
   for i in 0..num_transforms {
-    let prefix_id = reader.data[transforms_offset + i * 3] as usize;
-    let transform_type = reader.data[transforms_offset + i * 3 + 1];
-    let suffix_id = reader.data[transforms_offset + i * 3 + 2] as usize;
+    let (prefix_id, transform_type, suffix_id) =
+      transform_triplet_at(reader.data, transforms_offset, i);
+    let (prefix_id, suffix_id) = (prefix_id as usize, suffix_id as usize);
     if prefix_id >= stringlet_count || suffix_id >= stringlet_count {
       return Err(());
     }
@@ -537,7 +567,7 @@ fn parse_transforms_list(reader: &mut Reader, mut out: Option<&mut [u32]>) -> Re
     }
     reader.pos += num_transforms * 2;
     for i in 0..num_transforms {
-      let transform_type = reader.data[transforms_offset + i * 3 + 1];
+      let (_, transform_type, _) = transform_triplet_at(reader.data, transforms_offset, i);
       if transform_type != BROTLI_TRANSFORM_SHIFT_FIRST &&
          transform_type != BROTLI_TRANSFORM_SHIFT_ALL {
         if reader.data[params_offset + i * 2] != 0 ||
@@ -737,6 +767,8 @@ mod tests {
     out.push(stringlets.len() as u8);
     out.push(0);
     out.extend_from_slice(stringlets);
+    // [prefix_id, transform_type, suffix_id] -- see transform_triplet_at for
+    // why this is the C implementation's order and not the draft's.
     let transforms: &[[u8; 3]] = &[[2, 0, 2], [2, 11, 2], [0, 0, 1],
                                    [2, BROTLI_TRANSFORM_SHIFT_FIRST, 2],
                                    [2, BROTLI_TRANSFORM_SHIFT_ALL, 2],
