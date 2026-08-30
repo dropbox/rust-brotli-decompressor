@@ -158,6 +158,14 @@ pub const SHARED_BROTLI_MAX_RAW_DICT_SIZE: usize = 1usize << 31;
 #[cfg(not(target_pointer_width = "64"))]
 pub const SHARED_BROTLI_MAX_RAW_DICT_SIZE: usize = 1usize << 27;
 
+// Sentinel stored in BrotliDecoderCompoundDictionary::block_bits while the
+// block map is stale, i.e. a marker rather than a shift amount. Real shift
+// amounts computed by EnsureCompoundDictionaryInitialized are in 0..=23
+// (total_size is capped at SHARED_BROTLI_MAX_RAW_DICT_SIZE), so this value can
+// never collide with one. The C implementation uses -1 for the same purpose;
+// the field is unsigned here.
+pub const COMPOUND_DICTIONARY_BLOCK_MAP_UNINITIALIZED: u32 = 255;
+
 // LZ77 prefix ("compound") dictionaries attached to the decoder. Unlike the
 // historical approach of copying the dictionary into the ring buffer, chunks
 // are kept in their own buffers and referenced by backward distances in
@@ -167,7 +175,8 @@ pub struct BrotliDecoderCompoundDictionary<AllocU8: alloc::Allocator<u8>> {
   pub num_chunks: usize,
   pub total_size: usize,
   // Map from address >> block_bits to the first chunk that might contain that
-  // address; 255 means "not yet computed".
+  // address; COMPOUND_DICTIONARY_BLOCK_MAP_UNINITIALIZED means "not yet
+  // computed".
   pub block_bits: u32,
   pub block_map: [u8; 256],
   // chunk_offsets[i] is the address of the first byte of chunk i;
@@ -187,7 +196,7 @@ impl<AllocU8: alloc::Allocator<u8>> Default for BrotliDecoderCompoundDictionary<
     BrotliDecoderCompoundDictionary::<AllocU8> {
       num_chunks: 0,
       total_size: 0,
-      block_bits: 255,
+      block_bits: COMPOUND_DICTIONARY_BLOCK_MAP_UNINITIALIZED,
       block_map: [0; 256],
       chunk_offsets: [0; SHARED_BROTLI_MAX_COMPOUND_DICTS + 1],
       chunks: Default::default(),
@@ -603,7 +612,8 @@ impl <'brotli_state,
         addon.num_chunks += 1;
         addon.total_size += size;
         addon.chunk_offsets[addon.num_chunks] = addon.total_size as u32;
-        addon.block_bits = 255; // invalidate the lazily-computed block map
+        // Invalidate the lazily-computed block map.
+        addon.block_bits = COMPOUND_DICTIONARY_BLOCK_MAP_UNINITIALIZED;
         true
     }
     pub fn BrotliStateMetablockBegin(self : &mut Self) {

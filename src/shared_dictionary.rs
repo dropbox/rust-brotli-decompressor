@@ -19,6 +19,13 @@ use transform::{kNumTransforms, TransformDictionaryWord, ToUpperCase};
 
 pub const SHARED_BROTLI_MIN_DICTIONARY_WORD_LENGTH: u32 = 4;
 pub const SHARED_BROTLI_MAX_DICTIONARY_WORD_LENGTH: u32 = 31;
+// Longest prefix or suffix a transform can prepend/append to a dictionary
+// word. Custom affixes come from the transform list's prefix/suffix table as
+// "stringlets", each stored as a single length byte followed by that many
+// bytes, so 255 is the hard maximum. The built-in transform list
+// (transform.rs) only ever uses 5-byte prefixes and 8-byte suffixes;
+// serialized shared dictionaries may use the full range.
+pub const SHARED_BROTLI_MAX_TRANSFORM_AFFIX_LENGTH: u32 = 255;
 pub const SHARED_BROTLI_NUM_DICTIONARY_CONTEXTS: usize = 64;
 // Max allowed by spec for custom word list size bits.
 const BROTLI_MAX_SIZE_BITS: u8 = 15;

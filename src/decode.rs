@@ -23,14 +23,15 @@ use state::{BlockTypeAndLengthState, BrotliRunningContextMapState, BrotliRunning
             BrotliRunningHuffmanState, BrotliRunningMetablockHeaderState,
             BrotliRunningReadBlockLengthState, BrotliRunningState, BrotliRunningTreeGroupState,
             BrotliRunningUncompressedState, kLiteralContextBits,
-            BrotliDecoderErrorCode,
+            BrotliDecoderErrorCode, COMPOUND_DICTIONARY_BLOCK_MAP_UNINITIALIZED,
 };
 use context::{kContextLookup};
 use ::dictionary::{kBrotliDictionary, kBrotliDictionaryOffsetsByLength,
                    kBrotliDictionarySizeBitsByLength, kBrotliMaxDictionaryWordLength,
                    kBrotliMinDictionaryWordLength};
 use ::shared_dictionary::{SHARED_BROTLI_MIN_DICTIONARY_WORD_LENGTH,
-                          SHARED_BROTLI_MAX_DICTIONARY_WORD_LENGTH};
+                          SHARED_BROTLI_MAX_DICTIONARY_WORD_LENGTH,
+                          SHARED_BROTLI_MAX_TRANSFORM_AFFIX_LENGTH};
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
 #[repr(C)]
 #[derive(Debug)]
@@ -1822,11 +1823,19 @@ fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
    input: &[u8])
    -> bool {
   // We need the slack region for the following reasons:
-  // - doing up to two 16-byte copies for fast backward copying
-  // - inserting transformed dictionary word: 255 prefix + 31 base + 255
-  //   suffix for shared-dictionary custom transforms (the built-in
-  //   transforms need only 5 + 24 + 8); matches the C implementation's 542
-  const kRingBufferWriteAheadSlack: i32 = 542;
+  // - doing up to two 16-byte copies for fast backward copying (32 bytes,
+  //   subsumed by the dictionary-word case below)
+  // - inserting a transformed dictionary word past the end of the ring
+  //   buffer: prefix + base word + suffix. The built-in transforms need only
+  //   5 + 24 + 8 = 37, but a serialized shared dictionary may define
+  //   transforms with full-length affixes, so a word starting on the last
+  //   ring-buffer byte can write this far past it.
+  const kRingBufferWriteAheadSlack: i32 =
+    SHARED_BROTLI_MAX_TRANSFORM_AFFIX_LENGTH as i32           // 255-byte prefix
+    + (SHARED_BROTLI_MAX_DICTIONARY_WORD_LENGTH as i32 + 1)   //  32: 31-byte word, rounded up
+    + SHARED_BROTLI_MAX_TRANSFORM_AFFIX_LENGTH as i32;        // 255-byte suffix => 542
+  // The C implementation hardcodes 542; fail the build if the two drift apart.
+  const _RING_BUFFER_SLACK_MATCHES_C: [(); 542] = [(); kRingBufferWriteAheadSlack as usize];
   let mut is_last = s.is_last_metablock;
   s.ringbuffer_size = 1 << s.window_bits;
 
@@ -1873,7 +1882,7 @@ fn EnsureCompoundDictionaryInitialized<AllocU8: alloc::Allocator<u8>,
   // 256 = (1 << 8) slots in block map.
   let mut block_bits: u32 = 8;
   let maximal_address = addon.total_size as u32 - 1;
-  if addon.block_bits != 255 {
+  if addon.block_bits != COMPOUND_DICTIONARY_BLOCK_MAP_UNINITIALIZED {
     return;
   }
   while (maximal_address >> block_bits) != 0 {
