@@ -1186,6 +1186,92 @@ fn test_serialized_dictionary_context_map() {
                          include_bytes!("../../testdata/shared_content"));
 }
 
+// The borrowed attach path must produce byte-identical output to the copying
+// path while actually aliasing the caller's buffer -- that aliasing is the
+// whole point, since it lets one dictionary image back an unbounded number of
+// concurrent decoders. No unsafe is needed: the 'static bound on the argument
+// is what discharges the lifetime obligation, and include_bytes! satisfies it.
+fn assert_within(inner: &[u8], outer: &[u8]) {
+  let base = outer.as_ptr() as usize;
+  let ptr = inner.as_ptr() as usize;
+  assert!(ptr >= base && ptr + inner.len() <= base + outer.len(),
+          "expected a subslice of the caller's buffer, not a copy");
+}
+
+#[test]
+fn test_attach_borrowed_dictionary_does_not_copy() {
+  let dict_bytes = include_bytes!("../../testdata/issue42.dict");
+  let mut state = new_dictionary_test_state();
+  assert!(state.attach_dictionary_borrowed(&dict_bytes[..]));
+  assert_eq!(state.compound_dictionary.chunks[0].slice().as_ptr(),
+             dict_bytes.as_ptr());
+  let decoded = decode_dictionary_test_state(
+      &mut state, include_bytes!("../../testdata/issue42.compressed")).unwrap();
+  assert_eq!(decoded, issue42_expanded());
+}
+
+// Two decoders sharing one buffer: neither may hold a private copy, and both
+// must decode correctly.
+#[test]
+fn test_borrowed_dictionary_shared_between_decoders() {
+  let dict_bytes = include_bytes!("../../testdata/issue42.dict");
+  let compressed = include_bytes!("../../testdata/issue42.compressed");
+  let expected = issue42_expanded();
+  for _ in 0..2 {
+    let mut state = new_dictionary_test_state();
+    assert!(state.attach_dictionary_borrowed(&dict_bytes[..]));
+    assert_eq!(state.compound_dictionary.chunks[0].slice().as_ptr(),
+               dict_bytes.as_ptr());
+    assert_eq!(decode_dictionary_test_state(&mut state, compressed).unwrap(), expected);
+  }
+}
+
+// Borrowed chunks compose with the multi-chunk path, so copies still cross
+// chunk boundaries mid-command.
+#[test]
+fn test_attach_borrowed_dictionary_in_chunks() {
+  let dict_bytes = include_bytes!("../../testdata/issue42.dict");
+  let mut state = new_dictionary_test_state();
+  for piece in [&dict_bytes[..1234], &dict_bytes[1234..1235], &dict_bytes[1235..]].iter() {
+    assert!(state.attach_dictionary_borrowed(*piece));
+  }
+  for i in 0..3 {
+    assert_within(state.compound_dictionary.chunks[i].slice(), &dict_bytes[..]);
+  }
+  let decoded = decode_dictionary_test_state(
+      &mut state, include_bytes!("../../testdata/issue42.compressed")).unwrap();
+  assert_eq!(decoded, issue42_expanded());
+}
+
+// shared_custom carries an LZ77 prefix plus custom word and transform lists,
+// so the borrowed path must alias twice: the prefix chunk as a subslice of the
+// blob, and the retained blob itself (word/transform offsets index into it for
+// the whole decode, not just for parsing).
+#[test]
+fn test_attach_borrowed_serialized_dictionary_does_not_copy() {
+  let dict_bytes = include_bytes!("../../testdata/shared_custom.dict");
+  let mut state = new_dictionary_test_state();
+  assert!(state.attach_serialized_dictionary_borrowed(&dict_bytes[..]));
+  assert_eq!(state.dictionary.blob.slice().as_ptr(), dict_bytes.as_ptr());
+  assert_within(state.compound_dictionary.chunks[0].slice(), &dict_bytes[..]);
+  let decoded = decode_dictionary_test_state(
+      &mut state, include_bytes!("../../testdata/shared_custom.compressed")).unwrap();
+  assert_eq!(&decoded[..], &include_bytes!("../../testdata/shared_content")[..]);
+}
+
+// Rejection paths must not try to free borrowed memory.
+#[test]
+fn test_attach_borrowed_dictionary_too_late_fails() {
+  let dict_bytes = include_bytes!("../../testdata/issue42.dict");
+  let mut state = new_dictionary_test_state();
+  assert!(state.attach_dictionary_borrowed(&dict_bytes[..]));
+  let decoded = decode_dictionary_test_state(
+      &mut state, include_bytes!("../../testdata/issue42.compressed")).unwrap();
+  assert!(!state.attach_dictionary_borrowed(b"late"));
+  assert!(!state.attach_serialized_dictionary_borrowed(b"\x91\x00garbage"));
+  assert_eq!(decoded, issue42_expanded());
+}
+
 // A serialized dictionary containing only an LZ77 prefix chunk is equivalent
 // to attaching the same bytes as a raw dictionary.
 #[test]

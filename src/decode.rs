@@ -3161,7 +3161,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           // after the ring buffer wraps.
           if s.custom_dict.slice().len() != 0 {
             let dict = mem::replace(&mut s.custom_dict, AllocU8::AllocatedMemory::default());
-            if !s.attach_compound_dictionary_chunk(dict) {
+            if !s.attach_compound_dictionary_chunk(state::MaybeOwnedSlice::Owned(dict)) {
               result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_COMPOUND_DICTIONARY;
               break;
             }

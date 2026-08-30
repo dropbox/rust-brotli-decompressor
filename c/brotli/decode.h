@@ -172,7 +172,9 @@ BROTLI_DEC_API BROTLI_BOOL BrotliDecoderSetParameter(
  * Adds LZ77 prefix dictionary, adds or replaces built-in static dictionary and
  * transforms.
  *
- * The data is copied, so it need not outlive the decoder.
+ * Attached dictionary ownership is not transferred.
+ * Data provided to this method should be kept accessible until
+ * decoding is finished and decoder instance is destroyed.
  *
  * @note Dictionaries can NOT be attached after actual decoding is started.
  *

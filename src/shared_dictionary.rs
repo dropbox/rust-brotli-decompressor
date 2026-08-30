@@ -15,6 +15,7 @@ use alloc;
 use alloc::{Allocator, SliceWrapper, SliceWrapperMut};
 use dictionary::{kBrotliDictionary, kBrotliDictionaryOffsetsByLength, kBrotliDictionarySizeBitsByLength,
                  kBrotliMaxDictionaryWordLength};
+use state;
 use transform::{kNumTransforms, TransformDictionaryWord, ToUpperCase};
 
 pub const SHARED_BROTLI_MIN_DICTIONARY_WORD_LENGTH: u32 = 4;
@@ -88,7 +89,7 @@ pub struct BrotliSharedDictionary<AllocU8: alloc::Allocator<u8>,
   pub transforms_index: [u8; SHARED_BROTLI_NUM_DICTIONARY_CONTEXTS],
   // The serialized dictionary; word data, stringlets, transform triplets and
   // parameters are referenced by offset into this buffer.
-  pub blob: AllocU8::AllocatedMemory,
+  pub blob: state::MaybeOwnedSlice<AllocU8>,
   // The parsed word list / transform list arena described above.
   pub meta: AllocU32::AllocatedMemory,
 }
@@ -104,7 +105,7 @@ impl<AllocU8: alloc::Allocator<u8>,
       context_map: [0; SHARED_BROTLI_NUM_DICTIONARY_CONTEXTS],
       words_index: [0; SHARED_BROTLI_NUM_DICTIONARY_CONTEXTS],
       transforms_index: [0; SHARED_BROTLI_NUM_DICTIONARY_CONTEXTS],
-      blob: AllocU8::AllocatedMemory::default(),
+      blob: state::MaybeOwnedSlice::default(),
       meta: AllocU32::AllocatedMemory::default(),
     }
   }
@@ -780,7 +781,7 @@ mod tests {
     parse_serialized_dictionary_into(blob, &summary, &mut dict)?;
     let mut blob_mem = <StandardAlloc as Allocator<u8>>::alloc_cell(&mut alloc, blob.len());
     blob_mem.slice_mut().clone_from_slice(blob);
-    dict.blob = blob_mem;
+    dict.blob = state::MaybeOwnedSlice::Owned(blob_mem);
     Ok(dict)
   }
 

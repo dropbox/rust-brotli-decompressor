@@ -557,10 +557,21 @@ pub unsafe extern fn BrotliDecoderDestroyInstance(state_ptr: *mut BrotliDecoderS
     }
 }
 
-// Attaches a dictionary to the decoder, like the C API of the same name.
-// The data is copied, so unlike the C API it need not outlive the decoder.
+// Attaches a dictionary to the decoder, matching the C API of the same name.
 // Must be called before any input is processed.
 // Returns 1 on success, 0 on failure.
+//
+// Ownership is NOT transferred and the payload is never copied, exactly as in
+// c/dec/decode.c: a raw dictionary is stored as a pointer to the caller's
+// buffer (shared_dictionary.c stores `dict->prefix[n] = data`), and a
+// serialized dictionary's LZ77 prefix, word lists and transform lists are all
+// referenced in place inside the caller's blob (`&encoded[pos]`). The caller
+// MUST therefore keep `data` allocated and unmodified until
+// BrotliDecoderDestroyInstance returns.
+//
+// The consequence worth knowing: attaching costs zero allocations and zero
+// bytes per decoder instance, so one dictionary image backs any number of
+// concurrent decoders.
 #[no_mangle]
 pub unsafe extern "C" fn BrotliDecoderAttachDictionary(
     state_ptr: *mut BrotliDecoderState,
@@ -576,7 +587,12 @@ pub unsafe extern "C" fn BrotliDecoderAttachDictionary(
     1 => true,
     _ => return 0,
   };
-  let data_slice = match checked_slice_from_raw_parts_or_nil(data, data_size) {
+  // checked_slice_from_raw_parts_or_nil hands out an unconstrained lifetime.
+  // Naming it 'static here is the whole of the unsafety behind this entry
+  // point: it is sound exactly when the caller honors the contract documented
+  // above. Confining it to this module is what keeps
+  // BrotliState::attach_dictionary_borrowed a safe fn.
+  let data_slice: &'static [u8] = match checked_slice_from_raw_parts_or_nil(data, data_size) {
     Some(data_slice) => data_slice,
     None => return 0,
   };
@@ -585,20 +601,10 @@ pub unsafe extern "C" fn BrotliDecoderAttachDictionary(
       super::state::BrotliRunningState::BROTLI_STATE_UNINITED => {},
       _ => return 0,
     }
-    let dict = {
-      let alloc_u8 = &mut (*state_ptr).decompressor.alloc_u8;
-      let mut dict = alloc_u8.alloc_cell(data_size);
-      if dict.slice().len() != data_size {
-        alloc_u8.free_cell(dict);
-        return 0;
-      }
-      dict.slice_mut().clone_from_slice(data_slice);
-      dict
-    };
     let ok = if is_serialized {
-        (*state_ptr).decompressor.attach_serialized_dictionary(dict)
+      (*state_ptr).decompressor.attach_serialized_dictionary_borrowed(data_slice)
     } else {
-        (*state_ptr).decompressor.attach_dictionary(dict)
+      (*state_ptr).decompressor.attach_dictionary_borrowed(data_slice)
     };
     if ok {1} else {0}
   }) {
