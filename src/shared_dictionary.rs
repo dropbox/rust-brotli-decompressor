@@ -11,8 +11,10 @@
 // and transform lists that replace or augment the built-in static dictionary,
 // optionally selected per-literal-context through a 64-entry context map.
 
+use core;
 use alloc;
 use alloc::{Allocator, SliceWrapper, SliceWrapperMut};
+use bit_reader;
 use dictionary::{kBrotliDictionary, kBrotliDictionaryOffsetsByLength, kBrotliDictionarySizeBitsByLength,
                  kBrotliMaxDictionaryWordLength};
 use state;
@@ -176,6 +178,47 @@ impl<AllocU8: alloc::Allocator<u8>,
       })
     }
   }
+  // Resolves `address` in the flat dictionary address space to the word and
+  // transform that own it, for a word of length `len`.
+  //
+  // The space is partitioned across the dictionaries: each owns a contiguous
+  // run of ((1 << shift) & !1) * num_transforms addresses, which is zero when
+  // its word list cannot encode `len` at all (shift == 0). They are searched
+  // in the order the format prescribes -- `dict_id` first, then the rest by
+  // index -- with `remaining` walking past the runs the address is not in.
+  //
+  // c/dec/decode.c writes this as a first lookup plus a separate rescan loop
+  // that re-derives the same quantities; this is that arithmetic stated once.
+  // The reference's `transform_idx >= num_transforms` test is exactly
+  // `remaining >= count` for the first candidate, and its two post-lookup
+  // guards need no counterpart here: a candidate is selected only when
+  // remaining < count, which for count > 0 forces shift >= 1 and
+  // transform_idx < num_transforms.
+  pub(crate) fn lookup(&self, dict_id: u8, len: i32, address: i32)
+      -> Result<DictionaryLookup<'_>, DictionaryLookupError> {
+    let mut remaining = address;
+    for candidate in core::iter::once(dict_id)
+        .chain((0..self.num_dictionaries).filter(|&d| d != dict_id)) {
+      let words = self.words_of(candidate);
+      let shift = words.size_bits_by_length(len) as u32;
+      let transforms = self.transforms_of(candidate);
+      let count = (((1u32 << shift) & !1u32) as i32) * transforms.num_transforms();
+      if remaining < count {
+        return Ok(DictionaryLookup {
+          words: words,
+          transforms: transforms,
+          word_idx: remaining & bit_reader::BitMask(shift) as i32,
+          transform_idx: remaining >> shift,
+        });
+      }
+      remaining -= count;
+    }
+    Err(if self.words_of(dict_id).size_bits_by_length(len) == 0 {
+      DictionaryLookupError::LengthNotEncodable
+    } else {
+      DictionaryLookupError::AddressOutOfRange
+    })
+  }
   pub(crate) fn transforms_of(&self, dict_id: u8) -> DictTransforms<'_> {
     let index = self.transforms_index[dict_id as usize];
     if index >= self.num_transform_lists {
@@ -207,6 +250,26 @@ impl<'a> CustomWords<'a> {
                  (word_idx * len) as usize;
     &self.blob[offset..offset + len as usize]
   }
+}
+
+// Which word list and transform list own a dictionary-space address, and the
+// indices within them. Named fields on purpose: nothing outside this file
+// should have to remember an order.
+pub(crate) struct DictionaryLookup<'a> {
+  pub(crate) words: DictWords<'a>,
+  pub(crate) transforms: DictTransforms<'a>,
+  pub(crate) word_idx: i32,
+  pub(crate) transform_idx: i32,
+}
+
+// Why an address resolved to no dictionary at all. The two cases map to the
+// two distinct format errors the reference implementation reports.
+#[derive(Clone, Copy)]
+pub(crate) enum DictionaryLookupError {
+  // The context-selected dictionary's word list cannot encode this length.
+  LengthNotEncodable,
+  // The address runs past the end of every candidate's transforms.
+  AddressOutOfRange,
 }
 
 #[derive(Clone, Copy)]

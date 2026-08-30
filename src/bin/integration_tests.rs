@@ -9,6 +9,7 @@ use super::brotli_decompressor::BrotliDecompressStream;
 #[cfg(feature="std")]
 use super::brotli_decompressor::{Decompressor, DecompressorWriter};
 use super::brotli_decompressor::BrotliState;
+use super::brotli_decompressor::BrotliDecoderErrorCode;
 use super::brotli_decompressor::HuffmanCode;
 use super::HeapAllocator;
 
@@ -1364,6 +1365,33 @@ fn test_dictionary_corpus() {
 // Deterministic mutation sweep: corrupting any byte of a valid serialized
 // dictionary may make attach or decode fail, but must never panic or
 // produce out-of-bounds access.
+// The shared-dictionary lookup reports two distinct failures, and which one it
+// is depends on the context-selected dictionary alone: FORMAT_DICTIONARY when
+// that dictionary's word list cannot encode the requested length at all
+// (size_bits == 0), FORMAT_TRANSFORM when the address runs past the end of
+// every candidate's transforms. Nothing else pinned that distinction, so a
+// refactor of the search could collapse the two silently.
+//
+// The two mutations below were found by sweeping every single-byte change to
+// shared_custom.compressed and recording the resulting error code; re-derive
+// them the same way if the fixtures ever change.
+#[test]
+fn test_custom_dictionary_lookup_distinguishes_its_two_failures() {
+  let dict_bytes = include_bytes!("../../testdata/shared_custom.dict");
+  let compressed = include_bytes!("../../testdata/shared_custom.compressed");
+  let cases = [(4usize, 74u8, BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_DICTIONARY),
+               (6usize, 210u8, BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_TRANSFORM)];
+  for &(pos, delta, expected) in cases.iter() {
+    let mut mutated = compressed.to_vec();
+    mutated[pos] = mutated[pos].wrapping_add(delta);
+    let mut state = new_dictionary_test_state();
+    assert!(attach_test_dictionary(&mut state, dict_bytes, true));
+    assert!(decode_dictionary_test_state(&mut state, &mutated).is_err());
+    assert_eq!(state.error_code as i32, expected as i32,
+               "mutation pos={} delta={} gave {:?}", pos, delta, state.error_code);
+  }
+}
+
 #[test]
 fn test_serialized_dictionary_mutation_robustness() {
   let dict_bytes = include_bytes!("../../testdata/shared_custom.dict");
