@@ -1694,12 +1694,7 @@ fn SafeDecodeDistanceBlockSwitch<AllocU8: alloc::Allocator<u8>,
 }
 
 // Bytes decoded into the ring buffer but not yet handed to the caller.
-//
-// Requires a consistent ring buffer: `0 <= pos` and `0 < ringbuffer_size`,
-// which is what `CheckRingBufferConsistency` establishes for both callers.
-// Given that, all three operations below are total in u64: the ring buffer is
-// at most 2^30 bytes and `rb_roundtrips` counts wraps of it, so the sum cannot
-// approach u64::MAX, and `partial_pos_out` never runs ahead of it.
+// Callers must have established CheckRingBufferConsistency.
 fn UnwrittenBytes<AllocU8: alloc::Allocator<u8>,
                   AllocU32: alloc::Allocator<u32>,
                   AllocHC: alloc::Allocator<HuffmanCode>> (
@@ -1718,11 +1713,10 @@ fn UnwrittenBytes<AllocU8: alloc::Allocator<u8>,
   partial_pos_rb - s.partial_pos_out
 }
 
-// The ring buffer invariant every ring-buffer read depends on: a positive size
-// that matches the mask, and a `pos` inside the allocation. A malformed stream
-// cannot break this -- only a decoder bug could -- but the safe build would
-// panic and the `unsafe` build would read out of bounds, so it is checked
-// rather than asserted.
+// The invariant every ring-buffer read depends on: a positive size matching the
+// mask, and a `pos` inside the allocation. Only a decoder bug can break it, but
+// it stays a runtime check because the `unsafe` build would read out of bounds
+// rather than panic.
 fn CheckRingBufferConsistency<AllocU8: alloc::Allocator<u8>,
                               AllocU32: alloc::Allocator<u32>,
                               AllocHC: alloc::Allocator<HuffmanCode>>(
@@ -1749,25 +1743,18 @@ fn WriteRingBuffer<'a,
   if !CheckRingBufferConsistency(s) {
     return (BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_UNREACHABLE, &[]);
   }
-  // window_bits is parsed from a 6-bit field, so it is always < 64 and the
-  // shift is in range; the parser narrows it further to 9..=24, or 10..=30 for
-  // large-window streams, before any of this matters. Masking keeps the shift
-  // total by construction rather than by that argument.
+  // window_bits is 9..=24, or 10..=30 for large-window streams; masked so the
+  // shift stays in range regardless.
   debug_assert!(s.window_bits < 64);
   let window_size = 1i64 << (s.window_bits & 63);
   let to_write = UnwrittenBytes(s, true);
-  // num_written <= available_out, and available_out is bounded by the output
-  // slice, so this fits usize on every target.
   let num_written = core::cmp::min(*available_out as u64, to_write) as usize;
-  // Consistency gives start_index < ringbuffer_size <= ringbuffer.len(), and
-  // num_written <= to_write <= ringbuffer_size, so the range fits usize; the
-  // slice lookup is what decides whether it is actually in bounds.
   let start_index = (s.partial_pos_out & s.ringbuffer_mask as u64) as usize;
   let start = match s.ringbuffer.slice().get(start_index..start_index + num_written) {
     Some(start) => start,
     None => return (BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_UNREACHABLE, &[]),
   };
-  // output is caller-supplied: a genuine trust boundary, unlike the above.
+  // output is caller-supplied, hence INVALID_ARGUMENTS rather than UNREACHABLE.
   let output_end = match (*output_offset).checked_add(num_written) {
     Some(output_end) => output_end,
     None => return (BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS, &[]),
@@ -1783,9 +1770,8 @@ fn WriteRingBuffer<'a,
   BROTLI_LOG_UINT!(to_write);
   BROTLI_LOG_UINT!(num_written);
   s.partial_pos_out += num_written as u64;
-  // The public API reports total_out as usize, matching C's size_t; on a
-  // 32-bit target that truncates past 4GiB exactly as the C API does. The
-  // decoder's own accounting stays in u64 so it does not.
+  // The public API reports total_out as usize, matching C's size_t: on a 32-bit
+  // target it truncates past 4GiB, while the internal accounting does not.
   *total_out = s.partial_pos_out as usize;
   if (num_written as u64) < to_write {
     if s.ringbuffer_size as i64 == window_size || force {
@@ -2413,10 +2399,9 @@ fn CheckInputAmount(safe: bool, br: &bit_reader::BrotliBitReader, num: u32) -> b
 fn memmove16(data: &mut [u8], u32off_dst: u32, u32off_src: u32) -> bool {
   let off_dst = u32off_dst as usize;
   let off_src = u32off_src as usize;
-  // Phrased as a subtraction rather than `off + 16 > len` so that nothing can
-  // wrap on any target, which is what lets the copies below index directly.
-  // The ring buffer carries kRingBufferWriteAheadSlack bytes past
-  // ringbuffer_size so that these 16-byte over-copies stay in bounds.
+  // Always copies 16 bytes, so a caller copying fewer overshoots; the ring buffer
+  // carries kRingBufferWriteAheadSlack bytes past ringbuffer_size to absorb it.
+  // Subtraction, not `off + 16`, so nothing can wrap.
   let len = data.len();
   if len < 16 || core::cmp::max(off_dst, off_src) > len - 16 {
     return false;
@@ -2450,10 +2435,9 @@ fn memmove16(data: &mut [u8], u32off_dst: u32, u32off_src: u32) -> bool {
 
 #[inline(always)]
 fn memcpy_within_slice(data: &mut [u8], off_dst: usize, off_src: usize, size: usize) -> bool {
-  // Both ranges must fit, and they must not overlap: the `unsafe` build lowers
-  // this to copy_nonoverlapping, and the safe build's split_at_mut would panic.
-  // Written without any addition so that no offset the caller can supply --
-  // usize::MAX included -- can wrap past the checks.
+  // Both ranges must fit and must not overlap: the `unsafe` build lowers this to
+  // copy_nonoverlapping, and the safe build's split_at_mut would panic.
+  // Subtraction, not `off + size`, so no caller offset can wrap past the checks.
   let len = data.len();
   let apart = if off_dst > off_src { off_dst - off_src } else { off_src - off_dst };
   if size > len || off_dst > len - size || off_src > len - size || apart < size {
@@ -3201,9 +3185,6 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
               *input_offset = s.br.next_in as usize;
               *available_in = s.br.avail_in as usize;
               let buffer_length = s.buffer_length as usize;
-              // available_in comes from the bit reader (a u32) and the offsets
-              // are bounded by their buffers, so summing in u64 is exact even
-              // where usize is 32 bits; only the fit needs deciding.
               let input_end = *input_offset as u64 + *available_in as u64;
               let buffer_end = buffer_length as u64 + *available_in as u64;
               if input_end > xinput.len() as u64 || buffer_end > s.buffer.len() as u64 {
@@ -3810,11 +3791,10 @@ mod state_guard_tests {
     s
   }
 
-  // The remaining guards below are not reachable through
-  // BrotliDecompressStream -- a corpus of ~160k malformed streams reaches none
-  // of them -- so each is driven directly from an inconsistent decoder state.
-  // They exist because the `unsafe` build turns an out-of-range index into an
-  // out-of-bounds access rather than a panic.
+  // None of the guards below is reachable through BrotliDecompressStream, so
+  // each is driven directly from an inconsistent decoder state. They exist
+  // because the `unsafe` build turns an out-of-range index into an out-of-bounds
+  // access rather than a panic.
 
   #[test]
   fn ring_buffer_consistency_rejects_inconsistent_state() {
@@ -3845,8 +3825,8 @@ mod state_guard_tests {
 
   #[test]
   fn unwritten_bytes_is_exact_past_a_32_bit_wrap() {
-    // The counters are u64 precisely so this stays exact where usize is 32
-    // bits: rb_roundtrips * ringbuffer_size alone overflows a 32-bit usize.
+    // rb_roundtrips * ringbuffer_size alone overflows a 32-bit usize, so this
+    // only stays exact because the counters are u64.
     let mut s = state_with_ringbuffer(1 << 16, 16);
     s.rb_roundtrips = 1 << 17; // 2^17 * 2^16 == 2^33 bytes decoded
     s.pos = 100;

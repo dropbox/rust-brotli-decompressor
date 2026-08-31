@@ -18,10 +18,9 @@ fn invalid_huffman_inputs_return_errors() {
   ));
 }
 
-// Each test below drives one rejection path in this module. They are
-// white-box on purpose: none of these conditions is reachable through
-// BrotliDecompressStream (a corpus of ~160k malformed streams reaches none of
-// them), so a direct call is the only way to show the guard works.
+// Each test below drives one rejection path in this module. They are white-box
+// on purpose: none of these conditions is reachable through
+// BrotliDecompressStream, so a direct call is the only way to exercise them.
 #[cfg(test)]
 mod guard_tests {
   use super::super::*;

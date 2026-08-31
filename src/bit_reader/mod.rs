@@ -89,8 +89,6 @@ pub fn BrotliGetAvailableBits(br: &BrotliBitReader) -> u32 {
   ((::core::mem::size_of::<reg_t>() as u32) << 3) - br.bit_pos_
 }
 
-// next_in and avail_in are u32, so their sum only overflows when it is widened
-// into a 32-bit usize; in u64 it is exact on every target.
 pub fn is_valid_bit_reader(br: &BrotliBitReader, input: &[u8]) -> bool {
   let register_bits = (::core::mem::size_of::<reg_t>() as u32) << 3;
   br.bit_pos_ <= register_bits &&
@@ -410,9 +408,6 @@ pub fn BrotliPeekByte(br: &mut BrotliBitReader, mut offset: u32, input: &[u8]) -
   }
   offset -= bytes_left;
   if offset < br.avail_in {
-    // is_valid_bit_reader has bounded next_in + avail_in by input.len(), and
-    // offset < avail_in, so this index is in range; the u64 add keeps that
-    // true on 32-bit as well.
     let input_index = u64::from(br.next_in) + u64::from(offset);
     return match input.get(input_index as usize) {
       Some(value) => *value as i32,
