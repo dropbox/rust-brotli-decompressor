@@ -18,6 +18,286 @@ fn invalid_huffman_inputs_return_errors() {
   ));
 }
 
+// Each test below drives one rejection path in this module. They are
+// white-box on purpose: none of these conditions is reachable through
+// BrotliDecompressStream (a corpus of ~160k malformed streams reaches none of
+// them), so a direct call is the only way to show the guard works.
+#[cfg(test)]
+mod guard_tests {
+  use super::super::*;
+
+  fn code() -> HuffmanCode {
+    HuffmanCode { bits: 1, value: 7 }
+  }
+
+  #[test]
+  fn replicate_value_rejects_degenerate_step_and_end() {
+    let mut table = [HuffmanCode::default(); 32];
+    assert!(!ReplicateValue(&mut table, 0, 0, 8, code()));    // step == 0
+    assert!(!ReplicateValue(&mut table, 0, -2, 8, code()));   // step < 0
+    assert!(!ReplicateValue(&mut table, 0, 2, 0, code()));    // end == 0
+    assert!(!ReplicateValue(&mut table, 0, 2, -4, code()));   // end < 0
+    assert!(!ReplicateValue(&mut table, 0, 3, 8, code()));    // end % step != 0
+    assert_eq!(table[..], [HuffmanCode::default(); 32][..]);
+  }
+
+  #[test]
+  fn replicate_value_rejects_extent_past_table() {
+    let mut table = [HuffmanCode::default(); 8];
+    // Last index written would be offset + end - step == 2 + 8 - 2 == 8.
+    assert!(!ReplicateValue(&mut table, 2, 2, 8, code()));
+    assert_eq!(table[..], [HuffmanCode::default(); 8][..]);
+    // One less, and it just fits.
+    assert!(ReplicateValue(&mut table, 1, 2, 8, code()));
+    assert_eq!(table[7], code());
+  }
+
+  #[test]
+  fn next_table_bit_size_rejects_short_count() {
+    // The scan runs len up to BROTLI_HUFFMAN_MAX_CODE_LENGTH, past whatever
+    // the caller's max_length was, so count can run out underneath it.
+    let short = [0u16; 10];
+    assert_eq!(NextTableBitSize(&short, 9, 8), None);
+    // Long enough, and it completes.
+    let full = [0u16; BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1];
+    assert!(NextTableBitSize(&full, 9, 8).is_some());
+  }
+
+  #[test]
+  fn symbol_list_value_rejects_out_of_range_index() {
+    let list = [1u16, 2, 3, 4];
+    assert_eq!(symbol_list_value(&list, 2, -3), None); // before the start
+    assert_eq!(symbol_list_value(&list, 2, 2), None);  // past the end
+    assert_eq!(symbol_list_value(&list, 2, -2), Some(1));
+    assert_eq!(symbol_list_value(&list, 2, 1), Some(4));
+  }
+
+  #[test]
+  fn code_lengths_table_rejects_undersized_slices() {
+    let mut table = [HuffmanCode::default(); 32];
+    let code_lengths = [0u8; 18];
+    let count = [0u16; 6];
+    // table shorter than 1 << BROTLI_HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH
+    assert!(!BrotliBuildCodeLengthsHuffmanTable(&mut table[..31], &code_lengths, &count));
+    // fewer than 18 code lengths
+    assert!(!BrotliBuildCodeLengthsHuffmanTable(&mut table, &code_lengths[..17], &count));
+    // histogram too short to index by code length
+    assert!(!BrotliBuildCodeLengthsHuffmanTable(&mut table, &code_lengths, &count[..6 - 1]));
+  }
+
+  #[test]
+  fn code_lengths_table_rejects_out_of_range_code_length() {
+    let mut table = [HuffmanCode::default(); 32];
+    let mut code_lengths = [0u8; 18];
+    // 6 is past the end of the length histogram; without this check the
+    // sort below would index `offset` out of bounds.
+    code_lengths[3] = BROTLI_HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH as u8 + 1;
+    let count = [0u16; 6];
+    assert!(!BrotliBuildCodeLengthsHuffmanTable(&mut table, &code_lengths, &count));
+  }
+
+  #[test]
+  fn code_lengths_table_rejects_histogram_mismatch() {
+    let mut table = [HuffmanCode::default(); 32];
+    let mut code_lengths = [0u8; 18];
+    code_lengths[0] = 1;
+    code_lengths[1] = 1;
+    // The true histogram is count[1] == 2; claiming anything else would send
+    // the sort loop outside `sorted`.
+    let mut count = [0u16; 6];
+    count[1] = 3;
+    assert!(!BrotliBuildCodeLengthsHuffmanTable(&mut table, &code_lengths, &count));
+    count[1] = 2;
+    assert!(BrotliBuildCodeLengthsHuffmanTable(&mut table, &code_lengths, &count));
+  }
+
+  // A symbol_lists image whose head region (the 16 entries before the offset)
+  // is all 0xFFFF except for the length the caller wants to report.
+  fn symbol_lists_with(max_len: usize, symbol: u16)
+      -> ([u16; BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1 + 8], usize) {
+    let mut list = [0xFFFFu16; BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1 + 8];
+    let offset = BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1;
+    list[offset - (BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1 - max_len)] = symbol;
+    (list, offset)
+  }
+
+  #[test]
+  fn build_huffman_table_rejects_bad_root_bits() {
+    let (list, offset) = symbol_lists_with(1, 0);
+    let mut table = [HuffmanCode::default(); BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize];
+    let mut count = [0u16; BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1];
+    count[1] = 2;
+    assert_eq!(BrotliBuildHuffmanTable(&mut table, 0, &list, offset, &mut count), 0);
+    assert_eq!(BrotliBuildHuffmanTable(&mut table, -1, &list, offset, &mut count), 0);
+    assert_eq!(
+      BrotliBuildHuffmanTable(&mut table, BROTLI_REVERSE_BITS_MAX as i32 + 1, &list, offset,
+                              &mut count),
+      0);
+    // BROTLI_HUFFMAN_MAX_CODE_LENGTH - root_bits must also fit the reversal.
+    assert_eq!(
+      BrotliBuildHuffmanTable(&mut table,
+                              BROTLI_HUFFMAN_MAX_CODE_LENGTH as i32
+                                - BROTLI_REVERSE_BITS_MAX as i32 - 1,
+                              &list, offset, &mut count),
+      0);
+  }
+
+  #[test]
+  fn build_huffman_table_rejects_offset_past_symbol_lists() {
+    let (list, _) = symbol_lists_with(1, 0);
+    let mut table = [HuffmanCode::default(); BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize];
+    let mut count = [0u16; BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1];
+    assert_eq!(BrotliBuildHuffmanTable(&mut table, 8, &list, list.len(), &mut count), 0);
+  }
+
+  #[test]
+  fn build_huffman_table_rejects_head_scan_underflow() {
+    // Every head entry is 0xFFFF, so the scan walks off the front of the
+    // slice instead of finding a longest code length.
+    let list = [0xFFFFu16; BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1 + 8];
+    let mut table = [HuffmanCode::default(); BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize];
+    let mut count = [0u16; BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1];
+    assert_eq!(BrotliBuildHuffmanTable(&mut table, 8, &list, 4, &mut count), 0);
+  }
+
+  #[test]
+  fn build_huffman_table_rejects_count_shorter_than_max_length() {
+    let (list, offset) = symbol_lists_with(9, 0);
+    let mut table = [HuffmanCode::default(); BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize];
+    // max_length is 9, so a histogram of 9 entries cannot be indexed by it.
+    let mut count = [0u16; 9];
+    assert_eq!(BrotliBuildHuffmanTable(&mut table, 8, &list, offset, &mut count), 0);
+  }
+
+  #[test]
+  fn build_huffman_table_rejects_undersized_root_table() {
+    let (list, offset) = symbol_lists_with(1, 0);
+    let mut count = [0u16; BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1];
+    count[1] = 2;
+    // root_bits 8 wants a 256-entry root table; give it far less and the
+    // replication/ReplicateValue bounds must reject rather than write past.
+    // It may write valid entries before it runs out of room; what matters is
+    // that it reports failure instead of writing past the end.
+    let mut small = [HuffmanCode::default(); 4];
+    assert_eq!(BrotliBuildHuffmanTable(&mut small, 8, &list, offset, &mut count), 0);
+  }
+
+  // With symbol_lists_offset == BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1, the head
+  // entry for code length L sits at index L, and each entry chains to the next
+  // symbol of that length. 0xFFFF means "no symbol of this length".
+  const OFFSET: usize = BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1;
+  fn heads() -> [u16; 32] {
+    [0xFFFF; 32]
+  }
+  fn counts() -> [u16; BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1] {
+    [0u16; BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1]
+  }
+
+  // root_bits is pinned to 7..=8 by the entry check (both root_bits and
+  // BROTLI_HUFFMAN_MAX_CODE_LENGTH - root_bits must fit the 8-bit reversal),
+  // so these all use the real HUFFMAN_TABLE_BITS of 8. A max_length of 9 is
+  // then what forces a second-level table.
+  const ROOT_BITS: i32 = 8;
+
+  #[test]
+  fn build_huffman_table_rejects_symbol_chain_leaving_the_list() {
+    // Root table pass: the second symbol of length 1 is chained to via
+    // symbol_lists[OFFSET + 100], which is past the end of this list.
+    let mut list = heads();
+    list[9] = 0;   // longest code length is 9
+    list[1] = 100; // ...and the length-1 chain leaves the list
+    let mut count = counts();
+    count[1] = 2;
+    let mut table = [HuffmanCode::default(); BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize];
+    assert_eq!(BrotliBuildHuffmanTable(&mut table, ROOT_BITS, &list, OFFSET, &mut count), 0);
+  }
+
+  #[test]
+  fn build_huffman_table_rejects_second_level_count_shorter_than_the_scan() {
+    // A second-level table is needed (max_length 9 > root_bits 8), and
+    // NextTableBitSize then scans past the end of this 10-entry histogram.
+    let mut list = heads();
+    list[9] = 0;
+    let mut count = [0u16; 10];
+    count[9] = 1;
+    let mut table = [HuffmanCode::default(); BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize];
+    assert_eq!(BrotliBuildHuffmanTable(&mut table, ROOT_BITS, &list, OFFSET, &mut count), 0);
+  }
+
+  #[test]
+  fn build_huffman_table_rejects_second_level_link_past_root_table() {
+    // The link back into the root table is written at root_table[sub_key];
+    // an empty root table has nowhere to put it.
+    let mut list = heads();
+    list[9] = 0;
+    let mut count = counts();
+    count[9] = 1;
+    assert_eq!(BrotliBuildHuffmanTable(&mut [], ROOT_BITS, &list, OFFSET, &mut count), 0);
+  }
+
+  #[test]
+  fn build_huffman_table_rejects_second_level_replicate_past_table() {
+    let mut list = heads();
+    list[9] = 5;
+    let mut count = counts();
+    count[9] = 2;
+    // One entry is enough for the root link but not for the sub-table, which
+    // starts at table_free_offset == 256.
+    let mut table = [HuffmanCode::default(); 1];
+    assert_eq!(BrotliBuildHuffmanTable(&mut table, ROOT_BITS, &list, OFFSET, &mut count), 0);
+  }
+
+  #[test]
+  fn build_huffman_table_rejects_second_level_symbol_chain_leaving_the_list() {
+    let mut list = heads();
+    list[9] = 100; // chains past the end when the second symbol is fetched
+    let mut count = counts();
+    count[9] = 2;
+    let mut table = [HuffmanCode::default(); BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize];
+    assert_eq!(BrotliBuildHuffmanTable(&mut table, ROOT_BITS, &list, OFFSET, &mut count), 0);
+  }
+
+  // The 2nd-level link is stored as a u16 offset in HuffmanCode::value, so a
+  // table that grows past u16::MAX cannot be represented. Reaching it takes a
+  // histogram claiming tens of thousands of codes at one length, hence the
+  // heap-sized root table.
+  #[cfg(feature="std")]
+  #[test]
+  fn build_huffman_table_rejects_second_level_offset_past_u16() {
+    let mut list = heads();
+    // A self-referential length-9 chain, so symbols never run out.
+    list[9] = 9;
+    list[OFFSET + 9] = 9;
+    let mut count = counts();
+    count[9] = u16::MAX;
+    let mut table = std::vec::Vec::new();
+    table.resize(1usize << 17, HuffmanCode::default());
+    assert_eq!(BrotliBuildHuffmanTable(&mut table[..], ROOT_BITS, &list, OFFSET, &mut count), 0);
+  }
+
+  #[test]
+  fn simple_table_rejects_bad_root_bits_and_symbol_count() {
+    let mut table = [HuffmanCode::default(); 8];
+    let val = [0u16; 4];
+    assert_eq!(BrotliBuildSimpleHuffmanTable(&mut table, 0, &val, 0), 0);
+    assert_eq!(BrotliBuildSimpleHuffmanTable(&mut table, -1, &val, 0), 0);
+    assert_eq!(BrotliBuildSimpleHuffmanTable(&mut table, 32, &val, 0), 0);
+    // num_symbols is only 0..=4; 5 and up are rejected by the same match that
+    // decides how many entries of `val` are read.
+    assert_eq!(BrotliBuildSimpleHuffmanTable(&mut table, 3, &val, 5), 0);
+    assert_eq!(BrotliBuildSimpleHuffmanTable(&mut table, 3, &val, u32::MAX), 0);
+  }
+
+  #[test]
+  fn simple_table_rejects_short_val_and_table() {
+    let mut table = [HuffmanCode::default(); 8];
+    let val = [0u16; 4];
+    assert_eq!(BrotliBuildSimpleHuffmanTable(&mut table, 3, &val[..3], 4), 0);
+    assert_eq!(BrotliBuildSimpleHuffmanTable(&mut table, 3, &val[..1], 1), 0);
+    assert_eq!(BrotliBuildSimpleHuffmanTable(&mut table[..7], 3, &val, 4), 0);
+  }
+}
+
 #[test]
 fn code_length_ht() {
   let code_lengths: [u8; 19] = [0, 2, 3, 0, 2, 3, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];

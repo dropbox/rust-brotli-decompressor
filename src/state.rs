@@ -316,8 +316,12 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub distance_code: i32,
 
   // For partial write operations
-  pub rb_roundtrips: usize, // How many times we went around the ringbuffer
-  pub partial_pos_out: usize, // How much output to the user in total (<= rb)
+  // u64 rather than usize: on a 32-bit target these wrap after 4GiB of output,
+  // and the C reference (c/dec/decode.c:1268) leans on that wraparound being
+  // exact mod 2^size_t. Rust's checked arithmetic does not give us that, so we
+  // widen instead: at 64 bits the counters simply cannot overflow.
+  pub rb_roundtrips: u64, // How many times we went around the ringbuffer
+  pub partial_pos_out: u64, // How much output to the user in total (<= rb)
 
   // For ReadHuffmanCode
   pub symbol: u32,

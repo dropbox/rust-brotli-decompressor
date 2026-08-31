@@ -164,7 +164,13 @@ fn BrotliReverseBits(num: u8) -> u32 {
 }
 
 // Stores code in table[0], table[step], table[2*step], ..., table[end]
-// Assumes that end is an integer multiple of step
+// Assumes that end is an integer multiple of step.
+//
+// The written extent is table[offset .. offset + end], so it is enough to
+// bounds-check the last index once here rather than every iteration. The
+// arithmetic is widened to u64 so that a 32-bit usize cannot wrap it; the
+// check then guarantees every index below is in range, which is what makes
+// the `fast_mut!` write sound under --features=unsafe.
 fn ReplicateValue(table: &mut [HuffmanCode],
                   offset: u32,
                   step: i32,
@@ -173,16 +179,12 @@ fn ReplicateValue(table: &mut [HuffmanCode],
   if step <= 0 || end <= 0 || end % step != 0 {
     return false;
   }
+  if u64::from(offset) + (end - step) as u64 >= table.len() as u64 {
+    return false;
+  }
   loop {
     end -= step;
-    let index = match (offset as usize).checked_add(end as usize) {
-      Some(index) => index,
-      None => return false,
-    };
-    match table.get_mut(index) {
-      Some(value) => *value = code,
-      None => return false,
-    }
+    fast_mut!((table)[offset as usize + end as usize]) = code;
     if end == 0 {
       break;
     }
@@ -192,59 +194,42 @@ fn ReplicateValue(table: &mut [HuffmanCode],
 
 // Returns the table width of the next 2nd level table. count is the histogram
 // of bit lengths for the remaining symbols, len is the code length of the next
-// processed symbol
+// processed symbol.
+//
+// Callers hold root_bits in 1..=BROTLI_REVERSE_BITS_MAX and len in
+// root_bits+1..=BROTLI_HUFFMAN_MAX_CODE_LENGTH, so `left` never exceeds 2^15
+// and i64 makes every step total without a check. The scan can walk past the
+// caller's max_length, though, so the count index is still bounded here.
 fn NextTableBitSize(count: &[u16], mut len: i32, root_bits: i32) -> Option<i32> {
-  let shift = match len.checked_sub(root_bits) {
-    Some(shift) if shift >= 0 => shift as u32,
-    _ => return None,
-  };
-  let mut left = match 1i32.checked_shl(shift) {
-    Some(left) => left,
-    None => return None,
-  };
+  debug_assert!(len > root_bits);
+  let mut left: i64 = 1i64 << (len - root_bits);
   while len < BROTLI_HUFFMAN_MAX_CODE_LENGTH as i32 {
-    let count_value = match count.get(len as usize) {
-      Some(value) => *value as i32,
-      None => return None,
-    };
-    left = match left.checked_sub(count_value) {
-      Some(left) => left,
-      None => return None,
-    };
+    if len as usize >= count.len() {
+      return None;
+    }
+    left -= i64::from(fast!((count)[len as usize]));
     if left <= 0 {
       break;
     }
     len += 1;
-    left = match left.checked_shl(1) {
-      Some(left) => left,
-      None => return None,
-    };
+    left <<= 1;
   }
-  len.checked_sub(root_bits)
+  Some(len - root_bits)
 }
 
+// symbol_lists is indexed relative to symbol_lists_offset, and the relative
+// index is deliberately negative for the per-length list heads (the reference
+// implementation indexes backwards off a raw pointer here). i64 covers both
+// directions in one expression, but we need to check if the resulting index
+// lands in the slice
 fn symbol_list_value(symbol_lists: &[u16],
                      symbol_lists_offset: usize,
                      relative_index: i32) -> Option<u16> {
-  let index = if relative_index < 0 {
-    let distance = match relative_index.checked_neg() {
-      Some(distance) => distance as usize,
-      None => return None,
-    };
-    match symbol_lists_offset.checked_sub(distance) {
-      Some(index) => index,
-      None => return None,
-    }
-  } else {
-    match symbol_lists_offset.checked_add(relative_index as usize) {
-      Some(index) => index,
-      None => return None,
-    }
-  };
-  match symbol_lists.get(index) {
-    Some(value) => Some(*value),
-    None => None,
+  let index = symbol_lists_offset as i64 + i64::from(relative_index);
+  if index < 0 || index as u64 >= symbol_lists.len() as u64 {
+    return None;
   }
+  Some(fast!((symbol_lists)[index as usize]))
 }
 
 
@@ -313,6 +298,11 @@ pub fn BrotliBuildCodeLengthsHuffmanTable(mut table: &mut [HuffmanCode],
   }
 
   // fill in table
+  //
+  // The caller has already established a complete prefix code (it rejects
+  // anything with space != 0), so the keys accumulated below sum to exactly
+  // 1 << BROTLI_REVERSE_BITS_MAX and the last one used is 0xFF: `key` cannot
+  // overflow, and `key as u8` cannot truncate.
   let mut key: u32 = 0; /* prefix code */
   let mut key_step: u32 = BROTLI_REVERSE_BITS_LOWEST; /* prefix code addend */
   symbol = 0;
@@ -329,13 +319,15 @@ pub fn BrotliBuildCodeLengthsHuffmanTable(mut table: &mut [HuffmanCode],
       code.value = fast!((sorted)[symbol as usize]) as u16;
       symbol += 1;
       let reversed_key = BrotliReverseBits(key as u8);
+      // Unreachable given the entry check: for a code of `bits` bits, step is
+      // 1 << bits and reversed_key < 1 << bits, so the last index written is
+      // reversed_key + table_size - step < table_size == 32 <= table.len().
+      // Propagated anyway so a future change to table_size cannot turn this
+      // into a silently unwritten table.
       if !ReplicateValue(&mut table, reversed_key, step, table_size, code) {
         return false;
       }
-      key = match key.checked_add(key_step) {
-        Some(key) => key,
-        None => return false,
-      };
+      key += key_step;
       bits_count -= 1;
     }
     step <<= 1;
@@ -360,6 +352,11 @@ pub fn BrotliBuildHuffmanTable(mut root_table: &mut [HuffmanCode],
   };       /* current table entry */
   let mut max_length: i32 = -1;
 
+  // Entry preconditions. Everything past this point derives its bounds from
+  // these plus the max_length check below, which is why the body needs no
+  // further arithmetic guards: root_bits <= 8 keeps every prefix key under
+  // 1 << 8, and max_length < count.len() keeps every code-length index in
+  // range.
   if root_bits <= 0 ||
      root_bits as usize > BROTLI_REVERSE_BITS_MAX ||
      BROTLI_HUFFMAN_MAX_CODE_LENGTH as i32 - root_bits >
@@ -375,16 +372,20 @@ pub fn BrotliBuildHuffmanTable(mut root_table: &mut [HuffmanCode],
     max_length -= 1;
   }
   max_length += BROTLI_HUFFMAN_MAX_CODE_LENGTH as i32 + 1;
+  // The scan above can walk off the front of symbol_lists' head region, which
+  // is the one way max_length ends up negative. Callers may pass a count
+  // histogram only as long as the code lengths they actually used, so this
+  // also establishes the bound every count[..] index below relies on.
   if max_length < 0 || max_length as usize >= count.len() {
     return 0;
   }
+  debug_assert!(max_length <= BROTLI_HUFFMAN_MAX_CODE_LENGTH as i32);
 
   let mut table_free_offset: u32 = 0;
   let mut table_bits: i32 = root_bits;      /* key length of current table */
-  let mut table_size = match 1i32.checked_shl(table_bits as u32) {
-    Some(table_size) => table_size,
-    None => return 0,
-  };                                      /* size of current table */
+  // root_bits <= 8 and max_length <= 15, so every `1 << table_bits` below is
+  // at most 1 << 8.
+  let mut table_size: i32 = 1 << table_bits;/* size of current table */
   let mut total_size: i32 = table_size;     /* sum of root table size and 2nd level table sizes */
 
   // fill in root table
@@ -392,10 +393,7 @@ pub fn BrotliBuildHuffmanTable(mut root_table: &mut [HuffmanCode],
   // create the repetitions by memcpy if possible in the coming loop
   if table_bits > max_length {
     table_bits = max_length;
-    table_size = match 1i32.checked_shl(table_bits as u32) {
-      Some(table_size) => table_size,
-      None => return 0,
-    };
+    table_size = 1 << table_bits;
   }
   let mut key: u32 = 0; /* prefix code */
   let mut key_step: u32 = BROTLI_REVERSE_BITS_LOWEST; /* prefix code addend */
@@ -412,17 +410,11 @@ pub fn BrotliBuildHuffmanTable(mut root_table: &mut [HuffmanCode],
       };
       code.value = symbol as u16;
       let reversed_key = BrotliReverseBits(key as u8);
-      let table_offset = match table_free_offset.checked_add(reversed_key) {
-        Some(table_offset) => table_offset,
-        None => return 0,
-      };
-      if !ReplicateValue(&mut root_table, table_offset, step, table_size, code) {
+      if !ReplicateValue(&mut root_table, table_free_offset + reversed_key, step,
+                         table_size, code) {
         return 0;
       }
-      key = match key.checked_add(key_step) {
-        Some(key) => key,
-        None => return 0,
-      };
+      key += key_step;
       bits_count -= 1;
     }
     step <<= 1;
@@ -436,32 +428,17 @@ pub fn BrotliBuildHuffmanTable(mut root_table: &mut [HuffmanCode],
   // if root_bits != table_bits we only created one fraction of the
   // table, and we need to replicate it now.
   while total_size != table_size {
-    if table_size <= 0 || table_size > total_size {
+    // Doubling the filled prefix; both halves are inside the root table, and
+    // total_size bounds the loop, so one range check per doubling replaces the
+    // per-element pair the guards used to do.
+    let base = table_free_offset as usize;
+    let size = table_size as usize;
+    if base + 2 * size > root_table.len() {
       return 0;
     }
-    for index in 0..table_size {
-      let source_index = match (table_free_offset as usize).checked_add(index as usize) {
-        Some(source_index) => source_index,
-        None => return 0,
-      };
-      let destination_index =
-        match source_index.checked_add(table_size as usize) {
-          Some(destination_index) => destination_index,
-          None => return 0,
-        };
-      let value = match root_table.get(source_index) {
-        Some(value) => *value,
-        None => return 0,
-      };
-      match root_table.get_mut(destination_index) {
-        Some(destination) => *destination = value,
-        None => return 0,
-      }
-    }
-    table_size = match table_size.checked_shl(1) {
-      Some(table_size) => table_size,
-      None => return 0,
-    };
+    let (head, tail) = root_table.split_at_mut(base + size);
+    tail[..size].clone_from_slice(&head[base..]);
+    table_size <<= 1;
   }
 
   // fill in 2nd level tables and add pointers to root table
@@ -476,32 +453,23 @@ pub fn BrotliBuildHuffmanTable(mut root_table: &mut [HuffmanCode],
     let mut symbol: i32 = len - (BROTLI_HUFFMAN_MAX_CODE_LENGTH as i32 + 1);
     while fast!((count)[len as usize]) != 0 {
       if sub_key == (BROTLI_REVERSE_BITS_LOWEST << 1u32) {
-        table_free_offset = match table_free_offset.checked_add(table_size as u32) {
-          Some(table_free_offset) => table_free_offset,
-          None => return 0,
-        };
+        table_free_offset += table_size as u32;
         table_bits = match NextTableBitSize(count, len, root_bits) {
           Some(table_bits) => table_bits,
           None => return 0,
         };
-        table_size = match 1i32.checked_shl(table_bits as u32) {
-          Some(table_size) => table_size,
-          None => return 0,
-        };
-        total_size = match total_size.checked_add(table_size) {
-          Some(total_size) => total_size,
-          None => return 0,
-        };
+        table_size = 1 << table_bits;
+        total_size += table_size;
         sub_key = BrotliReverseBits(key as u8);
-        key = match key.checked_add(key_step) {
-          Some(key) => key,
-          None => return 0,
+        key += key_step;
+        // sub_key indexes the root table and table_free_offset is past it, so
+        // the difference is positive; it is a table offset, hence <= u16::MAX.
+        // Both facts are checked rather than assumed, because the value is
+        // narrowed into HuffmanCode::value and the index feeds a write.
+        let table_value = match (table_free_offset as usize).checked_sub(sub_key as usize) {
+          Some(table_value) if table_value <= u16::MAX as usize => table_value as u16,
+          _ => return 0,
         };
-        let table_value =
-          match (table_free_offset as usize).checked_sub(sub_key as usize) {
-            Some(table_value) if table_value <= u16::MAX as usize => table_value as u16,
-            _ => return 0,
-          };
         match root_table.get_mut(sub_key as usize) {
           Some(entry) => {
             entry.bits = (table_bits + root_bits) as u8;
@@ -518,26 +486,16 @@ pub fn BrotliBuildHuffmanTable(mut root_table: &mut [HuffmanCode],
       };
       code.value = symbol as u16;
       let reversed_sub_key = BrotliReverseBits(sub_key as u8);
-      let table_offset = match table_free_offset.checked_add(reversed_sub_key) {
-        Some(table_offset) => table_offset,
-        None => return 0,
-      };
-      if !ReplicateValue(&mut root_table, table_offset, step, table_size, code) {
+      if !ReplicateValue(&mut root_table, table_free_offset + reversed_sub_key, step,
+                         table_size, code) {
         return 0;
       }
-      sub_key = match sub_key.checked_add(sub_key_step) {
-        Some(sub_key) => sub_key,
-        None => return 0,
-      };
-      match count.get_mut(len as usize) {
-        Some(count_value) if *count_value != 0 => *count_value -= 1,
-        _ => return 0,
-      }
+      sub_key += sub_key_step;
+      // len <= max_length < count.len(), and the loop condition just read a
+      // nonzero count[len].
+      fast_mut!((count)[len as usize]) -= 1;
     }
-    step = match step.checked_shl(1) {
-      Some(step) => step,
-      None => return 0,
-    };
+    step <<= 1;
     sub_key_step >>= 1;
     len += 1
   }
@@ -551,9 +509,13 @@ pub fn BrotliBuildSimpleHuffmanTable(table: &mut [HuffmanCode],
                                      val: &[u16],
                                      num_symbols: u32)
                                      -> u32 {
-  if root_bits <= 0 || root_bits >= 32 || num_symbols > 4 {
+  if root_bits <= 0 || root_bits >= 32 {
     return 0;
   }
+  // num_symbols is the raw 2-bit field (plus one extra bit when it reads 3),
+  // so 0..=4 are the only encodable values; this match is also what rejects
+  // anything larger, which is why the branch chain below needs no final
+  // catch-all.
   let required_symbols = match num_symbols {
     0 => 1,
     1 => 2,
@@ -565,10 +527,8 @@ pub fn BrotliBuildSimpleHuffmanTable(table: &mut [HuffmanCode],
     return 0;
   }
   let mut table_size: u32 = 1;
-  let goal_size = match 1u32.checked_shl(root_bits as u32) {
-    Some(goal_size) => goal_size,
-    None => return 0,
-  };
+  // root_bits is in 1..32 by the check above, so the shift is in range.
+  let goal_size: u32 = 1u32 << root_bits;
   if table.len() < goal_size as usize {
     return 0;
   }
@@ -619,7 +579,8 @@ pub fn BrotliBuildSimpleHuffmanTable(table: &mut [HuffmanCode],
     fast_mut!((table)[1]).value = mval[2];
     fast_mut!((table)[3]).value = mval[3];
     table_size = 4;
-  } else if num_symbols == 4 {
+  } else {
+    debug_assert_eq!(num_symbols, 4);
     let mut mval: [u16; 4] = [fast!((val)[0]), fast!((val)[1]), fast!((val)[2]), fast!((val)[3])];
     if mval[3] < mval[2] {
       mval.swap(3, 2)
@@ -635,8 +596,6 @@ pub fn BrotliBuildSimpleHuffmanTable(table: &mut [HuffmanCode],
     fast_mut!((table)[3]).bits = 3;
     fast_mut!((table)[7]).bits = 3;
     table_size = 8;
-  } else {
-    return 0;
   }
   while table_size != goal_size {
     for index in 0..table_size {
