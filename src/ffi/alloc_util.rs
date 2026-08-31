@@ -73,7 +73,14 @@ impl<Ty:Sized+Default+Clone> alloc::Allocator<Ty> for SubclassableAllocator {
             return MemoryBlock::<Ty>::default();
         }
         if let Some(alloc_fn) = self.alloc.alloc_func {
-            let ptr = alloc_fn(self.alloc.opaque, size * core::mem::size_of::<Ty>());
+            let alloc_size = match size.checked_mul(core::mem::size_of::<Ty>()) {
+                Some(alloc_size) => alloc_size,
+                None => return MemoryBlock::<Ty>::default(),
+            };
+            let ptr = alloc_fn(self.alloc.opaque, alloc_size);
+            if ptr.is_null() {
+                return MemoryBlock::<Ty>::default();
+            }
             let typed_ptr = unsafe {core::mem::transmute::<*mut c_void, *mut Ty>(ptr)};
             let slice_ref = unsafe {super::slice_from_raw_parts_or_nil_mut(typed_ptr, size)};
             for item in slice_ref.iter_mut() {
@@ -174,7 +181,14 @@ impl<Ty:Sized+Default+Clone> alloc::Allocator<Ty> for SubclassableAllocator {
             return MemoryBlock::<Ty>::default();
         }
         if let Some(alloc_fn) = self.alloc.alloc_func {
-            let ptr = alloc_fn(self.alloc.opaque, size * core::mem::size_of::<Ty>());
+            let alloc_size = match size.checked_mul(core::mem::size_of::<Ty>()) {
+                Some(alloc_size) => alloc_size,
+                None => return MemoryBlock::<Ty>::default(),
+            };
+            let ptr = alloc_fn(self.alloc.opaque, alloc_size);
+            if ptr.is_null() {
+                return MemoryBlock::<Ty>::default();
+            }
             let typed_ptr = unsafe {core::mem::transmute::<*mut c_void, *mut Ty>(ptr)};
             let slice_ref = unsafe {super::slice_from_raw_parts_or_nil_mut(typed_ptr, size)};
             for item in slice_ref.iter_mut() {

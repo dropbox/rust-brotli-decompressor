@@ -111,6 +111,12 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
     free_func: brotli_free_func,
     opaque: *mut c_void,
 ) -> *mut BrotliDecoderState {
+    // The C API requires these callbacks to be supplied as a pair. Check it
+    // before allocating anything, so an invalid pair reports failure the way
+    // the rest of this API does rather than by unwinding across the C ABI.
+    if alloc_func.is_some() != free_func.is_some() {
+      return core::ptr::null_mut();
+    }
     match catch_panic(|| {
       let allocators = CAllocator {
         alloc_func:alloc_func,
@@ -124,15 +130,15 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
         SubclassableAllocator::new(allocators.clone()),
         custom_dictionary,
       );
+      if decompressor.context_map_table.slice().len() == 0 {
+        return core::ptr::null_mut();
+      }
       decompressor.large_window = false;
       let to_box = BrotliDecoderState {
         custom_allocator: allocators.clone(),
         decompressor: decompressor,
       };
       if let Some(alloc) = alloc_func {
-        if free_func.is_none() {
-            panic!("either both alloc and free must exist or neither");
-        }
         let ptr = alloc(allocators.opaque, core::mem::size_of::<BrotliDecoderState>());
         if ptr.is_null() {
             return core::ptr::null_mut();
@@ -531,15 +537,83 @@ pub unsafe extern fn BrotliDecoderFreeUsize(state_ptr: *mut BrotliDecoderState, 
 
 #[no_mangle]
 pub unsafe extern fn BrotliDecoderDestroyInstance(state_ptr: *mut BrotliDecoderState) {
-    if let Some(_) = (*state_ptr).custom_allocator.alloc_func {
-        if let Some(free_fn) = (*state_ptr).custom_allocator.free_func {
-            let _to_free = core::ptr::read(state_ptr);
-            let ptr = core::mem::transmute::<*mut BrotliDecoderState, *mut c_void>(state_ptr);
-            free_fn((*state_ptr).custom_allocator.opaque, ptr);
+    if state_ptr.is_null() {
+        return;
+    }
+    if (*state_ptr).custom_allocator.alloc_func.is_some() {
+        // Capture the deallocator before ptr::read moves the state out: reading
+        // it back through state_ptr afterwards would touch logically
+        // uninitialized memory. Drop the moved state first so the child
+        // allocations are released before the block holding the state itself.
+        let free_fn = (*state_ptr).custom_allocator.free_func;
+        let opaque = (*state_ptr).custom_allocator.opaque;
+        let to_free = core::ptr::read(state_ptr);
+        core::mem::drop(to_free);
+        if let Some(free_fn) = free_fn {
+            free_fn(opaque, state_ptr as *mut c_void);
         }
     } else {
         free_decompressor_no_custom_alloc(state_ptr);
     }
+}
+
+// Attaches a dictionary to the decoder, matching the C API of the same name.
+// Must be called before any input is processed.
+// Returns 1 on success, 0 on failure.
+//
+// Ownership is NOT transferred and the payload is never copied, exactly as in
+// c/dec/decode.c: a raw dictionary is stored as a pointer to the caller's
+// buffer (shared_dictionary.c stores `dict->prefix[n] = data`), and a
+// serialized dictionary's LZ77 prefix, word lists and transform lists are all
+// referenced in place inside the caller's blob (`&encoded[pos]`). The caller
+// MUST therefore keep `data` allocated and unmodified until
+// BrotliDecoderDestroyInstance returns.
+//
+// The consequence worth knowing: attaching costs zero allocations and zero
+// bytes per decoder instance, so one dictionary image backs any number of
+// concurrent decoders.
+#[no_mangle]
+pub unsafe extern "C" fn BrotliDecoderAttachDictionary(
+    state_ptr: *mut BrotliDecoderState,
+    dict_type: i32,
+    data_size: usize,
+    data: *const u8,
+) -> i32 {
+  if state_ptr.is_null() {
+    return 0;
+  }
+  let is_serialized = match dict_type {
+    0 => false,
+    1 => true,
+    _ => return 0,
+  };
+  // checked_slice_from_raw_parts_or_nil hands out an unconstrained lifetime.
+  // Naming it 'static here is the whole of the unsafety behind this entry
+  // point: it is sound exactly when the caller honors the contract documented
+  // above. Confining it to this module is what keeps
+  // BrotliState::attach_dictionary_borrowed a safe fn.
+  let data_slice: &'static [u8] = match checked_slice_from_raw_parts_or_nil(data, data_size) {
+    Some(data_slice) => data_slice,
+    None => return 0,
+  };
+  match catch_panic(move || {
+    match (*state_ptr).decompressor.state {
+      super::state::BrotliRunningState::BROTLI_STATE_UNINITED => {},
+      _ => return 0,
+    }
+    let ok = if is_serialized {
+      (*state_ptr).decompressor.attach_serialized_dictionary_borrowed(data_slice)
+    } else {
+      (*state_ptr).decompressor.attach_dictionary_borrowed(data_slice)
+    };
+    if ok {1} else {0}
+  }) {
+    Ok(ret) => ret,
+    Err(mut readable_err) => {
+      error_print(state_ptr, &mut readable_err);
+      0
+    },
+  }
 }
 
 #[no_mangle]

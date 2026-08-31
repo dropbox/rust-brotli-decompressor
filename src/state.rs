@@ -10,6 +10,9 @@ use bit_reader::{BrotliBitReader, BrotliGetAvailableBits, BrotliInitBitReader};
 use huffman::{BROTLI_HUFFMAN_MAX_CODE_LENGTH, BROTLI_HUFFMAN_MAX_CODE_LENGTHS_SIZE,
               BROTLI_HUFFMAN_MAX_TABLE_SIZE, HuffmanCode, HuffmanTreeGroup};
 use alloc::SliceWrapper;
+use alloc::SliceWrapperMut;
+use shared_dictionary;
+use shared_dictionary::{BrotliSharedDictionary, TRANSFORM_LIST_STRIDE, WORD_LIST_STRIDE};
 
 #[allow(dead_code)]
 pub enum WhichTreeGroup {
@@ -44,8 +47,9 @@ pub enum BrotliDecoderErrorCode{
   BROTLI_DECODER_ERROR_FORMAT_PADDING_2 = -15,
   BROTLI_DECODER_ERROR_FORMAT_DISTANCE = -16,
 
-  /* -17..-18 codes are reserved */
+  /* -17 code is reserved */
 
+  BROTLI_DECODER_ERROR_COMPOUND_DICTIONARY = -18,
   BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET = -19,
   BROTLI_DECODER_ERROR_INVALID_ARGUMENTS = -20,
 
@@ -143,6 +147,102 @@ pub enum BrotliRunningReadBlockLengthState {
 
 pub const kLiteralContextBits: usize = 6;
 
+// Maximum number of compound dictionary chunks that may be attached to a
+// decoder instance, per the shared-brotli draft
+// (https://datatracker.ietf.org/doc/draft-vandevenne-shared-brotli-format/).
+pub const SHARED_BROTLI_MAX_COMPOUND_DICTS: usize = 15;
+// Practical limit for the total size of attached raw dictionaries; matches
+// SHARED_BROTLI_MAX_RAW_DICT_SIZE in the C implementation.
+#[cfg(target_pointer_width = "64")]
+pub const SHARED_BROTLI_MAX_RAW_DICT_SIZE: usize = 1usize << 31;
+#[cfg(not(target_pointer_width = "64"))]
+pub const SHARED_BROTLI_MAX_RAW_DICT_SIZE: usize = 1usize << 27;
+
+// Backing store for an attached dictionary: either memory this decoder owns
+// (allocated through AllocU8, freed on cleanup) or memory the caller owns and
+// has promised to keep alive and unmodified for as long as the decoder lives.
+//
+// The borrowed variant exists so that the FFI can honor the C API's contract
+// -- "Attached dictionary ownership is not transferred. Data provided to this
+// method should be kept accessible until decoding is finished and decoder
+// instance is destroyed." (c/include/brotli/decode.h) -- which lets many
+// decoder instances share one dictionary image at zero marginal cost instead
+// of each holding a private copy.
+#[allow(dead_code)]
+pub enum MaybeOwnedSlice<AllocU8: alloc::Allocator<u8>> {
+  Owned(AllocU8::AllocatedMemory),
+  // The 'static here is a lie maintained by the unsafe constructors below:
+  // the referent only has to outlive the BrotliState that holds it. It is
+  // spelled 'static rather than as a raw pointer so that BrotliState keeps
+  // its automatic Send/Sync.
+  Borrowed(&'static [u8]),
+}
+
+impl<AllocU8: alloc::Allocator<u8>> Default for MaybeOwnedSlice<AllocU8> {
+  fn default() -> Self {
+    MaybeOwnedSlice::Owned(AllocU8::AllocatedMemory::default())
+  }
+}
+
+impl<AllocU8: alloc::Allocator<u8>> alloc::SliceWrapper<u8> for MaybeOwnedSlice<AllocU8> {
+  fn slice(&self) -> &[u8] {
+    match *self {
+      MaybeOwnedSlice::Owned(ref mem) => mem.slice(),
+      MaybeOwnedSlice::Borrowed(data) => data,
+    }
+  }
+}
+
+// Sentinel stored in BrotliDecoderCompoundDictionary::block_bits while the
+// block map is stale, i.e. a marker rather than a shift amount. Real shift
+// amounts computed by EnsureCompoundDictionaryInitialized are in 0..=23
+// (total_size is capped at SHARED_BROTLI_MAX_RAW_DICT_SIZE), so this value can
+// never collide with one. The C implementation uses -1 for the same purpose;
+// the field is unsigned here.
+pub const COMPOUND_DICTIONARY_BLOCK_MAP_UNINITIALIZED: u32 = 255;
+
+// LZ77 prefix ("compound") dictionaries attached to the decoder. Unlike the
+// historical approach of copying the dictionary into the ring buffer, chunks
+// are kept in their own buffers and referenced by backward distances in
+// (max_distance, max_distance + total_size], so they stay addressable even
+// after the ring buffer wraps (issue #42).
+pub struct BrotliDecoderCompoundDictionary<AllocU8: alloc::Allocator<u8>> {
+  pub num_chunks: usize,
+  pub total_size: usize,
+  // Map from address >> block_bits to the first chunk that might contain that
+  // address; COMPOUND_DICTIONARY_BLOCK_MAP_UNINITIALIZED means "not yet
+  // computed".
+  pub block_bits: u32,
+  pub block_map: [u8; 256],
+  // chunk_offsets[i] is the address of the first byte of chunk i;
+  // chunk_offsets[num_chunks] == total_size.
+  pub chunk_offsets: [u32; SHARED_BROTLI_MAX_COMPOUND_DICTS + 1],
+  pub chunks: [MaybeOwnedSlice<AllocU8>; SHARED_BROTLI_MAX_COMPOUND_DICTS],
+  // Cursor for an in-progress copy from the dictionary into the ring buffer:
+  // a single copy command may be interrupted to flush the ring buffer.
+  pub br_index: usize,
+  pub br_offset: usize,
+  pub br_length: usize,
+  pub br_copied: usize,
+}
+
+impl<AllocU8: alloc::Allocator<u8>> Default for BrotliDecoderCompoundDictionary<AllocU8> {
+  fn default() -> Self {
+    BrotliDecoderCompoundDictionary::<AllocU8> {
+      num_chunks: 0,
+      total_size: 0,
+      block_bits: COMPOUND_DICTIONARY_BLOCK_MAP_UNINITIALIZED,
+      block_map: [0; 256],
+      chunk_offsets: [0; SHARED_BROTLI_MAX_COMPOUND_DICTS + 1],
+      chunks: Default::default(),
+      br_index: 0,
+      br_offset: 0,
+      br_length: 0,
+      br_copied: 0,
+    }
+  }
+}
+
 pub struct BlockTypeAndLengthState<AllocHC: alloc::Allocator<HuffmanCode>> {
   pub substate_read_block_length: BrotliRunningReadBlockLengthState,
   pub num_block_types: [u32; 3],
@@ -170,7 +270,6 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub buffer_length: u32,
   pub pos: i32,
   pub max_backward_distance: i32,
-  pub max_backward_distance_minus_custom_dict_size: i32,
   pub max_distance: i32,
   pub ringbuffer_size: i32,
   pub ringbuffer_mask: i32,
@@ -254,8 +353,10 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
 
   // For custom dictionaries
   pub custom_dict: AllocU8::AllocatedMemory,
-  pub custom_dict_size: isize,
-  pub custom_dict_avoid_context_seed: bool,
+  pub compound_dictionary: BrotliDecoderCompoundDictionary<AllocU8>,
+  // Custom word/transform lists from an attached serialized shared
+  // dictionary; selects the built-in static dictionary when empty.
+  pub dictionary: BrotliSharedDictionary<AllocU8, AllocU32>,
   // less used attributes are in the end of this struct */
   // States inside function calls
   pub substate_metablock_header: BrotliRunningMetablockHeaderState,
@@ -277,7 +378,7 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub trivial_literal_contexts: [u32; 8],
 }
 macro_rules! make_brotli_state {
- ($alloc_u8 : expr, $alloc_u32 : expr, $alloc_hc : expr, $custom_dict : expr, $custom_dict_len: expr) => (BrotliState::<AllocU8, AllocU32, AllocHC>{
+ ($alloc_u8 : expr, $alloc_u32 : expr, $alloc_hc : expr, $custom_dict : expr) => (BrotliState::<AllocU8, AllocU32, AllocHC>{
             state : BrotliRunningState::BROTLI_STATE_UNINITED,
             loop_counter : 0,
             br : BrotliBitReader::default(),
@@ -288,7 +389,6 @@ macro_rules! make_brotli_state {
             buffer_length : 0,
             pos : 0,
             max_backward_distance : 0,
-            max_backward_distance_minus_custom_dict_size : 0,
             max_distance : 0,
             ringbuffer_size : 0,
             ringbuffer_mask: 0,
@@ -356,8 +456,8 @@ macro_rules! make_brotli_state {
 
            /* For custom dictionaries */
            custom_dict : $custom_dict,
-           custom_dict_size : $custom_dict_len as isize,
-           custom_dict_avoid_context_seed: $custom_dict_len != 0,
+           compound_dictionary : BrotliDecoderCompoundDictionary::default(),
+           dictionary : BrotliSharedDictionary::default(),
            /* less used attributes are in the end of this struct */
            /* States inside function calls */
            substate_metablock_header : BrotliRunningMetablockHeaderState::BROTLI_STATE_METABLOCK_HEADER_NONE,
@@ -390,7 +490,7 @@ impl <'brotli_state,
     pub fn new(alloc_u8 : AllocU8,
            alloc_u32 : AllocU32,
            alloc_hc : AllocHC) -> Self{
-        let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default(), 0);
+        let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default());
         retval.large_window = true;
         retval.context_map_table = retval.alloc_hc.alloc_cell(
           BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
@@ -402,22 +502,206 @@ impl <'brotli_state,
            alloc_hc : AllocHC,
            custom_dict: AllocU8::AllocatedMemory) -> Self{
         let custom_dict_len = custom_dict.slice().len();
-        let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, custom_dict, custom_dict_len);
+        let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, custom_dict);
         retval.context_map_table = retval.alloc_hc.alloc_cell(
           BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
         retval.large_window =  true;
         BrotliInitBitReader(&mut retval.br);
+        // The dictionary becomes the furthest compound dictionary chunk;
+        // any subsequently attach_dictionary'd ones are nearer in distance
+        // space.
+        if custom_dict_len != 0 && custom_dict_len <= SHARED_BROTLI_MAX_RAW_DICT_SIZE {
+            let dict = core::mem::replace(&mut retval.custom_dict,
+                                          AllocU8::AllocatedMemory::default());
+            // A fresh state has no chunks, so the size check above makes this
+            // infallible. Oversized dictionaries remain in `custom_dict` and
+            // are rejected through the normal decoder error path at startup.
+            let attached = retval.attach_compound_dictionary_chunk(MaybeOwnedSlice::Owned(dict));
+            debug_assert!(attached);
+        }
         retval
     }
     pub fn new_strict(alloc_u8 : AllocU8,
            alloc_u32 : AllocU32,
            alloc_hc : AllocHC) -> Self{
-        let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default(), 0);
+        let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default());
         retval.context_map_table = retval.alloc_hc.alloc_cell(
           BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
         retval.large_window =  false;
         BrotliInitBitReader(&mut retval.br);
         retval
+    }
+    // Attaches a raw LZ77 prefix dictionary, the equivalent of the C API
+    // BrotliDecoderAttachDictionary with BROTLI_SHARED_DICTIONARY_RAW.
+    // Up to SHARED_BROTLI_MAX_COMPOUND_DICTS dictionaries may be attached,
+    // only before any compressed data has been processed. The most recently
+    // attached dictionary is the closest in backward-distance space.
+    // Returns false (and frees the dictionary) if it cannot be attached.
+    pub fn attach_dictionary(self : &mut Self,
+                             dict: AllocU8::AllocatedMemory) -> bool {
+        self.attach_dictionary_chunk(MaybeOwnedSlice::Owned(dict))
+    }
+    // As attach_dictionary, but the decoder only borrows `dict`: nothing is
+    // copied and nothing is freed on cleanup, so one dictionary image can back
+    // any number of concurrent decoder instances.
+    //
+    // The 'static bound is what makes this safe without a lifetime parameter
+    // on BrotliState: the data provably outlives the decoder. Callers holding
+    // a shorter-lived buffer can leak it (Box::leak, a leaked mmap) to obtain
+    // one, or use attach_dictionary and pay for the copy.
+    pub fn attach_dictionary_borrowed(self : &mut Self, dict: &'static [u8]) -> bool {
+        self.attach_dictionary_chunk(MaybeOwnedSlice::Borrowed(dict))
+    }
+    fn attach_dictionary_chunk(self : &mut Self,
+                               dict: MaybeOwnedSlice<AllocU8>) -> bool {
+        match self.state {
+            BrotliRunningState::BROTLI_STATE_UNINITED => {},
+            _ => {
+                self.free_chunk(dict);
+                return false;
+            },
+        }
+        self.attach_compound_dictionary_chunk(dict)
+    }
+    // Attaches a serialized shared dictionary (magic bytes 0x91 0x00), the
+    // equivalent of the C API BrotliDecoderAttachDictionary with
+    // BROTLI_SHARED_DICTIONARY_SERIALIZED. An embedded LZ77 prefix dictionary
+    // becomes a compound dictionary chunk; custom word lists and transform
+    // lists replace the built-in static dictionary. Only one attached
+    // dictionary may carry custom word/transform lists. Allowed only before
+    // any compressed data has been processed. Returns false (and frees the
+    // dictionary) on failure.
+    pub fn attach_serialized_dictionary(self : &mut Self,
+                                        dict_data: AllocU8::AllocatedMemory) -> bool {
+        self.attach_serialized_dictionary_chunk(MaybeOwnedSlice::Owned(dict_data))
+    }
+    // As attach_serialized_dictionary, but the decoder only borrows
+    // `dict_data`: the blob is referenced in place and an embedded LZ77
+    // prefix becomes a borrowed chunk rather than a copy. Note that custom
+    // word/transform lists keep referencing the blob for the whole decode,
+    // not just for parsing, which is why the 'static bound covers both.
+    pub fn attach_serialized_dictionary_borrowed(self : &mut Self,
+                                                 dict_data: &'static [u8]) -> bool {
+        self.attach_serialized_dictionary_chunk(MaybeOwnedSlice::Borrowed(dict_data))
+    }
+    fn attach_serialized_dictionary_chunk(self : &mut Self,
+                                          dict_data: MaybeOwnedSlice<AllocU8>) -> bool {
+        match self.state {
+            BrotliRunningState::BROTLI_STATE_UNINITED => {},
+            _ => {
+                self.free_chunk(dict_data);
+                return false;
+            },
+        }
+        let summary = match shared_dictionary::dry_parse_serialized_dictionary(
+            dict_data.slice()) {
+            Ok(summary) => summary,
+            Err(()) => {
+                self.free_chunk(dict_data);
+                return false;
+            },
+        };
+        let is_custom = summary.num_word_lists != 0 || summary.num_transform_lists != 0;
+        // Cannot combine different custom static dictionaries, only prefix
+        // dictionaries.
+        if is_custom && self.dictionary.is_custom() {
+            self.free_chunk(dict_data);
+            return false;
+        }
+        // If the blob itself is borrowed, an embedded prefix can be handed to
+        // the compound dictionary as a subslice of it; both are shared
+        // references to caller-owned memory, so no copy is needed.
+        let borrowed_blob: Option<&'static [u8]> = match dict_data {
+            MaybeOwnedSlice::Borrowed(data) => Some(data),
+            MaybeOwnedSlice::Owned(_) => None,
+        };
+        let mut parsed = BrotliSharedDictionary::<AllocU8, AllocU32>::default();
+        if is_custom {
+            let arena_size = summary.num_word_lists as usize * WORD_LIST_STRIDE +
+                             summary.num_transform_lists as usize * TRANSFORM_LIST_STRIDE;
+            parsed.meta = self.alloc_u32.alloc_cell(arena_size);
+            if parsed.meta.slice().len() != arena_size ||
+               shared_dictionary::parse_serialized_dictionary_into(
+                   dict_data.slice(), &summary, &mut parsed).is_err() {
+                self.alloc_u32.free_cell(core::mem::replace(&mut parsed.meta,
+                                         AllocU32::AllocatedMemory::default()));
+                self.free_chunk(dict_data);
+                return false;
+            }
+        }
+        if let Some((prefix_offset, prefix_len)) = summary.prefix {
+            let chunk = match borrowed_blob {
+                Some(blob) => MaybeOwnedSlice::Borrowed(
+                    &blob[prefix_offset..prefix_offset + prefix_len]),
+                // An owned blob is not kept around unless it carries custom
+                // lists, so the prefix is copied into its own buffer; that
+                // also leaves the parsed word/transform offsets referencing
+                // the blob unchanged.
+                None => {
+                    let mut chunk = self.alloc_u8.alloc_cell(prefix_len);
+                    if chunk.slice().len() != prefix_len {
+                        self.alloc_u8.free_cell(chunk);
+                        self.alloc_u32.free_cell(core::mem::replace(&mut parsed.meta,
+                                                 AllocU32::AllocatedMemory::default()));
+                        self.free_chunk(dict_data);
+                        return false;
+                    }
+                    chunk.slice_mut().clone_from_slice(
+                        &dict_data.slice()[prefix_offset..prefix_offset + prefix_len]);
+                    MaybeOwnedSlice::Owned(chunk)
+                },
+            };
+            if !self.attach_compound_dictionary_chunk(chunk) {
+                self.alloc_u32.free_cell(core::mem::replace(&mut parsed.meta,
+                                         AllocU32::AllocatedMemory::default()));
+                self.free_chunk(dict_data);
+                return false;
+            }
+        }
+        if is_custom {
+            parsed.blob = dict_data;
+            let old = core::mem::replace(&mut self.dictionary, parsed);
+            self.free_chunk(old.blob);
+            self.alloc_u32.free_cell(old.meta);
+        } else {
+            // Nothing references the blob: a prefix chunk, if any, either
+            // borrows the caller's memory or was copied out.
+            self.free_chunk(dict_data);
+        }
+        true
+    }
+    // Attaches one LZ77 prefix ("compound") dictionary chunk. Chunks must be
+    // attached before any data is decompressed; the most recently attached
+    // chunk is the closest in backward-distance space. Returns false (and
+    // frees the chunk) if the chunk cannot be attached.
+    // Releases a dictionary backing store: owned memory goes back to the
+    // allocator, borrowed memory belongs to the caller and is left alone.
+    pub(crate) fn free_chunk(self : &mut Self, chunk: MaybeOwnedSlice<AllocU8>) {
+        if let MaybeOwnedSlice::Owned(mem) = chunk {
+            self.alloc_u8.free_cell(mem);
+        }
+    }
+    pub(crate) fn attach_compound_dictionary_chunk(self : &mut Self,
+                                            chunk: MaybeOwnedSlice<AllocU8>) -> bool {
+        let size = chunk.slice().len();
+        // A zero-length chunk is a no-op and not counted toward the limit.
+        if size == 0 {
+            self.free_chunk(chunk);
+            return true;
+        }
+        let addon = &mut self.compound_dictionary;
+        if addon.num_chunks == SHARED_BROTLI_MAX_COMPOUND_DICTS ||
+           size > SHARED_BROTLI_MAX_RAW_DICT_SIZE - addon.total_size {
+            self.free_chunk(chunk);
+            return false;
+        }
+        addon.chunks[addon.num_chunks] = chunk;
+        addon.num_chunks += 1;
+        addon.total_size += size;
+        addon.chunk_offsets[addon.num_chunks] = addon.total_size as u32;
+        // Invalidate the lazily-computed block map.
+        addon.block_bits = COMPOUND_DICTIONARY_BLOCK_MAP_UNINITIALIZED;
+        true
     }
     pub fn BrotliStateMetablockBegin(self : &mut Self) {
         self.meta_block_remaining_len = 0;
@@ -474,6 +758,19 @@ impl <'brotli_state,
                               AllocHC::AllocatedMemory::default()));
       self.alloc_u8.free_cell(core::mem::replace(&mut self.custom_dict,
                               AllocU8::AllocatedMemory::default()));
+      for chunk in self.compound_dictionary.chunks.iter_mut() {
+        if let MaybeOwnedSlice::Owned(mem) =
+            core::mem::replace(chunk, MaybeOwnedSlice::default()) {
+          self.alloc_u8.free_cell(mem);
+        }
+      }
+      self.compound_dictionary = BrotliDecoderCompoundDictionary::default();
+      if let MaybeOwnedSlice::Owned(mem) =
+          core::mem::replace(&mut self.dictionary.blob, MaybeOwnedSlice::default()) {
+        self.alloc_u8.free_cell(mem);
+      }
+      self.alloc_u32.free_cell(core::mem::replace(&mut self.dictionary.meta,
+                               AllocU32::AllocatedMemory::default()));
 
       //FIXME??  BROTLI_FREE(s, s->legacy_input_buffer);
       //FIXME??  BROTLI_FREE(s, s->legacy_output_buffer);
@@ -556,8 +853,9 @@ pub fn BrotliDecoderErrorStr(c: BrotliDecoderErrorCode) -> &'static str {
   BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_PADDING_2 =>"ERROR_FORMAT_PADDING_2\0",
   BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_DISTANCE =>"ERROR_FORMAT_DISTANCE\0",
 
-  /* -17..-18 codes are reserved */
+  /* -17 code is reserved */
 
+  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_COMPOUND_DICTIONARY => "ERROR_COMPOUND_DICTIONARY\0",
   BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET => "ERROR_DICTIONARY_NOT_SET\0",
   BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS => "ERROR_INVALID_ARGUMENTS\0",
 
