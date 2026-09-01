@@ -1775,7 +1775,8 @@ fn WriteRingBuffer<'a,
   *total_out = s.partial_pos_out as usize;
   if (num_written as u64) < to_write {
     if s.ringbuffer_size as i64 == window_size || force {
-      return (BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_OUTPUT, &[]);
+      // TakeOutput still needs the bytes consumed by this partial write.
+      return (BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_OUTPUT, start);
     } else {
       return (BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS, start);
     }
@@ -2055,6 +2056,47 @@ mod tests {
   fn canny_ring_buffer() {
     assert_eq!(ringbuffer_size(true), 32);
     assert_eq!(ringbuffer_size(false), 1 << 16);
+  }
+
+  #[test]
+  fn take_output_returns_every_consumed_byte() {
+    // The existing 10x10y stream, embedded so this regression needs no fixture.
+    let input = [0x1b, 0x13, 0x00, 0x00, 0xa4, 0xb0, 0xb2, 0xea, 0x81, 0x47, 0x02, 0x8a];
+    let expected = b"XXXXXXXXXXYYYYYYYYYY";
+    let mut state = BrotliState::new(::StandardAlloc::default(),
+                                     ::StandardAlloc::default(),
+                                     ::StandardAlloc::default());
+    let mut available_in = input.len();
+    let mut input_offset = 0usize;
+    let mut available_out = 0usize;
+    let mut output_offset = 0usize;
+    let mut total_out = 0usize;
+    let result = BrotliDecompressStream(&mut available_in, &mut input_offset, &input,
+                                        &mut available_out, &mut output_offset, &mut [],
+                                        &mut total_out, &mut state);
+    assert_eq!(result as i32, BrotliResult::NeedsMoreOutput as i32);
+    assert_eq!(total_out, 0);
+
+    let mut consumed = 0usize;
+    for &limit in &[1usize, 3, 7, 0] {
+      assert!(BrotliDecoderHasMoreOutput(&state));
+      let mut size = limit;
+      {
+        let output = BrotliDecoderTakeOutput(&mut state, &mut size);
+        assert_eq!(size, if limit == 0 { expected.len() - consumed } else { limit });
+        assert_eq!(output.len(), size);
+        assert_eq!(output, &expected[consumed..consumed + size]);
+      }
+      consumed += size;
+      assert_eq!(state.partial_pos_out, consumed as u64);
+    }
+    assert_eq!(consumed, expected.len());
+    assert!(!BrotliDecoderHasMoreOutput(&state));
+    for &limit in &[1usize, 0] {
+      let mut size = limit;
+      assert!(BrotliDecoderTakeOutput(&mut state, &mut size).is_empty());
+      assert_eq!(size, 0);
+    }
   }
 
   fn assert_large_remaining_copy_is_clamped(meta_block_remaining_len: i32,

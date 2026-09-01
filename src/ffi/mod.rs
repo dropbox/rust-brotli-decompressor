@@ -160,7 +160,7 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
 
 #[no_mangle]
 pub unsafe extern "C" fn BrotliDecoderSetParameter(state_ptr: *mut BrotliDecoderState,
-                                             selector: BrotliDecoderParameter,
+                                             selector: i32,
                                              value: u32) -> i32 {
   if state_ptr.is_null() {
     return 0;
@@ -170,13 +170,16 @@ pub unsafe extern "C" fn BrotliDecoderSetParameter(state_ptr: *mut BrotliDecoder
     &super::state::BrotliRunningState::BROTLI_STATE_UNINITED => {},
     _ => return 0,
   }
+  // Unknown C enum values must return false, not create an invalid Rust enum
+  // discriminant at the ABI boundary. Rust callers can cast the enum to i32.
   match selector {
-    BrotliDecoderParameter::BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION => {
+    x if x == BrotliDecoderParameter::BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION as i32 => {
       state.canny_ringbuffer_allocation = value == 0;
     },
-    BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW => {
+    x if x == BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW as i32 => {
       state.large_window = value != 0;
     },
+    _ => return 0,
   }
   1
 }
@@ -623,7 +626,12 @@ pub unsafe extern fn BrotliDecoderHasMoreOutput(state_ptr: *const BrotliDecoderS
 
 #[no_mangle]
 pub unsafe extern fn BrotliDecoderTakeOutput(state_ptr: *mut BrotliDecoderState, size: *mut usize) -> *const u8 {
-  super::decode::BrotliDecoderTakeOutput(&mut (*state_ptr).decompressor, &mut *size).as_ptr()
+  let output = super::decode::BrotliDecoderTakeOutput(&mut (*state_ptr).decompressor, &mut *size);
+  if output.is_empty() {
+    core::ptr::null()
+  } else {
+    output.as_ptr()
+  }
 }
 
 
@@ -786,11 +794,12 @@ mod tests {
     }
   }
 
+  #[cfg(feature="std")]
   #[test]
   fn set_parameter() {
     let set_parameter: unsafe extern "C" fn(
       *mut BrotliDecoderState,
-      BrotliDecoderParameter,
+      i32,
       u32,
     ) -> i32 = BrotliDecoderSetParameter;
 
@@ -802,14 +811,14 @@ mod tests {
 
       assert_eq!(set_parameter(
         state,
-        BrotliDecoderParameter::BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION,
+        BrotliDecoderParameter::BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION as i32,
         1,
       ), 1);
       assert!(!(*state).decompressor.canny_ringbuffer_allocation);
 
       assert_eq!(set_parameter(
         state,
-        BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW,
+        BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW as i32,
         1,
       ), 1);
       assert!((*state).decompressor.large_window);
@@ -818,11 +827,83 @@ mod tests {
         super::super::state::BrotliRunningState::BROTLI_STATE_INITIALIZE;
       assert_eq!(set_parameter(
         state,
-        BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW,
+        BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW as i32,
         0,
       ), 0);
       assert!((*state).decompressor.large_window);
 
+      BrotliDecoderDestroyInstance(state);
+    }
+  }
+
+  #[cfg(feature="std")]
+  #[test]
+  fn set_parameter_rejects_unknown_selectors_without_changing_state() {
+    unsafe {
+      let state = BrotliDecoderCreateInstance(None, None, core::ptr::null_mut());
+      assert!(!state.is_null());
+      for &selector in &[2, 42, -1, i32::MIN, i32::MAX] {
+        for &value in &[0, 1, u32::MAX] {
+          assert_eq!(BrotliDecoderSetParameter(state, selector, value), 0);
+          assert!(!(*state).decompressor.large_window);
+          assert!((*state).decompressor.canny_ringbuffer_allocation);
+        }
+      }
+      BrotliDecoderDestroyInstance(state);
+    }
+  }
+
+  #[test]
+  fn set_parameter_rejects_null_state() {
+    assert_eq!(unsafe {
+      BrotliDecoderSetParameter(core::ptr::null_mut(), 0, 1)
+    }, 0);
+    assert_eq!(unsafe {
+      BrotliDecoderSetParameter(core::ptr::null_mut(), -1, 1)
+    }, 0);
+  }
+
+  #[cfg(feature="std")]
+  #[test]
+  fn take_output_returns_valid_partial_buffers_and_null_when_empty() {
+    let input = [0x1b, 0x13, 0x00, 0x00, 0xa4, 0xb0, 0xb2, 0xea, 0x81, 0x47, 0x02, 0x8a];
+    let expected = b"XXXXXXXXXXYYYYYYYYYY";
+    unsafe {
+      let state = BrotliDecoderCreateInstance(None, None, core::ptr::null_mut());
+      assert!(!state.is_null());
+      let mut size = 1usize;
+      assert!(BrotliDecoderTakeOutput(state, &mut size).is_null());
+      assert_eq!(size, 0);
+
+      let mut available_in = input.len();
+      let mut next_in = input.as_ptr();
+      let mut available_out = 0usize;
+      let mut next_out = core::ptr::null_mut();
+      let mut total_out = 0usize;
+      let result = BrotliDecoderDecompressStream(state, &mut available_in, &mut next_in,
+                                                 &mut available_out, &mut next_out, &mut total_out);
+      assert_eq!(result as i32, BrotliDecoderResult::BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT as i32);
+      assert_eq!(total_out, 0);
+
+      let mut consumed = 0usize;
+      for &limit in &[1usize, 3, 7, 0] {
+        let expected_ptr = (*state).decompressor.ringbuffer.slice().as_ptr().add(consumed);
+        let mut size = limit;
+        let output = BrotliDecoderTakeOutput(state, &mut size);
+        assert_eq!(size, if limit == 0 { expected.len() - consumed } else { limit });
+        // Check the pointer before dereferencing: the regression returned the
+        // dangling pointer of an empty slice with a positive size.
+        assert_eq!(output, expected_ptr);
+        assert_eq!(slice::from_raw_parts(output, size), &expected[consumed..consumed + size]);
+        consumed += size;
+      }
+      assert_eq!(consumed, expected.len());
+      assert_eq!(BrotliDecoderHasMoreOutput(state), 0);
+      for &limit in &[1usize, 0] {
+        let mut size = limit;
+        assert!(BrotliDecoderTakeOutput(state, &mut size).is_null());
+        assert_eq!(size, 0);
+      }
       BrotliDecoderDestroyInstance(state);
     }
   }
