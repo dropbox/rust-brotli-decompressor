@@ -116,33 +116,28 @@ impl<Ty:Sized+Default+Clone> alloc::Allocator<Ty> for SubclassableAllocator {
 
 
 #[cfg(not(feature="std"))]
-static mut G_SLICE:&'static mut[u8] = &mut[];
-#[cfg(not(feature="std"))]
 pub struct MemoryBlock<Ty:Sized+Default>(*mut[Ty]);
 #[cfg(not(feature="std"))]
 impl<Ty:Sized+Default> Default for MemoryBlock<Ty> {
     fn default() -> Self {
-        MemoryBlock(unsafe{core::mem::transmute::<*mut [u8], *mut[Ty]>(G_SLICE.as_mut())})
+        // Even an empty slice reference needs a non-null, Ty-aligned pointer.
+        MemoryBlock(core::ptr::slice_from_raw_parts_mut(
+            core::ptr::NonNull::<Ty>::dangling().as_ptr(), 0))
     }
 }
 #[cfg(not(feature="std"))]
 impl<Ty:Sized+Default> alloc::SliceWrapper<Ty> for MemoryBlock<Ty> {
     fn slice(&self) -> &[Ty] {
-        if unsafe{(*self.0).len()} == 0 {
-            &[]
-        } else {
-            unsafe{super::slice_from_raw_parts_or_nil(&(*self.0)[0], (*self.0).len())}
-        }
+        // The pointer is either an aligned empty slice or an initialized
+        // allocation from alloc_cell; the borrow cannot outlive this block.
+        unsafe { &*self.0 }
     }
 }
 #[cfg(not(feature="std"))]
 impl<Ty:Sized+Default> alloc::SliceWrapperMut<Ty> for MemoryBlock<Ty> {
     fn slice_mut(&mut self) -> &mut [Ty] {
-        if unsafe{(*self.0).len()} == 0 {
-            &mut []
-        } else {
-            unsafe{super::slice_from_raw_parts_or_nil_mut(&mut (*self.0)[0], (*self.0).len())}
-        }
+        // As above, with exclusive access guaranteed by the mutable borrow.
+        unsafe { &mut *self.0 }
     }
 }
 
@@ -162,14 +157,14 @@ extern "C" fn eh_personality() {
 impl<Ty:Sized+Default> core::ops::Index<usize> for MemoryBlock<Ty> {
     type Output = Ty;
     fn index(&self, index:usize) -> &Ty {
-        unsafe{&(*self.0)[index]}
+        &alloc::SliceWrapper::slice(self)[index]
     }
 }
 #[cfg(not(feature="std"))]
 impl<Ty:Sized+Default> core::ops::IndexMut<usize> for MemoryBlock<Ty> {
 
     fn index_mut(&mut self, index:usize) -> &mut Ty {
-        unsafe{&mut (*self.0)[index]}
+        &mut alloc::SliceWrapperMut::slice_mut(self)[index]
     }
 }
 
@@ -194,7 +189,7 @@ impl<Ty:Sized+Default+Clone> alloc::Allocator<Ty> for SubclassableAllocator {
             for item in slice_ref.iter_mut() {
                 unsafe{core::ptr::write(item, Ty::default())};
             }
-            return MemoryBlock(slice_ref.as_mut())
+            return MemoryBlock(slice_ref)
         } else {
             panic!("Must provide allocators in no-stdlib code");
         }
@@ -247,7 +242,52 @@ pub fn alloc_stdlib<T:Sized+Default+Copy+Clone>(size: usize) -> *mut T {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ::alloc::{Allocator, SliceWrapper};
+    use ::alloc::{Allocator, SliceWrapper, SliceWrapperMut};
+
+    #[repr(align(64))]
+    #[derive(Clone, Default)]
+    struct OverAligned {
+        _byte: u8,
+    }
+
+    fn assert_empty_block<Ty: Sized + Default>(mut block: MemoryBlock<Ty>) {
+        #[cfg(not(feature="std"))]
+        {
+            // Inspect the raw pointer first, so a regression fails without
+            // creating an invalid reference just to check the slice length.
+            let data = block.0 as *mut Ty;
+            assert!(!data.is_null());
+            assert_eq!(data as usize % core::mem::align_of::<Ty>(), 0);
+        }
+        assert!(block.slice().is_empty());
+        assert_eq!(block.slice().as_ptr() as usize % core::mem::align_of::<Ty>(), 0);
+        let slice = block.slice_mut();
+        assert!(slice.is_empty());
+        assert_eq!(slice.as_mut_ptr() as usize % core::mem::align_of::<Ty>(), 0);
+    }
+
+    #[test]
+    fn default_empty_blocks_are_aligned_for_their_element_type() {
+        assert_empty_block(MemoryBlock::<u8>::default());
+        assert_empty_block(MemoryBlock::<u32>::default());
+        assert_empty_block(MemoryBlock::<super::super::HuffmanCode>::default());
+        assert_empty_block(MemoryBlock::<OverAligned>::default());
+    }
+
+    #[cfg(not(feature="std"))]
+    #[test]
+    fn nonempty_block_supports_slices_and_indexing() {
+        let mut data = [1u32, 2, 3];
+        {
+            let mut block = MemoryBlock(&mut data[..] as *mut [u32]);
+            assert_eq!(block.slice(), &[1, 2, 3]);
+            assert_eq!(block[1], 2);
+            block[1] = 4;
+            block.slice_mut()[2] = 5;
+            assert_eq!(block.slice(), &[1, 4, 5]);
+        }
+        assert_eq!(data, [1, 4, 5]);
+    }
 
     extern "C" fn failing_alloc(_data: *mut c_void, _size: usize) -> *mut c_void {
         core::ptr::null_mut()
@@ -265,5 +305,21 @@ mod tests {
             <SubclassableAllocator as Allocator<u8>>::alloc_cell(&mut allocator, 1);
 
         assert_eq!(block.slice().len(), 0);
+    }
+
+    #[test]
+    fn zero_and_failed_allocations_return_aligned_empty_blocks() {
+        let mut allocator = unsafe {
+            SubclassableAllocator::new(CAllocator {
+                alloc_func: Some(failing_alloc),
+                free_func: None,
+                opaque: core::ptr::null_mut(),
+            })
+        };
+        for &size in &[0usize, 1, usize::MAX] {
+            let block = <SubclassableAllocator as Allocator<OverAligned>>::alloc_cell(
+                &mut allocator, size);
+            assert_empty_block(block);
+        }
     }
 }
