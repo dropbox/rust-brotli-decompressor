@@ -3088,15 +3088,8 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
   if is_fatal(s.error_code) {
     return BrotliResult::ResultFailure;
   }
-  if *available_in as u64 >= (1u64 << 32) {
+  if !bit_reader::is_valid_input_range(*input_offset, *available_in, xinput.len()) {
     return SaveErrorCode!(s, BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS);
-  }
-  if *input_offset as u64 >= (1u64 << 32) {
-    return SaveErrorCode!(s, BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS);
-  }
-  match input_offset.checked_add(*available_in) {
-    Some(end) if end <= xinput.len() => {}
-    _ => return SaveErrorCode!(s, BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS),
   }
   match output_offset.checked_add(*available_out) {
     Some(end) if end <= output.len() => {}
