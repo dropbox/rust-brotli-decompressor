@@ -1,33 +1,40 @@
+# Test harness only. Builds ../src/lib.rs as a C shared library so main.c can
+# link against the exported BrotliDecoder* symbols. It is never published: the
+# package name is deliberately different from the real crate so that a
+# `cargo publish` run from this directory cannot touch brotli-decompressor.
 [package]
-name = "brotli-decompressor"
-version = "2.0.0"
+name = "brotli-decompressor-c-harness"
+version = "0.0.0"
 authors = ["Daniel Reiter Horn <danielrh@dropbox.com>", "The Brotli Authors"]
-description = "A brotli decompressor that with an interface avoiding the rust stdlib. This makes it suitable for embedded devices and kernels. It is designed with a pluggable allocator so that the standard lib's allocator may be employed. The default build also includes a stdlib allocator and stream interface. Disable this with --features=no-stdlib. Alternatively, --features=unsafe turns off array bounds checks and memory initialization but provides a safe interface for the caller.  Without adding the --features=unsafe argument, all included code is safe. For compression in addition to this library, download https://github.com/dropbox/rust-brotli "
 license = "BSD-3-Clause/MIT"
-documentation = "https://github.com/dropbox/rust-brotli-decompressor/blob/master/README.md"
-homepage = "https://github.com/dropbox/rust-brotli-decompressor"
-repository = "https://github.com/dropbox/rust-brotli-decompressor"
-keywords = ["brotli", "decompression", "lz77", "huffman", "nostd"]
-readme = "README.md"
-exclude = ["testdata/*"]
+publish = false
 autobins = false
 
 [lib]
-crate-type=["cdylib", "rlib"]
-path="../src/lib.rs"
+# Keep the library file name that the Makefile and main.c link against.
+name = "brotli_decompressor"
+path = "../src/lib.rs"
+crate-type = ["cdylib"]
 
 [profile.release]
-lto=true
+incremental = false
+lto = true
 
 [dependencies]
-"alloc-no-stdlib" = {version="~2.0"}
-"alloc-stdlib" = {version="~0.2", optional=true}
-
+# Keep identical to ../Cargo.toml so the harness exercises the same dependency
+# generation as the crate it wraps.
+"alloc-no-stdlib" = {version=">=3.0.0, <4.0.0"}
+"alloc-stdlib" = {version=">=0.3.0, <0.4", optional=true}
 
 [features]
-default=["std"]
+# Same feature set as ../Cargo.toml, with the FFI on by default because
+# exporting the C symbols is the whole point of this build.
+default = ["std", "ffi-api"]
+seccomp = ["alloc-no-stdlib/unsafe"]
 std = ["alloc-stdlib"]
 unsafe = ["alloc-no-stdlib/unsafe", "alloc-stdlib/unsafe"]
-no-stdlib-ffi-binding = []
+pass-through-ffi-panics = []
 disable-timer = []
 benchmark = []
+ffi-api = []
+no-stdlib-ffi-binding = ["ffi-api"]
