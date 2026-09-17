@@ -137,15 +137,13 @@ macro_rules! fast_mut {
        *unsafe{$slice.get_unchecked_mut($index)}
    };
    (($slice : expr)[$start: expr ; $end : expr]) => {
-       unsafe{::core::slice::from_raw_parts_mut(($slice).as_mut_ptr().offset($start as isize),
-                                                $end - $start)}
+       unsafe{($slice).get_unchecked_mut($start .. $end)}
    };
    (($slice : expr)[$start: expr ;]) => {
-       unsafe{::core::slice::from_raw_parts_mut(($slice).as_mut_ptr().offset($start as isize),
-                                                $slice.len() - $start)}
+       unsafe{($slice).get_unchecked_mut($start ..)}
    };
    (($slice : expr)[; $end : expr]) => {
-       unsafe{::core::slice::from_raw_parts_mut(($slice).as_mut_ptr(), $slice.len())}
+       unsafe{($slice).get_unchecked_mut(.. $end)}
    };
 }
 
