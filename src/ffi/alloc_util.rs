@@ -53,6 +53,40 @@ impl<Ty:Sized+Default> Drop for MemoryBlock<Ty> {
         }
     }
 }
+
+// Fallible counterpart of vec![Ty::default(); size].into_boxed_slice(). vec!
+// reports allocation failure through handle_alloc_error, which aborts the
+// process (catch_unwind cannot intercept it), so a decoder created without C
+// allocator callbacks crashed its host whenever a large allocation such as the
+// ring buffer (up to 16 MiB, or 1 GiB with large windows) failed. Returning
+// None lets callers report BROTLI_DECODER_ERROR_ALLOC_* exactly as they do
+// when a C allocator returns null.
+#[cfg(feature = "std")]
+fn try_alloc_default_slice<Ty: Sized + Default + Clone>(size: usize) -> Option<Box<[Ty]>> {
+    if size == 0 || core::mem::size_of::<Ty>() == 0 {
+        // Nothing to allocate, so this cannot fail.
+        return Some(vec![Ty::default(); size].into_boxed_slice());
+    }
+    let layout = match std::alloc::Layout::array::<Ty>(size) {
+        Ok(layout) => layout,
+        Err(_) => return None, // more than isize::MAX bytes
+    };
+    // Zeroed, as vec! requests for zero-valued elements, so that where the
+    // optimizer can see the allocator (e.g. with LTO) the zero stores below
+    // fold away and untouched pages stay uncommitted.
+    let data = unsafe { std::alloc::alloc_zeroed(layout) } as *mut Ty;
+    if data.is_null() {
+        return None;
+    }
+    // Generic code cannot tell whether all-zero bytes are a valid Ty, so every
+    // element is initialized, as the C allocator path does.
+    for index in 0..size {
+        unsafe { core::ptr::write(data.add(index), Ty::default()) };
+    }
+    // Box<[Ty]> frees with Layout::array::<Ty>(size), the layout used above.
+    Some(unsafe { Box::from_raw(core::ptr::slice_from_raw_parts_mut(data, size)) })
+}
+
 pub struct SubclassableAllocator {
     alloc: CAllocator
     // have alternative ty here
@@ -88,7 +122,10 @@ impl<Ty:Sized+Default+Clone> alloc::Allocator<Ty> for SubclassableAllocator {
             }
             return MemoryBlock(unsafe{Box::from_raw(slice_ref)})
         }
-        MemoryBlock(vec![Ty::default();size].into_boxed_slice())
+        match try_alloc_default_slice(size) {
+            Some(data) => MemoryBlock(data),
+            None => MemoryBlock::<Ty>::default(),
+        }
     }
     fn free_cell(&mut self, mut bv:MemoryBlock<Ty>) {
         if (*bv.0).len() != 0 {
@@ -231,12 +268,10 @@ pub unsafe fn free_stdlib<T>(ptr: *mut T, size: usize) {
 }
 #[cfg(feature="std")]
 pub fn alloc_stdlib<T:Sized+Default+Copy+Clone>(size: usize) -> *mut T {
-    std::panic::catch_unwind(|| {
-        let mut newly_allocated = vec![T::default();size].into_boxed_slice();
-        let slice_ptr = newly_allocated.as_mut_ptr();
-        let _box_ptr = Box::into_raw(newly_allocated);
-        slice_ptr
-    }).unwrap_or(core::ptr::null_mut())
+    match try_alloc_default_slice::<T>(size) {
+        Some(newly_allocated) => Box::into_raw(newly_allocated) as *mut T,
+        None => core::ptr::null_mut(),
+    }
 }
 
 #[cfg(test)]
@@ -321,5 +356,47 @@ mod tests {
                 &mut allocator, size);
             assert_empty_block(block);
         }
+    }
+
+    // Without C callbacks alloc_cell used vec!, which panics ("capacity
+    // overflow") on sizes it cannot represent and aborts when the allocation
+    // itself fails, instead of returning the empty block callers check for.
+    #[cfg(feature = "std")]
+    #[test]
+    fn default_allocator_failures_return_empty_blocks() {
+        let mut allocator = unsafe {
+            SubclassableAllocator::new(CAllocator {
+                alloc_func: None,
+                free_func: None,
+                opaque: core::ptr::null_mut(),
+            })
+        };
+        assert_empty_block(<SubclassableAllocator as Allocator<u8>>::alloc_cell(
+            &mut allocator,
+            isize::MAX as usize + 1,
+        ));
+        assert_empty_block(<SubclassableAllocator as Allocator<u32>>::alloc_cell(
+            &mut allocator,
+            usize::MAX,
+        ));
+        assert_empty_block(
+            <SubclassableAllocator as Allocator<OverAligned>>::alloc_cell(
+                &mut allocator,
+                usize::MAX,
+            ),
+        );
+        assert!(alloc_stdlib::<u8>(isize::MAX as usize + 1).is_null());
+
+        let block = <SubclassableAllocator as Allocator<u32>>::alloc_cell(&mut allocator, 5);
+        assert_eq!(block.slice(), &[0u32; 5]);
+        <SubclassableAllocator as Allocator<u32>>::free_cell(&mut allocator, block);
+        let block =
+            <SubclassableAllocator as Allocator<OverAligned>>::alloc_cell(&mut allocator, 3);
+        assert_eq!(block.slice().len(), 3);
+        assert_eq!(
+            block.slice().as_ptr() as usize % core::mem::align_of::<OverAligned>(),
+            0
+        );
+        <SubclassableAllocator as Allocator<OverAligned>>::free_cell(&mut allocator, block);
     }
 }
