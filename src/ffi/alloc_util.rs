@@ -85,8 +85,9 @@ fn try_alloc_default_slice<Ty: Sized + Default + Clone>(size: usize) -> Option<B
     // Generic code cannot tell whether all-zero bytes are a valid Ty, so every
     // element is initialized. elements.len() counts the initialized prefix, so
     // if Ty::default() panics, dropping the Vec drops exactly those elements
-    // and frees the buffer. This is a plain loop rather than resize/resize_with
-    // because only this form lets LTO drop the fill after alloc_zeroed.
+    // and frees the buffer. It is a plain loop rather than resize/resize_with
+    // because in this crate's LTO builds only the loop's zero fill is optimized
+    // away after alloc_zeroed; the others kept it, committing every page.
     for index in 0..size {
         unsafe {
             core::ptr::write(elements.as_mut_ptr().add(index), Ty::default());
