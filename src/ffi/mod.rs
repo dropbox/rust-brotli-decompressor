@@ -745,7 +745,8 @@ mod tests {
     );
   }
 
-  #[cfg(all(feature="std", not(feature="pass-through-ffi-panics")))]
+  // Needs unwinding: under panic=abort the panic ends the process instead.
+  #[cfg(all(feature="std", not(feature="pass-through-ffi-panics"), panic="unwind"))]
   #[test]
   fn one_shot_panic_returns_error_info() {
     let ret = catch_panic_return_info(|| -> BrotliDecoderReturnInfo {
@@ -765,7 +766,9 @@ mod tests {
     }
   }
 
-  #[cfg(all(feature="std", not(feature="pass-through-ffi-panics")))]
+  // Needs unwinding: the exhausted scratch allocator panics, and only an
+  // unwinding build can turn that into an error return.
+  #[cfg(all(feature="std", not(feature="pass-through-ffi-panics"), panic="unwind"))]
   #[test]
   fn prealloc_catches_scratch_exhaustion() {
     let ret = unsafe {
