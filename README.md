@@ -3,6 +3,13 @@
 [![crates.io](https://img.shields.io/crates/v/brotli-decompressor.svg)](https://crates.io/crates/brotli-decompressor)
 [![Build Status](https://travis-ci.org/dropbox/rust-brotli-decompressor.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli-decompressor)
 
+## What's new in version 6.0.1
+
+* The C API's default Rust allocator now reports allocation failures as decoder
+  errors (or null from its allocation helpers) instead of aborting the process.
+* Fixed undefined behavior in mutable slice handling and ensured partially
+  initialized fallback allocations are cleaned up if initialization panics.
+
 ## What's new in version 6.0.0
 
 * Unlike previous code, these commits were effectively authored by Claude.
