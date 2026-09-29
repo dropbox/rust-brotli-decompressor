@@ -226,7 +226,13 @@ pub fn decompress<InputType, OutputType>(r: &mut InputType,
         OutputType: Write
 {
 
-  let mut u8_buffer = unsafe {define_allocator_memory_pool!(4, u8, [0; 1024 * 1024 * 200], calloc)};
+  // The u8 pool holds the ring buffer, which grows on demand up to the window
+  // size. This pool never merges the blocks that growth frees, so reaching a
+  // window can take twice the window from it. The extra 129 MiB covers the
+  // ring buffers left behind on the way to the largest window that fitted
+  // before growth on demand, 128 MiB (lgwin 27): each power of two from 1 KiB
+  // to 64 MiB, plus 566 bytes of slack each, is 128 MiB + 8,598 bytes.
+  let mut u8_buffer = unsafe {define_allocator_memory_pool!(4, u8, [0; 1024 * 1024 * (200 + 129)], calloc)};
   let mut u32_buffer = unsafe {define_allocator_memory_pool!(4, u32, [0; 16384], calloc)};
   let mut hc_buffer = unsafe {define_allocator_memory_pool!(4, HuffmanCode, [0; 1024 * 1024 * 16], calloc)};
   let mut alloc_u8 = CallocAllocatedFreelist::<u8>::new_allocator(u8_buffer.data, bzero);

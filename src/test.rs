@@ -105,6 +105,46 @@ fn oneshot(input: &mut [u8], mut output: &mut [u8]) -> (BrotliResult, usize, usi
   return (result, input_offset, output_offset);
 }
 
+// As oneshot, with at most in_chunk bytes of input and out_chunk bytes of
+// output space per call.
+fn decode_in_chunks(input: &[u8],
+                    output: &mut [u8],
+                    in_chunk: usize,
+                    out_chunk: usize)
+                    -> (BrotliResult, usize, usize) {
+  let mut stack_u8_buffer = define_allocator_memory_pool!(4096, u8, [0; 16 * 1024], stack);
+  let mut stack_u32_buffer = define_allocator_memory_pool!(4096, u32, [0; 4 * 1024], stack);
+  let mut stack_hc_buffer = define_allocator_memory_pool!(4096,
+                                                          super::HuffmanCode,
+                                                          [HuffmanCode::default(); 20 * 1024],
+                                                          stack);
+  let stack_u8_allocator = MemPool::<u8>::new_allocator(&mut stack_u8_buffer, bzero);
+  let stack_u32_allocator = MemPool::<u32>::new_allocator(&mut stack_u32_buffer, bzero);
+  let stack_hc_allocator = MemPool::<HuffmanCode>::new_allocator(&mut stack_hc_buffer, bzero);
+  let mut brotli_state =
+    BrotliState::new(stack_u8_allocator, stack_u32_allocator, stack_hc_allocator);
+  let mut input_offset: usize = 0;
+  let mut output_offset: usize = 0;
+  let mut written: usize = 0;
+  loop {
+    let mut available_in = core::cmp::min(in_chunk, input.len() - input_offset);
+    let mut available_out = core::cmp::min(out_chunk, output.len() - output_offset);
+    let result = BrotliDecompressStream(&mut available_in,
+                                        &mut input_offset,
+                                        input,
+                                        &mut available_out,
+                                        &mut output_offset,
+                                        output,
+                                        &mut written,
+                                        &mut brotli_state);
+    match result {
+      BrotliResult::NeedsMoreInput if input_offset < input.len() => {}
+      BrotliResult::NeedsMoreOutput if output_offset < output.len() => {}
+      _ => return (result, input_offset, output_offset),
+    }
+  }
+}
+
 #[test]
 fn test_block_len_trees_allocation_failure() {
   let input = [0x06u8];
@@ -318,6 +358,58 @@ fn test_x() {
   assert_eq!(output[0], 'X' as u8);
   assert_eq!(output_offset, 1);
   assert_eq!(input_offset, input.len());
+}
+
+// 60 lines of "The quick brown fox jumps over the lazy dog <i> times.\n",
+// compressed at quality 5 with a 4 MiB window (lgwin 22), flushing every 700
+// bytes. As with fast or flushing encoders, the data sits in metablocks that
+// are not the last one. The ring buffer grows only as that data needs, here
+// 1 KiB, then 2 KiB, then 4 KiB, where it used to take the whole 4 MiB window.
+// So the stream decodes within a 16 KiB pool, and every later metablock
+// copies from bytes decoded before a growth.
+#[test]
+fn test_flushed_stream_grows_ring_buffer_in_small_pool() {
+  let input: [u8; 181] = [
+    0x8b, 0x5d, 0x01, 0x00, 0xc4, 0x60, 0x97, 0x9e, 0xd0, 0x01, 0xb5, 0x86,
+    0x78, 0x20, 0xf5, 0x63, 0x0c, 0xc4, 0xc1, 0x01, 0xd8, 0x40, 0xe4, 0xe4,
+    0x41, 0x12, 0x58, 0x06, 0x01, 0x50, 0x30, 0x91, 0xa3, 0x80, 0x5b, 0x72,
+    0x90, 0x27, 0xb6, 0x15, 0x9a, 0xbf, 0xc8, 0xfb, 0xf2, 0xcc, 0xa8, 0x97,
+    0x17, 0xfd, 0x35, 0xad, 0x07, 0x96, 0xbb, 0xda, 0x3f, 0x30, 0x5e, 0x63,
+    0xfa, 0x3f, 0x94, 0x4b, 0x03, 0x0e, 0x65, 0xed, 0xa0, 0x44, 0xe4, 0x82,
+    0x4b, 0xae, 0xb8, 0xe6, 0x86, 0x5b, 0xee, 0xb8, 0xe7, 0x61, 0x40, 0xcc,
+    0xa2, 0x9e, 0x5e, 0x60, 0x00, 0xd8, 0x15, 0x00, 0x40, 0x2a, 0x46, 0xa6,
+    0x9d, 0x71, 0xa2, 0x08, 0x25, 0x46, 0x31, 0x7b, 0x9e, 0xe7, 0x79, 0x9e,
+    0xd7, 0xef, 0xf7, 0xfb, 0xfd, 0xd7, 0x00, 0xd8, 0x15, 0x00, 0x40, 0x4a,
+    0x66, 0x26, 0x9d, 0x48, 0xc2, 0x88, 0x00, 0x02, 0xcf, 0xf3, 0x3c, 0xdf,
+    0xf7, 0x7d, 0xdf, 0xf7, 0xfd, 0x37, 0x00, 0xd8, 0x15, 0x00, 0x40, 0x92,
+    0x66, 0xa6, 0x26, 0x9d, 0x40, 0xc2, 0x88, 0x00, 0x12, 0x9f, 0xe7, 0x79,
+    0x9e, 0xe7, 0x79, 0x9e, 0xe7, 0xf9, 0xbf, 0x01, 0xd1, 0x1a, 0x00, 0x40,
+    0xa2, 0x26, 0x9d, 0x30, 0xe2, 0x81, 0x00, 0x26, 0xef, 0xbd, 0xf7, 0xde,
+    0x07];
+  let mut expected = [0u8; 3230];
+  let mut len = 0;
+  for i in 0..60u8 {
+    let digits = [b'0' + i / 10, b'0' + i % 10];
+    let number: &[u8] = if i < 10 { &digits[1..] } else { &digits[..] };
+    for part in [&b"The quick brown fox jumps over the lazy dog "[..], number, &b" times.\n"[..]].iter() {
+      expected[len..len + part.len()].clone_from_slice(part);
+      len += part.len();
+    }
+  }
+  assert_eq!(len, expected.len());
+  // One call, then byte by byte, then odd chunks, each in a fresh 16 KiB pool.
+  for &(in_chunk, out_chunk) in &[(usize::MAX, usize::MAX), (1, 1), (7, 13)] {
+    let mut output = [0u8; 4096];
+    let (result, input_offset, output_offset) =
+      decode_in_chunks(&input[..], &mut output[..], in_chunk, out_chunk);
+    match result {
+      BrotliResult::ResultSuccess => {}
+      _ => assert!(false),
+    }
+    assert_eq!(output_offset, expected.len());
+    assert_eq!(input_offset, input.len());
+    assert!(output[..output_offset] == expected[..]);
+  }
 }
 
 #[test]
