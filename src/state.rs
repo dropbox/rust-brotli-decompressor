@@ -273,6 +273,16 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub max_distance: i32,
   pub ringbuffer_size: i32,
   pub ringbuffer_mask: i32,
+  // Size the ring buffer must grow to before the current metablock is
+  // decoded, as computed from its header by BrotliCalculateRingBufferSize.
+  // It differs from ringbuffer_size only until BrotliEnsureRingBuffer runs.
+  pub(crate) new_ringbuffer_size: i32,
+  // Size of the pool that alloc_u8 draws from when it is a fixed pool that
+  // never merges freed blocks, as in brotli_decode_prealloc; 0 otherwise.
+  // Growing the ring buffer takes up to twice the window from such a pool, so
+  // BrotliCalculateRingBufferSize then sizes it to never need more of the pool
+  // than before the ring buffer grew on demand.
+  pub(crate) u8_pool_size: usize,
   pub dist_rb_idx: i32,
   pub dist_rb: [i32; 4],
   pub ringbuffer: AllocU8::AllocatedMemory,
@@ -394,6 +404,8 @@ macro_rules! make_brotli_state {
             max_distance : 0,
             ringbuffer_size : 0,
             ringbuffer_mask: 0,
+            new_ringbuffer_size : 0,
+            u8_pool_size : 0,
             dist_rb_idx : 0,
             dist_rb : [16, 15, 11, 4],
             ringbuffer : AllocU8::AllocatedMemory::default(),

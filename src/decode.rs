@@ -1831,6 +1831,13 @@ fn CopyUncompressedBlockToOutput<AllocU8: alloc::Allocator<u8>,
    mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    input: &[u8])
    -> BrotliDecoderErrorCode {
+  // Sizes the ring buffer for this metablock; a no-op once that is done, as
+  // on re-entry after NEEDS_MORE_INPUT.
+  match BrotliEnsureRingBuffer(s,
+                               BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1) {
+    BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS => {}
+    error => return error,
+  }
   // State machine
   loop {
     match s.substate_uncompressed {
@@ -1875,60 +1882,179 @@ fn CopyUncompressedBlockToOutput<AllocU8: alloc::Allocator<u8>,
   }
 }
 
-fn BrotliAllocateRingBuffer<AllocU8: alloc::Allocator<u8>,
-                            AllocU32: alloc::Allocator<u32>,
-                            AllocHC: alloc::Allocator<HuffmanCode>>
-  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
-   input: &[u8])
-   -> bool {
-  // We need the slack region for the following reasons:
-  // - doing up to two 16-byte copies for fast backward copying (32 bytes,
-  //   subsumed by the dictionary-word case below)
-  // - inserting a transformed dictionary word past the end of the ring
-  //   buffer: prefix + base word + suffix. The built-in transforms need only
-  //   5 + 24 + 8 = 37, but a serialized shared dictionary may define
-  //   transforms with full-length affixes, so a word starting on the last
-  //   ring-buffer byte can write this far past it.
-  const kRingBufferWriteAheadSlack: i32 =
-    SHARED_BROTLI_MAX_TRANSFORM_AFFIX_LENGTH as i32           // 255-byte prefix
-    + (SHARED_BROTLI_MAX_DICTIONARY_WORD_LENGTH as i32 + 1)   //  32: 31-byte word, rounded up
-    + SHARED_BROTLI_MAX_TRANSFORM_AFFIX_LENGTH as i32;        // 255-byte suffix => 542
-  // The C implementation hardcodes 542; fail the build if the two drift apart.
-  const _RING_BUFFER_SLACK_MATCHES_C: [(); 542] = [(); kRingBufferWriteAheadSlack as usize];
-  let mut is_last = s.is_last_metablock;
-  s.ringbuffer_size = 1 << s.window_bits;
+// We need the slack region for the following reasons:
+// - doing up to two 16-byte copies for fast backward copying (32 bytes,
+//   subsumed by the dictionary-word case below)
+// - inserting a transformed dictionary word past the end of the ring
+//   buffer: prefix + base word + suffix. The built-in transforms need only
+//   5 + 24 + 8 = 37, but a serialized shared dictionary may define
+//   transforms with full-length affixes, so a word starting on the last
+//   ring-buffer byte can write this far past it.
+const kRingBufferWriteAheadSlack: i32 =
+  SHARED_BROTLI_MAX_TRANSFORM_AFFIX_LENGTH as i32           // 255-byte prefix
+  + (SHARED_BROTLI_MAX_DICTIONARY_WORD_LENGTH as i32 + 1)   //  32: 31-byte word, rounded up
+  + SHARED_BROTLI_MAX_TRANSFORM_AFFIX_LENGTH as i32;        // 255-byte suffix => 542
+// The C implementation hardcodes 542; fail the build if the two drift apart.
+const _RING_BUFFER_SLACK_MATCHES_C: [(); 542] = [(); kRingBufferWriteAheadSlack as usize];
+// Bytes allocated past ringbuffer_size: the write-ahead slack plus one more
+// maximal built-in dictionary word, as this decoder has always allocated.
+const kRingBufferAllocationSlack: usize =
+  kRingBufferWriteAheadSlack as usize + kBrotliMaxDictionaryWordLength as usize;
+// Smallest ring buffer allocated, as in the C decoder: starting at 1 KiB saves
+// reallocations while the ring buffer grows. Any window is at least this large
+// (1 << kBrotliLargeMinWbits).
+const kRingBufferMinSize: i64 = 1024;
+// Smallest ring buffer allocated for a last metablock, after which the ring
+// buffer never grows, so the C decoder's larger minimum would buy nothing: the
+// 32 bytes this decoder used for a stream of one short metablock before growth
+// on demand. A fixed u8 pool (see u8_pool_size) starts every ring buffer this
+// small, which also covers the short uncompressed metablock followed by an
+// empty last one that this decoder used to detect and size the same way.
+const kSmallRingBufferMinSize: i64 = 32;
 
-  if (s.is_uncompressed != 0) {
-    let next_block_header =
-      bit_reader::BrotliPeekByte(&mut s.br, s.meta_block_remaining_len as u32, input);
-    if (next_block_header != -1) &&
-        // Peek succeeded
-        ((next_block_header & 3) == 3) {
-      // ISLAST and ISEMPTY
-      is_last = 1;
-    }
-  }
+// Calculates the smallest feasible ring buffer; a port of the C decoder's
+// BrotliCalculateRingBufferSize. The ring buffer starts small and, whenever a
+// metablock needs more room, grows to the smallest power of two that holds
+// everything decoded so far plus that metablock, up to the window size. So a
+// short stream never pays for the whole window (4 MiB at the encoder's default
+// lgwin of 22), even when its data is not in the last metablock. Once the ring
+// buffer reaches the window size it is never reallocated again. Unlike C, a
+// ring buffer first allocated for the last metablock may be smaller than 1 KiB.
+//
+// A fixed u8 pool (u8_pool_size != 0) cannot merge the blocks that growth
+// frees, so growing to the whole window takes up to twice the window from it.
+// For such a pool the ring buffer is sized so that it never needs more of the
+// pool than before growth on demand: a pool that can hold the whole window
+// gets it at once for any metablock but the last one, as it always did, and
+// otherwise the ring buffer grows from 32 bytes.
+//
+// This only computes new_ringbuffer_size: BrotliEnsureRingBuffer (re)allocates
+// once the metablock is about to write to the ring buffer.
+//
+// When this method is called, metablock size and flags MUST be decoded.
+fn BrotliCalculateRingBufferSize<AllocU8: alloc::Allocator<u8>,
+                                 AllocU32: alloc::Allocator<u32>,
+                                 AllocHC: alloc::Allocator<HuffmanCode>>
+  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>) {
+  // window_bits is 10..=24, or 10..=30 for large-window streams. The sizes are
+  // computed as i64, and the shift masked, so no state can overflow them.
+  let window_size = 1i64 << (s.window_bits & 63);
+  let mut new_ringbuffer_size = window_size;
+  let fixed_pool = s.u8_pool_size != 0;
   // We need at least 2 bytes of ring buffer size to get the last two
   // bytes for context from there
-  if is_last != 0 && s.canny_ringbuffer_allocation {
-    while (s.ringbuffer_size as isize >= (s.meta_block_remaining_len as isize + 16) * 2 && s.ringbuffer_size as isize > 32) {
-      s.ringbuffer_size >>= 1;
-    }
-  }
-  if s.ringbuffer_size > (1 << s.window_bits) {
-    s.ringbuffer_size = (1 << s.window_bits);
+  let mut min_size = if s.ringbuffer_size != 0 {
+    s.ringbuffer_size as i64
+  } else if fixed_pool || s.is_last_metablock != 0 {
+    kSmallRingBufferMinSize
+  } else {
+    kRingBufferMinSize
+  };
+
+  // If maximum is already reached, no further extension is required.
+  if s.ringbuffer_size as i64 == window_size {
+    return;
   }
 
-  s.ringbuffer_mask = s.ringbuffer_size - 1;
-  s.ringbuffer = s.alloc_u8
-    .alloc_cell((s.ringbuffer_size as usize + kRingBufferWriteAheadSlack as usize +
-                 kBrotliMaxDictionaryWordLength as usize));
-  if (s.ringbuffer.slice().len() == 0) {
-    return false;
+  // Metadata blocks do not touch the ring buffer.
+  if s.is_metadata != 0 {
+    return;
   }
-  fast_mut!((s.ringbuffer.slice_mut())[s.ringbuffer_size as usize - 1]) = 0;
-  fast_mut!((s.ringbuffer.slice_mut())[s.ringbuffer_size as usize - 2]) = 0;
-  true
+
+  // Everything decoded so far stays in the ring buffer, which has not wrapped:
+  // it wraps only once it is as large as the window.
+  let mut output_size = if s.ringbuffer.slice().len() == 0 {
+    0
+  } else {
+    s.pos as i64
+  };
+  output_size += s.meta_block_remaining_len as i64;
+  if min_size < output_size {
+    min_size = output_size;
+  }
+
+  // Whether this is a fixed pool that can hold the whole window. The sum is
+  // taken in u64, which cannot overflow: window_size as u64 is at most 2^63.
+  let pool_holds_window = fixed_pool &&
+    s.u8_pool_size as u64 >= window_size as u64 + kRingBufferAllocationSlack as u64;
+  if s.canny_ringbuffer_allocation && !(pool_holds_window && s.is_last_metablock == 0) {
+    // Reduce ring buffer size to save memory when server is unscrupulous.
+    // In worst case memory usage might be 1.5x bigger for a short period of
+    // ring buffer reallocation. A min_size of at least 1 keeps the loop
+    // finite whatever the state holds.
+    let min_size = core::cmp::max(min_size, 1);
+    while (new_ringbuffer_size >> 1) >= min_size {
+      new_ringbuffer_size >>= 1;
+    }
+  }
+
+  // Only a window_bits the decoder never accepts gives a size outside i32;
+  // 0 then makes BrotliEnsureRingBuffer reject the state instead.
+  s.new_ringbuffer_size = if new_ringbuffer_size > 0 &&
+                             new_ringbuffer_size <= i32::MAX as i64 {
+    new_ringbuffer_size as i32
+  } else {
+    0
+  };
+}
+
+// Allocates the ring buffer, or grows it to new_ringbuffer_size keeping the
+// bytes decoded so far; a port of the C decoder's BrotliEnsureRingBuffer.
+//
+// new_ringbuffer_size MUST be updated by BrotliCalculateRingBufferSize before
+// this function is called.
+//
+// Last two bytes of ring buffer are initialized to 0, so context calculation
+// could be done uniformly for the first two and all other positions.
+//
+// Nothing here can panic, and on failure the decoder keeps its current ring
+// buffer untouched, so the state stays consistent and droppable. Returns
+// `alloc_error` if the allocator cannot supply the memory, and UNREACHABLE
+// for a state the decoder could not have produced.
+fn BrotliEnsureRingBuffer<AllocU8: alloc::Allocator<u8>,
+                          AllocU32: alloc::Allocator<u32>,
+                          AllocHC: alloc::Allocator<HuffmanCode>>
+  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   alloc_error: BrotliDecoderErrorCode)
+   -> BrotliDecoderErrorCode {
+  let new_size = s.new_ringbuffer_size;
+  if s.ringbuffer_size == new_size && s.ringbuffer.slice().len() != 0 {
+    return BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS;
+  }
+  // The ring buffer is only reallocated before it first wraps (it wraps only
+  // at the window size, which is final), so the decoded bytes are exactly
+  // [0, pos) of the current allocation. The new size must be a power of two,
+  // so that its mask works as a modulus, at least 2 for the context bytes, and
+  // large enough to hold those bytes. These checks keep every index below in
+  // bounds.
+  let pos = s.pos;
+  if new_size < 2 || (new_size & (new_size - 1)) != 0 || pos < 0 || pos > new_size ||
+     pos as usize > s.ringbuffer.slice().len() || s.rb_roundtrips != 0 {
+    return BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_UNREACHABLE;
+  }
+  let size = new_size as usize;
+  let decoded = pos as usize;
+  let alloc_size = size + kRingBufferAllocationSlack;
+
+  let mut new_ringbuffer = s.alloc_u8.alloc_cell(alloc_size);
+  if new_ringbuffer.slice().len() < alloc_size {
+    // Normally the empty cell of a failed allocation. Hand it back regardless:
+    // a short cell from a misbehaving allocator is still the allocator's.
+    s.alloc_u8.free_cell(new_ringbuffer);
+    return alloc_error;
+  }
+  {
+    let new_slice = new_ringbuffer.slice_mut();
+    new_slice[size - 2] = 0;
+    new_slice[size - 1] = 0;
+    new_slice[..decoded].clone_from_slice(&s.ringbuffer.slice()[..decoded]);
+  }
+  let old_ringbuffer = mem::replace(&mut s.ringbuffer, new_ringbuffer);
+  s.alloc_u8.free_cell(old_ringbuffer);
+
+  s.ringbuffer_size = new_size;
+  s.ringbuffer_mask = new_size - 1;
+  BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS
 }
 
 // Lazily builds compound_dictionary.block_map, a 256-entry table that maps
@@ -2041,21 +2167,375 @@ fn CopyFromCompoundDictionary<AllocU8: alloc::Allocator<u8>,
 mod tests {
   use super::*;
 
-  fn ringbuffer_size(canny: bool) -> i32 {
-    let mut state = BrotliState::new(::StandardAlloc::default(),
-                                     ::StandardAlloc::default(),
-                                     ::StandardAlloc::default());
-    state.window_bits = 16;
-    state.is_last_metablock = 1;
-    state.canny_ringbuffer_allocation = canny;
-    assert!(BrotliAllocateRingBuffer(&mut state, &[]));
-    state.ringbuffer_size
+  // StandardAlloc for u8 cells, except that requests of at least `fail_at`
+  // bytes fail and `short` hands out one byte less than asked. Records every
+  // request and counts the cells handed out and taken back.
+  struct CountingAlloc {
+    fail_at: usize,
+    short: bool,
+    requests: std::vec::Vec<usize>,
+    allocated: usize,
+    freed: usize,
+  }
+
+  impl Default for CountingAlloc {
+    fn default() -> Self {
+      CountingAlloc {
+        fail_at: usize::MAX,
+        short: false,
+        requests: std::vec::Vec::new(),
+        allocated: 0,
+        freed: 0,
+      }
+    }
+  }
+
+  impl Allocator<u8> for CountingAlloc {
+    type AllocatedMemory = <::StandardAlloc as Allocator<u8>>::AllocatedMemory;
+    fn alloc_cell(&mut self, len: usize) -> Self::AllocatedMemory {
+      self.requests.push(len);
+      if len >= self.fail_at {
+        return Self::AllocatedMemory::default();
+      }
+      let len = if self.short && len != 0 { len - 1 } else { len };
+      if len != 0 {
+        self.allocated += 1;
+      }
+      ::StandardAlloc::default().alloc_cell(len)
+    }
+    fn free_cell(&mut self, data: Self::AllocatedMemory) {
+      if data.slice().len() != 0 {
+        self.freed += 1;
+      }
+    }
+  }
+
+  type CountingState = BrotliState<CountingAlloc, ::StandardAlloc, ::StandardAlloc>;
+
+  fn counting_state(window_bits: u32) -> CountingState {
+    let mut s = BrotliState::new(CountingAlloc::default(),
+                                 ::StandardAlloc::default(),
+                                 ::StandardAlloc::default());
+    s.window_bits = window_bits;
+    s
+  }
+
+  // What BrotliDecompressStream does for a metablock of `mlen` bytes: size the
+  // ring buffer at the header, then allocate before writing to it.
+  fn start_metablock(s: &mut CountingState, mlen: i32) -> BrotliDecoderErrorCode {
+    s.meta_block_remaining_len = mlen;
+    BrotliCalculateRingBufferSize(s);
+    BrotliEnsureRingBuffer(s, BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2)
+  }
+
+  // Stands in for decoding the metablock: writes its `mlen` bytes after `pos`.
+  fn finish_metablock(s: &mut CountingState) {
+    let (pos, mlen) = (s.pos as usize, s.meta_block_remaining_len as usize);
+    for (i, byte) in s.ringbuffer.slice_mut()[pos..pos + mlen].iter_mut().enumerate() {
+      *byte = ((pos + i) % 251) as u8 + 1;
+    }
+    s.pos += s.meta_block_remaining_len;
+    s.meta_block_remaining_len = 0;
+  }
+
+  fn assert_holds_decoded_bytes(s: &CountingState) {
+    let ringbuffer = s.ringbuffer.slice();
+    for i in 0..s.pos as usize {
+      assert_eq!(ringbuffer[i], (i % 251) as u8 + 1, "byte {}", i);
+    }
+  }
+
+  fn assert_success(result: BrotliDecoderErrorCode) {
+    assert_eq!(result as i32, BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS as i32);
+  }
+
+  fn assert_ring_buffer(s: &CountingState, size: i32) {
+    assert_eq!(s.ringbuffer_size, size);
+    assert_eq!(s.ringbuffer_mask, size - 1);
+    assert_eq!(s.new_ringbuffer_size, size);
+    assert_eq!(s.ringbuffer.slice().len(), size as usize + kRingBufferAllocationSlack);
   }
 
   #[test]
-  fn canny_ring_buffer() {
-    assert_eq!(ringbuffer_size(true), 32);
-    assert_eq!(ringbuffer_size(false), 1 << 16);
+  fn ring_buffer_starts_small_and_grows_on_demand() {
+    let mut s = counting_state(22);
+    assert_success(start_metablock(&mut s, 10));
+    assert_ring_buffer(&s, 1024);
+    // The context bytes of the first two positions read the zeroed tail.
+    assert_eq!(&s.ringbuffer.slice()[1022..1024], &[0, 0]);
+    finish_metablock(&mut s);
+    // A metablock that exactly fits the rest of the ring buffer reuses it.
+    assert_success(start_metablock(&mut s, 1014));
+    assert_ring_buffer(&s, 1024);
+    finish_metablock(&mut s);
+    assert_eq!(s.alloc_u8.allocated, 1);
+    // One byte more than fits doubles it, keeping everything decoded so far.
+    assert_success(start_metablock(&mut s, 1));
+    assert_ring_buffer(&s, 2048);
+    assert_holds_decoded_bytes(&s);
+    assert_eq!(&s.ringbuffer.slice()[2046..2048], &[0, 0]);
+    finish_metablock(&mut s);
+    // It grows straight to the smallest power of two that fits.
+    assert_success(start_metablock(&mut s, 5000));
+    assert_ring_buffer(&s, 8192);
+    assert_holds_decoded_bytes(&s);
+    finish_metablock(&mut s);
+    // No larger than the window...
+    assert_success(start_metablock(&mut s, 3 << 20));
+    assert_ring_buffer(&s, 1 << 22);
+    assert_holds_decoded_bytes(&s);
+    finish_metablock(&mut s);
+    // ...which is final: later metablocks wrap it instead.
+    assert_success(start_metablock(&mut s, 3 << 20));
+    assert_ring_buffer(&s, 1 << 22);
+    let slack = kRingBufferAllocationSlack;
+    assert_eq!(s.alloc_u8.requests,
+               [1024 + slack, 2048 + slack, 8192 + slack, (1 << 22) + slack]);
+    // Each growth handed the previous ring buffer back.
+    assert_eq!(s.alloc_u8.allocated, 4);
+    assert_eq!(s.alloc_u8.freed, 3);
+  }
+
+  #[test]
+  fn ring_buffer_sizing_matches_the_c_decoder() {
+    let first_size = |window_bits: u32, mlen: i32, canny: bool, is_last: bool| {
+      let mut s = counting_state(window_bits);
+      s.canny_ringbuffer_allocation = canny;
+      s.is_last_metablock = is_last as u8;
+      assert_success(start_metablock(&mut s, mlen));
+      s.ringbuffer_size
+    };
+    // A short first metablock gets 1 KiB whatever the window, even when it is
+    // not the last one (which used to allocate the whole window).
+    assert_eq!(first_size(16, 1, true, false), 1024);
+    assert_eq!(first_size(24, 1024, true, false), 1024);
+    assert_eq!(first_size(30, 1, true, false), 1024);
+    assert_eq!(first_size(24, 1025, true, false), 2048);
+    assert_eq!(first_size(16, 1 << 24, true, false), 1 << 16);
+    // The smallest window is the smallest ring buffer.
+    assert_eq!(first_size(10, 1, true, false), 1024);
+    // BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION: always the window.
+    assert_eq!(first_size(16, 1, false, false), 1 << 16);
+    assert_eq!(first_size(24, 1, false, false), 1 << 24);
+    assert_eq!(first_size(24, 1, false, true), 1 << 24);
+    // The one departure from C: the ring buffer never grows after the last
+    // metablock, so if that is the first to need it, it may be under 1 KiB.
+    assert_eq!(first_size(22, 1, true, true), 32);
+    assert_eq!(first_size(10, 17, true, true), 32);
+    assert_eq!(first_size(22, 40, true, true), 64);
+    assert_eq!(first_size(22, 513, true, true), 1024);
+    assert_eq!(first_size(22, 1025, true, true), 2048);
+
+    // Metadata does not touch the ring buffer.
+    let mut s = counting_state(22);
+    s.is_metadata = 1;
+    s.meta_block_remaining_len = 100;
+    BrotliCalculateRingBufferSize(&mut s);
+    assert_eq!(s.new_ringbuffer_size, 0);
+    assert!(s.alloc_u8.requests.is_empty());
+  }
+
+  // With a fixed u8 pool, the ring buffer never needs more of the pool than
+  // before growth on demand, when the whole window came at once for any
+  // metablock but the last one, and a last one got as little as 32 bytes.
+  #[test]
+  fn fixed_pool_ring_buffer_needs_no_more_than_before_growth() {
+    let slack = kRingBufferAllocationSlack;
+    let window = 1usize << 16;
+    // A pool that holds the whole window gets it at once...
+    let mut s = counting_state(16);
+    s.u8_pool_size = window + slack;
+    assert_success(start_metablock(&mut s, 10));
+    assert_ring_buffer(&s, window as i32);
+    assert_eq!(&s.ringbuffer.slice()[window - 2..window], &[0, 0]);
+    finish_metablock(&mut s);
+    assert_success(start_metablock(&mut s, 50000));
+    assert_ring_buffer(&s, window as i32);
+    assert_eq!(s.alloc_u8.requests, [window + slack]);
+    // ...unless the metablock is the last one.
+    let mut s = counting_state(16);
+    s.u8_pool_size = window + slack;
+    s.is_last_metablock = 1;
+    assert_success(start_metablock(&mut s, 40));
+    assert_ring_buffer(&s, 64);
+    // A smaller pool could not hold the whole window, so the ring buffer
+    // grows, starting from 32 bytes rather than 1 KiB.
+    let mut s = counting_state(16);
+    s.u8_pool_size = window + slack - 1;
+    assert_success(start_metablock(&mut s, 1));
+    assert_ring_buffer(&s, 32);
+    finish_metablock(&mut s);
+    assert_success(start_metablock(&mut s, 100));
+    assert_ring_buffer(&s, 128);
+    assert_holds_decoded_bytes(&s);
+    finish_metablock(&mut s);
+    assert_success(start_metablock(&mut s, 40000));
+    assert_ring_buffer(&s, window as i32);
+    assert_holds_decoded_bytes(&s);
+    assert_eq!(s.alloc_u8.requests, [32 + slack, 128 + slack, window + slack]);
+    assert_eq!((s.alloc_u8.allocated, s.alloc_u8.freed), (3, 2));
+    // BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION still wins.
+    let mut s = counting_state(16);
+    s.u8_pool_size = 1;
+    s.canny_ringbuffer_allocation = false;
+    s.is_last_metablock = 1;
+    assert_success(start_metablock(&mut s, 1));
+    assert_ring_buffer(&s, window as i32);
+  }
+
+  #[test]
+  fn failed_ring_buffer_growth_keeps_the_current_one() {
+    let mut s = counting_state(24);
+    s.alloc_u8.fail_at = 1 << 20;
+    assert_success(start_metablock(&mut s, 700));
+    finish_metablock(&mut s);
+    // Needs a 4 MiB ring buffer, which the allocator refuses.
+    assert_eq!(start_metablock(&mut s, 3 << 20) as i32,
+               BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2 as i32);
+    assert_eq!(s.ringbuffer_size, 1024);
+    assert_eq!(s.ringbuffer_mask, 1023);
+    assert_eq!(s.ringbuffer.slice().len(), 1024 + kRingBufferAllocationSlack);
+    assert_eq!(s.pos, 700);
+    assert_holds_decoded_bytes(&s);
+    assert_eq!((s.alloc_u8.allocated, s.alloc_u8.freed), (1, 0));
+    // Nothing was lost, so once memory is available the growth goes through.
+    s.alloc_u8.fail_at = usize::MAX;
+    assert_success(BrotliEnsureRingBuffer(
+      &mut s, BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2));
+    assert_ring_buffer(&s, 4 << 20);
+    assert_holds_decoded_bytes(&s);
+    assert_eq!((s.alloc_u8.allocated, s.alloc_u8.freed), (2, 1));
+  }
+
+  #[test]
+  fn short_ring_buffer_allocation_is_returned_and_reported() {
+    let mut s = counting_state(22);
+    s.alloc_u8.short = true;
+    assert_eq!(start_metablock(&mut s, 10) as i32,
+               BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2 as i32);
+    assert_eq!(s.ringbuffer.slice().len(), 0);
+    assert_eq!(s.ringbuffer_size, 0);
+    assert_eq!((s.alloc_u8.allocated, s.alloc_u8.freed), (1, 1));
+  }
+
+  #[test]
+  fn ensure_ring_buffer_rejects_states_the_decoder_cannot_produce() {
+    let unreachable = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_UNREACHABLE as i32;
+    let ensure = |s: &mut CountingState| {
+      BrotliEnsureRingBuffer(s, BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1)
+        as i32
+    };
+    let mut s = counting_state(16);
+    // No size was calculated.
+    assert_eq!(ensure(&mut s), unreachable);
+    // Not a power of two.
+    s.new_ringbuffer_size = 1000;
+    assert_eq!(ensure(&mut s), unreachable);
+    // Decoded bytes that would not fit, or that were never allocated.
+    s.new_ringbuffer_size = 1024;
+    s.pos = 1025;
+    assert_eq!(ensure(&mut s), unreachable);
+    s.pos = 1;
+    assert_eq!(ensure(&mut s), unreachable);
+    s.pos = -1;
+    assert_eq!(ensure(&mut s), unreachable);
+    // A ring buffer that has wrapped can no longer be moved.
+    s.pos = 0;
+    s.rb_roundtrips = 1;
+    assert_eq!(ensure(&mut s), unreachable);
+    assert!(s.alloc_u8.requests.is_empty());
+    s.rb_roundtrips = 0;
+    assert_eq!(ensure(&mut s), BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS as i32);
+  }
+
+  // Packs fields least significant bit first, as brotli streams are laid out.
+  struct BitWriter {
+    bytes: std::vec::Vec<u8>,
+    bits: usize,
+  }
+
+  impl BitWriter {
+    fn put(&mut self, count: usize, value: u32) {
+      for i in 0..count {
+        if self.bits % 8 == 0 {
+          self.bytes.push(0);
+        }
+        let last = self.bytes.len() - 1;
+        self.bytes[last] |= (((value >> i) & 1) as u8) << (self.bits % 8);
+        self.bits += 1;
+      }
+    }
+
+    // Uncompressed data starts at the next byte boundary.
+    fn raw(&mut self, data: &[u8]) {
+      self.bytes.extend_from_slice(data);
+      self.bits = self.bytes.len() * 8;
+    }
+  }
+
+  // A stream with a 64 KiB window of uncompressed metablocks of the given
+  // lengths, then an empty last one; and the pseudo-random data it holds.
+  fn uncompressed_stream(lengths: &[usize]) -> (std::vec::Vec<u8>, std::vec::Vec<u8>) {
+    let mut writer = BitWriter { bytes: std::vec::Vec::new(), bits: 0 };
+    writer.put(1, 0); // WBITS=16
+    let mut data = std::vec::Vec::new();
+    let mut seed = 1u32;
+    for &length in lengths {
+      let block: std::vec::Vec<u8> = (0..length).map(|_| {
+        seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+        (seed >> 16) as u8
+      }).collect();
+      // ISLAST=0, MNIBBLES=4, MLEN-1, ISUNCOMPRESSED=1.
+      writer.put(1, 0);
+      writer.put(2, 0);
+      writer.put(16, length as u32 - 1);
+      writer.put(1, 1);
+      writer.raw(&block);
+      data.extend_from_slice(&block);
+    }
+    writer.put(2, 3); // ISLAST=1, ISLASTEMPTY=1
+    (writer.bytes, data)
+  }
+
+  // Hands the decoder at most in_chunk bytes of input and out_chunk bytes of
+  // output space per call.
+  fn decode_in_chunks(s: &mut CountingState, input: &[u8], in_chunk: usize, out_chunk: usize)
+                      -> std::vec::Vec<u8> {
+    let mut output = std::vec::Vec::new();
+    let mut buffer = vec![0u8; core::cmp::min(out_chunk, 1 << 20)];
+    let mut input_offset = 0;
+    loop {
+      let mut available_in = core::cmp::min(in_chunk, input.len() - input_offset);
+      let mut available_out = buffer.len();
+      let mut output_offset = 0;
+      let mut total_out = 0;
+      let result = BrotliDecompressStream(&mut available_in, &mut input_offset, input,
+                                          &mut available_out, &mut output_offset, &mut buffer,
+                                          &mut total_out, s);
+      output.extend_from_slice(&buffer[..output_offset]);
+      match result {
+        BrotliResult::ResultSuccess => return output,
+        BrotliResult::NeedsMoreInput => assert!(input_offset < input.len(), "truncated"),
+        BrotliResult::NeedsMoreOutput => {}
+        BrotliResult::ResultFailure => panic!("decoding failed: {:?}", s.error_code),
+      }
+    }
+  }
+
+  #[test]
+  fn ring_buffer_grows_across_metablocks_then_wraps() {
+    // 10 + 1000 bytes fit in 1 KiB; 2510 need 4 KiB and 5510 need 8 KiB;
+    // 35510 need the whole 64 KiB window, which the rest then wraps around.
+    let (input, expected) = uncompressed_stream(&[10, 1000, 1500, 3000, 30000, 40000, 5000]);
+    let slack = kRingBufferAllocationSlack;
+    for &(in_chunk, out_chunk) in &[(usize::MAX, usize::MAX), (1, 1), (1, 4099), (4099, 1),
+                                     (333, 777)] {
+      let mut s = counting_state(0);
+      let output = decode_in_chunks(&mut s, &input, in_chunk, out_chunk);
+      assert!(output == expected, "chunks of {} and {}", in_chunk, out_chunk);
+      assert_eq!(s.alloc_u8.requests, [1024 + slack, 4096 + slack, 8192 + slack, 65536 + slack]);
+      assert_eq!((s.alloc_u8.allocated, s.alloc_u8.freed), (4, 3));
+    }
   }
 
   #[test]
@@ -2106,6 +2586,7 @@ mod tests {
                                  ::StandardAlloc::default(),
                                  ::StandardAlloc::default());
     s.ringbuffer_size = 16;
+    s.new_ringbuffer_size = 16;
     s.window_bits = 5;
     s.ringbuffer = s.alloc_u8.alloc_cell(s.ringbuffer_size as usize);
     s.meta_block_remaining_len = meta_block_remaining_len;
@@ -3353,10 +3834,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
             s.state = BrotliRunningState::BROTLI_STATE_METABLOCK_DONE;
             break;
           }
-          if s.ringbuffer.slice().len() == 0 && !BrotliAllocateRingBuffer(&mut s, local_input) {
-            result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2;
-            break;
-          }
+          BrotliCalculateRingBufferSize(s);
           if s.is_uncompressed != 0 {
             s.state = BrotliRunningState::BROTLI_STATE_UNCOMPRESSED;
             break;
@@ -3639,6 +4117,13 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
                */
             s.htree_command_index = 0;
             // look it up each time s.literal_htree=s.literal_hgroup.htrees[s.literal_htree_index];
+            // The header is fully decoded: size the ring buffer for the body.
+            result = BrotliEnsureRingBuffer(
+              s, BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2);
+            match result {
+              BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS => {}
+              _ => break,
+            }
             s.state = BrotliRunningState::BROTLI_STATE_COMMAND_BEGIN;
           }
           break;
@@ -3822,6 +4307,7 @@ mod state_guard_tests {
     s.ringbuffer = s.alloc_u8.alloc_cell(size as usize);
     s.ringbuffer_size = size;
     s.ringbuffer_mask = size - 1;
+    s.new_ringbuffer_size = size;
     s.window_bits = window_bits;
     s
   }

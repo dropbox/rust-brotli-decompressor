@@ -381,6 +381,7 @@ pub fn brotli_decode_prealloc(
   scratch_u32: &mut [u32],
   scratch_hc: &mut [HuffmanCode],
 ) -> BrotliDecoderReturnInfo {
+  let u8_pool_size = scratch_u8.len();
   let stack_u8_allocator = MemPool::<u8>::new_allocator(scratch_u8, bzero);
   let stack_u32_allocator = MemPool::<u32>::new_allocator(scratch_u32, bzero);
   let stack_hc_allocator = MemPool::<HuffmanCode>::new_allocator(scratch_hc, bzero);
@@ -391,6 +392,8 @@ pub fn brotli_decode_prealloc(
   let mut written: usize = 0;
   let mut brotli_state =
     BrotliState::new(stack_u8_allocator, stack_u32_allocator, stack_hc_allocator);
+  // MemPool never merges freed blocks, which the ring buffer sizing must know.
+  brotli_state.u8_pool_size = u8_pool_size;
   let result = ::BrotliDecompressStream(&mut available_in,
                                       &mut input_offset,
                                       &input[..],
@@ -424,6 +427,7 @@ pub fn brotli_decode(
       }
   }
   let (mut output, mut scratch_space) = output_and_scratch.split_at_mut(guessed_output_size);
+  let u8_pool_size = scratch_space.len();
   let stack_u8_allocator = MemPool::<u8>::new_allocator(&mut scratch_space, bzero);
   let stack_u32_allocator = MemPool::<u32>::new_allocator(&mut stack_u32_buffer, bzero);
   let stack_hc_allocator = MemPool::<HuffmanCode>::new_allocator(&mut stack_hc_buffer, bzero);
@@ -434,6 +438,8 @@ pub fn brotli_decode(
   let mut written: usize = 0;
   let mut brotli_state =
     BrotliState::new(stack_u8_allocator, stack_u32_allocator, stack_hc_allocator);
+  // MemPool never merges freed blocks, which the ring buffer sizing must know.
+  brotli_state.u8_pool_size = u8_pool_size;
   let result = ::BrotliDecompressStream(&mut available_in,
                                       &mut input_offset,
                                       &input[..],
