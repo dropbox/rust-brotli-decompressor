@@ -3716,6 +3716,10 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
   result
 }
 
+// Kept out of line: inlined into BrotliDecompressStream, the command loop would
+// share registers with the whole stream state machine and reload its state
+// from the stack.
+#[inline(never)]
 fn ProcessCommands<AllocU8: alloc::Allocator<u8>,
                    AllocU32: alloc::Allocator<u32>,
                    AllocHC: alloc::Allocator<HuffmanCode>>
@@ -3726,6 +3730,7 @@ fn ProcessCommands<AllocU8: alloc::Allocator<u8>,
   ProcessCommandsInternal(false, s, input, dictionary)
 }
 
+#[inline(never)]
 fn SafeProcessCommands<AllocU8: alloc::Allocator<u8>,
                        AllocU32: alloc::Allocator<u32>,
                        AllocHC: alloc::Allocator<HuffmanCode>>
