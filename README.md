@@ -209,6 +209,10 @@ let heap_hc_allocator = HeapPrealloc::<HuffmanCode>::new_allocator(4096, &mut hc
 // Now it's possible to setup the decompressor state
 let mut brotli_state = BrotliState::new(heap_u8_allocator, heap_u32_allocator, heap_hc_allocator);
 
+// The pool never merges the blocks it gets back, so allocate the ring buffer's
+// whole window at once rather than growing it (see below)
+brotli_state.set_initial_ring_buffer_size(u32::MAX);
+
 // at this point the decompressor simply needs an input and output buffer and the ability to track
 // the available data left in each buffer
 loop {
@@ -221,6 +225,28 @@ loop {
 ```
 
 This interface is the same interface that the C brotli decompressor uses
+
+Like the C decoder, the decoder starts its ring buffer at 1 KiB and grows it
+on demand, up to the stream's window, so a short stream never pays for the
+whole window. Each time the ring buffer grows, the old one goes back to the
+allocator. A pool like the one above never merges the blocks it gets back,
+so growing the ring buffer to the window can take up to twice the window
+from it, and the pool panics when it runs out. Calling
+`set_initial_ring_buffer_size(u32::MAX)` before decoding allocates the whole
+window at once instead, so the pool needs only the window plus 566 bytes for
+the ring buffer. Only a stream whose data is all in a compressed last
+metablock still gets a ring buffer of just its size; encoders store small or
+incompressible input as an uncompressed metablock and an empty last one,
+which gets the whole window. Other values set the smallest ring buffer to
+start from, rounded up to a power of two. The C API's
+`BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION`, set with
+`set_parameter(BrotliDecoderParameter::BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION, 1)`,
+always allocates the whole window, even for such a last metablock, and
+overrides `set_initial_ring_buffer_size`.
+Both can only be set before decoding starts, and the `Decompressor` and
+`DecompressorWriter` wrappers, including their custom allocator and I/O
+variants, offer them too. `brotli_decode_prealloc` sizes the ring buffer for
+its scratch pool by itself.
 
 Also feel free to use custom allocators that invoke Box directly.
 This example illustrates a mechanism to avoid subsequent syscalls after the initial allocation
