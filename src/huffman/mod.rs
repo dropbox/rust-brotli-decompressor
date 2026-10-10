@@ -105,12 +105,17 @@ impl<AllocU32 : alloc::Allocator<u32>,
     }
     pub fn build_hgroup_cache(&self) -> [&[HuffmanCode]; 256] {
       let mut ret : [&[HuffmanCode]; 256] = [&[]; 256];
-      let mut index : usize = 0;
-      for htree in self.htrees.slice() {
-          ret[index] = fast_slice!((&self.codes)[*htree as usize ; ]);
-          index += 1;
-      }
+      self.fill_hgroup_cache(&mut ret);
       ret
+    }
+    // As build_hgroup_cache, into an array the caller provides: returning the
+    // 4 KiB array by value costs a copy per call, and the decoder builds three
+    // of them each time it resumes decoding commands.
+    #[inline(always)]
+    pub(crate) fn fill_hgroup_cache<'a>(&'a self, cache: &mut [&'a [HuffmanCode]; 256]) {
+      for (entry, htree) in cache.iter_mut().zip(self.htrees.slice().iter()) {
+          *entry = fast_slice!((&self.codes)[*htree as usize ; ]);
+      }
     }
 }
 
