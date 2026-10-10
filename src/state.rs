@@ -184,6 +184,9 @@ pub enum MaybeOwnedSlice<AllocU8: alloc::Allocator<u8>> {
   // spelled 'static rather than as a raw pointer so that BrotliState keeps
   // its automatic Send/Sync.
   Borrowed(&'static [u8]),
+  // A dictionary of this length whose bytes are lent to every
+  // BrotliDecompressStreamWithDictionary call instead.
+  External(usize),
 }
 
 impl<AllocU8: alloc::Allocator<u8>> Default for MaybeOwnedSlice<AllocU8> {
@@ -197,6 +200,7 @@ impl<AllocU8: alloc::Allocator<u8>> alloc::SliceWrapper<u8> for MaybeOwnedSlice<
     match *self {
       MaybeOwnedSlice::Owned(ref mem) => mem.slice(),
       MaybeOwnedSlice::Borrowed(data) => data,
+      MaybeOwnedSlice::External(_) => &[],
     }
   }
 }
@@ -619,6 +623,27 @@ impl <'brotli_state,
     pub fn attach_dictionary_borrowed(self : &mut Self, dict: &'static [u8]) -> bool {
         self.attach_dictionary_chunk(MaybeOwnedSlice::Borrowed(dict))
     }
+    // As attach_dictionary_borrowed, for a dictionary of any lifetime: only
+    // its size is attached, and its bytes are lent to every
+    // BrotliDecompressStreamWithDictionary call instead, so they only have to
+    // outlive each call, not the decoder. At most one dictionary can be
+    // attached this way.
+    pub fn attach_external_dictionary(self : &mut Self, size: usize) -> bool {
+        if self.external_dictionary_len() != 0 {
+            return false;
+        }
+        self.attach_dictionary_chunk(MaybeOwnedSlice::External(size))
+    }
+    // The size of the external dictionary every call must lend, or 0.
+    pub(crate) fn external_dictionary_len(&self) -> usize {
+        let addon = &self.compound_dictionary;
+        for chunk in addon.chunks.iter().take(addon.num_chunks) {
+            if let MaybeOwnedSlice::External(len) = *chunk {
+                return len;
+            }
+        }
+        0
+    }
     fn attach_dictionary_chunk(self : &mut Self,
                                dict: MaybeOwnedSlice<AllocU8>) -> bool {
         match self.state {
@@ -680,7 +705,7 @@ impl <'brotli_state,
         // references to caller-owned memory, so no copy is needed.
         let borrowed_blob: Option<&'static [u8]> = match dict_data {
             MaybeOwnedSlice::Borrowed(data) => Some(data),
-            MaybeOwnedSlice::Owned(_) => None,
+            MaybeOwnedSlice::Owned(_) | MaybeOwnedSlice::External(_) => None,
         };
         let mut parsed = BrotliSharedDictionary::<AllocU8, AllocU32>::default();
         if is_custom {
@@ -750,7 +775,10 @@ impl <'brotli_state,
     }
     pub(crate) fn attach_compound_dictionary_chunk(self : &mut Self,
                                             chunk: MaybeOwnedSlice<AllocU8>) -> bool {
-        let size = chunk.slice().len();
+        let size = match chunk {
+            MaybeOwnedSlice::External(len) => len,
+            _ => chunk.slice().len(),
+        };
         // A zero-length chunk is a no-op and not counted toward the limit.
         if size == 0 {
             self.free_chunk(chunk);

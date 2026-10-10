@@ -6,6 +6,7 @@ use std::io::{Read,Write};
 use core::cmp;
 use super::brotli_decompressor::BrotliResult;
 use super::brotli_decompressor::BrotliDecompressStream;
+use super::brotli_decompressor::BrotliDecompressStreamWithDictionary;
 #[cfg(feature="std")]
 use super::brotli_decompressor::{Decompressor, DecompressorWriter};
 use super::brotli_decompressor::BrotliState;
@@ -1271,6 +1272,197 @@ fn test_attach_borrowed_dictionary_too_late_fails() {
   assert!(!state.attach_dictionary_borrowed(b"late"));
   assert!(!state.attach_serialized_dictionary_borrowed(b"\x91\x00garbage"));
   assert_eq!(decoded, issue42_expanded());
+}
+
+// External dictionaries: only the size is attached, and the bytes are lent to
+// every BrotliDecompressStreamWithDictionary call, so they can live in a
+// buffer made at runtime.
+const INVALID_ARGUMENTS: i32 =
+    BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS as i32;
+
+// Streams `compressed` through the decoder `input_step` bytes in and
+// `output_step` bytes out at a time, lending `dictionary` to every call.
+fn decode_with_external_dictionary(state: &mut DictionaryTestState,
+                                   compressed: &[u8],
+                                   dictionary: &[u8],
+                                   input_step: usize,
+                                   output_step: usize) -> Result<Vec<u8>, i32> {
+  let mut consumed = 0usize;
+  let mut total_out = 0usize;
+  let mut decoded = Vec::<u8>::new();
+  let mut output = vec![0u8; output_step];
+  loop {
+    let input = &compressed[consumed..cmp::min(compressed.len(), consumed + input_step)];
+    let mut available_in = input.len();
+    let mut input_offset = 0usize;
+    let mut available_out = output.len();
+    let mut output_offset = 0usize;
+    let result = BrotliDecompressStreamWithDictionary(&mut available_in,
+                                                      &mut input_offset,
+                                                      input,
+                                                      &mut available_out,
+                                                      &mut output_offset,
+                                                      &mut output,
+                                                      &mut total_out,
+                                                      dictionary,
+                                                      state);
+    consumed += input_offset;
+    decoded.extend_from_slice(&output[..output_offset]);
+    match result {
+      BrotliResult::ResultSuccess => return Ok(decoded),
+      BrotliResult::NeedsMoreOutput => {},
+      BrotliResult::NeedsMoreInput if consumed < compressed.len() => {},
+      _ => return Err(state.error_code as i32),
+    }
+  }
+}
+
+// Tiny buffers interrupt dictionary copies at the end of the ring buffer and
+// resume them on a later call (BROTLI_STATE_COMMAND_POST_WRITE_1), with the
+// dictionary lent anew.
+#[test]
+fn test_external_dictionary_from_a_runtime_buffer() {
+  let dictionary = include_bytes!("../../testdata/issue42.dict").to_vec();
+  let compressed = include_bytes!("../../testdata/issue42.compressed");
+  for &(input_step, output_step) in [(74usize, 65536usize), (1, 1), (7, 333)].iter() {
+    let mut state = new_dictionary_test_state();
+    assert!(state.attach_external_dictionary(dictionary.len()));
+    assert_eq!(decode_with_external_dictionary(
+                   &mut state, compressed, &dictionary, input_step, output_step),
+               Ok(issue42_expanded()),
+               "steps {}/{}", input_step, output_step);
+  }
+}
+
+// An external dictionary takes its place among the other attached ones, so
+// copies cross into and out of it mid-command.
+#[test]
+fn test_external_dictionary_between_attached_chunks() {
+  let dict_bytes = include_bytes!("../../testdata/issue42.dict");
+  let compressed = include_bytes!("../../testdata/issue42.compressed");
+  let pieces = [&dict_bytes[..1234], &dict_bytes[1234..1235], &dict_bytes[1235..]];
+  for external_index in 0..pieces.len() {
+    let external = pieces[external_index].to_vec();
+    for &(input_step, output_step) in [(74usize, 65536usize), (1, 1), (7, 333)].iter() {
+      let mut state = new_dictionary_test_state();
+      for (i, piece) in pieces.iter().enumerate() {
+        if i == external_index {
+          assert!(state.attach_external_dictionary(external.len()));
+        } else if i == 0 {
+          assert!(attach_test_dictionary(&mut state, piece, false));
+        } else {
+          assert!(state.attach_dictionary_borrowed(*piece));
+        }
+      }
+      assert_eq!(decode_with_external_dictionary(
+                     &mut state, compressed, &external, input_step, output_step),
+                 Ok(issue42_expanded()),
+                 "external piece {}, steps {}/{}", external_index, input_step, output_step);
+    }
+  }
+}
+
+// Every call must lend a dictionary of exactly the attached size, or none if
+// none is attached. Anything else fails, and the failure sticks.
+#[test]
+fn test_external_dictionary_of_another_size_fails() {
+  let dictionary = include_bytes!("../../testdata/issue42.dict").to_vec();
+  let compressed = include_bytes!("../../testdata/issue42.compressed");
+  let mut longer = dictionary.clone();
+  longer.push(0);
+  for &(attached, lent) in [(dictionary.len(), &[][..]),
+                            (dictionary.len(), &dictionary[1..]),
+                            (dictionary.len(), &longer[..]),
+                            (0, &dictionary[..])].iter() {
+    let mut state = new_dictionary_test_state();
+    assert!(state.attach_external_dictionary(attached));
+    assert_eq!(decode_with_external_dictionary(&mut state, compressed, lent, 74, 65536),
+               Err(INVALID_ARGUMENTS));
+    assert_eq!(decode_with_external_dictionary(
+                   &mut state, compressed, &dictionary[..attached], 74, 65536),
+               Err(INVALID_ARGUMENTS));
+  }
+
+  // BrotliDecompressStream lends none.
+  let mut state = new_dictionary_test_state();
+  assert!(state.attach_external_dictionary(dictionary.len()));
+  assert!(decode_dictionary_test_state(&mut state, compressed).is_err());
+  assert_eq!(state.error_code as i32, INVALID_ARGUMENTS);
+
+  // The size is checked on every call, not just the first: the first call
+  // fills the output, the second fails.
+  let mut state = new_dictionary_test_state();
+  assert!(state.attach_external_dictionary(dictionary.len()));
+  let mut available_in = compressed.len();
+  let mut input_offset = 0usize;
+  let mut output = [0u8; 100];
+  let mut total_out = 0usize;
+  for lent in [&dictionary[..], &dictionary[1..]].iter() {
+    let mut available_out = output.len();
+    let mut output_offset = 0usize;
+    let _ = BrotliDecompressStreamWithDictionary(&mut available_in, &mut input_offset,
+                                                 compressed, &mut available_out,
+                                                 &mut output_offset, &mut output,
+                                                 &mut total_out, lent, &mut state);
+  }
+  assert_eq!(total_out, 100);
+  assert_eq!(state.error_code as i32, INVALID_ARGUMENTS);
+}
+
+#[test]
+fn test_attach_external_dictionary_rejections() {
+  let dictionary = include_bytes!("../../testdata/issue42.dict").to_vec();
+  let compressed = include_bytes!("../../testdata/issue42.compressed");
+  let mut state = new_dictionary_test_state();
+  // A zero size is a no-op, and a size no dictionary may have is refused.
+  assert!(state.attach_external_dictionary(0));
+  assert!(!state.attach_external_dictionary(usize::MAX));
+  assert_eq!(state.compound_dictionary.num_chunks, 0);
+  // At most one may be attached ...
+  assert!(state.attach_external_dictionary(dictionary.len()));
+  assert!(!state.attach_external_dictionary(1));
+  assert_eq!(decode_with_external_dictionary(
+                 &mut state, compressed, &dictionary, 74, 65536),
+             Ok(issue42_expanded()));
+  // ... only before decoding begins ...
+  let mut state = new_dictionary_test_state();
+  assert_eq!(decode_with_external_dictionary(&mut state, &compressed[..1], &[], 1, 1),
+             Err(BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT as i32));
+  assert!(!state.attach_external_dictionary(dictionary.len()));
+  // ... and within the limit on attached dictionaries.
+  let mut state = new_dictionary_test_state();
+  for _ in 0..15 {
+    assert!(state.attach_dictionary_borrowed(b"x"));
+  }
+  assert!(!state.attach_external_dictionary(dictionary.len()));
+}
+
+// Other bytes of the attached size, even different ones on each call, give
+// wrong output or a decoding error, but never a panic or, in the `unsafe`
+// build, an out-of-bounds access.
+#[test]
+fn test_external_dictionary_with_other_bytes_of_the_same_size() {
+  let dictionary = include_bytes!("../../testdata/issue42.dict").to_vec();
+  let compressed = include_bytes!("../../testdata/issue42.compressed");
+  let zeros = vec![0u8; dictionary.len()];
+  let mut state = new_dictionary_test_state();
+  assert!(state.attach_external_dictionary(dictionary.len()));
+  let mut available_in = compressed.len();
+  let mut input_offset = 0usize;
+  let mut output = [0u8; 1];
+  let mut total_out = 0usize;
+  for call in 0.. {
+    let lent = if call % 2 == 0 { &dictionary } else { &zeros };
+    let mut available_out = 1usize;
+    let mut output_offset = 0usize;
+    match BrotliDecompressStreamWithDictionary(&mut available_in, &mut input_offset,
+                                               compressed, &mut available_out,
+                                               &mut output_offset, &mut output,
+                                               &mut total_out, lent, &mut state) {
+      BrotliResult::NeedsMoreOutput => {},
+      _ => break,
+    }
+  }
 }
 
 // A serialized dictionary containing only an LZ77 prefix chunk is equivalent
