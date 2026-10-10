@@ -1490,7 +1490,8 @@ fn DecodeBlockTypeAndLength<
                                             tree_type : i32,
                                             input : &[u8]) -> bool {
   let max_block_type = fast!((s.num_block_types)[tree_type as usize]);
-  let tree_offset = tree_type as usize * huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize;
+  let type_tree_offset = tree_type as usize * huffman::BROTLI_HUFFMAN_MAX_SIZE_258 as usize;
+  let len_tree_offset = tree_type as usize * huffman::BROTLI_HUFFMAN_MAX_SIZE_26 as usize;
 
   let mut block_type: u32 = 0;
   if max_block_type <= 1 {
@@ -1498,12 +1499,12 @@ fn DecodeBlockTypeAndLength<
   }
   // Read 0..15 + 3..39 bits
   if (!safe) {
-    block_type = ReadSymbol(fast_slice!((s.block_type_trees)[tree_offset;]), br, input);
+    block_type = ReadSymbol(fast_slice!((s.block_type_trees)[type_tree_offset;]), br, input);
     fast_mut!((s.block_length)[tree_type as usize]) =
-      ReadBlockLength(fast_slice!((s.block_len_trees)[tree_offset;]), br, input);
+      ReadBlockLength(fast_slice!((s.block_len_trees)[len_tree_offset;]), br, input);
   } else {
     let memento = bit_reader::BrotliBitReaderSaveState(br);
-    if (!SafeReadSymbol(fast_slice!((s.block_type_trees)[tree_offset;]),
+    if (!SafeReadSymbol(fast_slice!((s.block_type_trees)[type_tree_offset;]),
                         br,
                         &mut block_type,
                         input)) {
@@ -1513,7 +1514,7 @@ fn DecodeBlockTypeAndLength<
 
     let index_ret = SafeReadBlockLengthIndex(&s.substate_read_block_length,
                                              s.block_length_index,
-                                             fast_slice!((s.block_len_trees)[tree_offset;]),
+                                             fast_slice!((s.block_len_trees)[len_tree_offset;]),
                                              br,
                                              input);
     if !SafeReadBlockLengthFromIndex(s, br, &mut block_length_out, index_ret, input) {
@@ -2832,6 +2833,30 @@ mod tests {
   }
 }
 
+// Allocates the block type and block length trees unless they already are.
+// Returns false if an allocation fails.
+fn EnsureBlockTrees<AllocU8: alloc::Allocator<u8>,
+                    AllocU32: alloc::Allocator<u32>,
+                    AllocHC: alloc::Allocator<HuffmanCode>>
+  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>)
+   -> bool {
+  if s.block_type_length_state.block_type_trees.slice().len() == 0 {
+    s.block_type_length_state.block_type_trees =
+      s.alloc_hc.alloc_cell(3 * huffman::BROTLI_HUFFMAN_MAX_SIZE_258 as usize);
+    if s.block_type_length_state.block_type_trees.slice().len() == 0 {
+      return false;
+    }
+  }
+  if s.block_type_length_state.block_len_trees.slice().len() == 0 {
+    s.block_type_length_state.block_len_trees =
+      s.alloc_hc.alloc_cell(3 * huffman::BROTLI_HUFFMAN_MAX_SIZE_26 as usize);
+    if s.block_type_length_state.block_len_trees.slice().len() == 0 {
+      return false;
+    }
+  }
+  true
+}
+
 // Reads 1..256 2-bit context modes.
 pub fn ReadContextModes<AllocU8: alloc::Allocator<u8>,
                         AllocU32: alloc::Allocator<u32>,
@@ -3914,19 +3939,8 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
             }
           }
 
-          // (formerly) Allocate memory for both block_type_trees and block_len_trees.
-          s.block_type_length_state.block_type_trees = s.alloc_hc
-            .alloc_cell(3 * huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
-          if (s.block_type_length_state.block_type_trees.slice().len() == 0) {
-            result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES;
-            break;
-          }
-          s.block_type_length_state.block_len_trees = s.alloc_hc
-            .alloc_cell(3 * huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize);
-          if (s.block_type_length_state.block_len_trees.slice().len() == 0) {
-            result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES;
-            break;
-          }
+          // block_type_trees and block_len_trees are allocated when first
+          // needed; see EnsureBlockTrees.
 
           s.state = BrotliRunningState::BROTLI_STATE_METABLOCK_BEGIN;
           // No break, continue to next state
@@ -4028,7 +4042,14 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           // No break, continue to next state
         }
         BrotliRunningState::BROTLI_STATE_HUFFMAN_CODE_1 => {
-          let tree_offset = s.loop_counter as u32 * huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as u32;
+          // Only a metablock with more than one block type of some kind needs
+          // the block type and block length trees, so a stream without block
+          // switches, as most short ones are, may never allocate them.
+          if !EnsureBlockTrees(&mut s) {
+            result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES;
+            break;
+          }
+          let tree_offset = s.loop_counter as u32 * huffman::BROTLI_HUFFMAN_MAX_SIZE_258 as u32;
           let mut new_huffman_table = mem::replace(&mut s.block_type_length_state.block_type_trees,
                                                    AllocHC::AllocatedMemory::default());
           let loop_counter = s.loop_counter as usize;
@@ -4050,7 +4071,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           // No break, continue to next state
         }
         BrotliRunningState::BROTLI_STATE_HUFFMAN_CODE_2 => {
-          let tree_offset = s.loop_counter * huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as i32;
+          let tree_offset = s.loop_counter * huffman::BROTLI_HUFFMAN_MAX_SIZE_26 as i32;
           let mut new_huffman_table = mem::replace(&mut s.block_type_length_state.block_len_trees,
                                                    AllocHC::AllocatedMemory::default());
           result = ReadHuffmanCode(kNumBlockLengthCodes, kNumBlockLengthCodes,
@@ -4069,7 +4090,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           // No break, continue to next state
         }
         BrotliRunningState::BROTLI_STATE_HUFFMAN_CODE_3 => {
-          let tree_offset = s.loop_counter * huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as i32;
+          let tree_offset = s.loop_counter * huffman::BROTLI_HUFFMAN_MAX_SIZE_26 as i32;
 
           let mut block_length_out: u32 = 0;
           let ind_ret: (bool, u32);
@@ -4336,6 +4357,22 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
           // mirror that check here, before cleanup.
           if (s.meta_block_remaining_len < 0) {
             result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2;
+            break;
+          }
+          // Freeing this metablock's tree groups leaves gaps in a pool
+          // allocator that never merges what it gets back. Block trees
+          // allocated after that could take a gap that a later tree group
+          // would have reused, so if another metablock that may need them
+          // follows, allocate them now, before any tree group is freed. The
+          // pool then never needs more than when they were allocated at the
+          // start of the stream. An empty last metablock, with which fast and
+          // flushing encoders end their streams, needs nothing more, and
+          // its two header bits, ISLAST and ISLASTEMPTY, are usually buffered.
+          let empty_last_follows = bit_reader::BrotliGetAvailableBits(&s.br) >= 2 &&
+            (bit_reader::BrotliGetBitsUnmasked(&s.br) & 3) == 3;
+          if s.is_last_metablock == 0 && !empty_last_follows &&
+             s.literal_hgroup.codes.slice().len() != 0 && !EnsureBlockTrees(&mut s) {
+            result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES;
             break;
           }
           s.BrotliStateCleanupAfterMetablock();
