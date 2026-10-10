@@ -14,6 +14,7 @@ pub const BROTLI_SHORT_FILL_BIT_WINDOW_READ: u32 = 4;
 #[allow(non_camel_case_types)]
 pub type reg_t = u64;
 
+#[cfg(test)]
 #[allow(non_upper_case_globals)]
 const kBitMask: [u32; 33] =
   [0x0000, 0x00000001, 0x00000003, 0x00000007, 0x0000000F, 0x0000001F, 0x0000003F, 0x0000007F,
@@ -22,15 +23,14 @@ const kBitMask: [u32; 33] =
    0x00FFFFFF, 0x01FFFFFF, 0x03FFFFFF, 0x07FFFFFF, 0x0FFFFFFF, 0x1FFFFFFF, 0x3FFFFFFF, 0x7FFFFFFF,
    0xFFFFFFFF];
 
-#[inline]
+// Equals kBitMask[n] for every n in 0..=32, the only values callers pass,
+// without the table load and its bounds check; C computes it the same way
+// wherever it has a bit-field extract instruction. Computed in 64 bits so that
+// n == 32 does not overflow, and n is masked so that no n can make the shift
+// overflow.
+#[inline(always)]
 pub fn BitMask(n: u32) -> u32 {
-  if false {
-    // Masking with this expression turns to a single
-    // "Unsigned Bit Field Extract" UBFX instruction on ARM.
-    !((0xffffffffu32) << n)
-  } else {
-    fast!((kBitMask)[n as usize])
-  }
+  (!(u64::MAX << (n & 63))) as u32
 }
 
 pub struct BrotliBitReader {
@@ -125,13 +125,14 @@ fn BrotliLoad16LE(input: &[u8], next_in_u32: u32) -> u16 {
 }
 
 
+// from_le_bytes compiles to one unaligned load; assembling the value byte by
+// byte let LLVM split the load into pieces once callers shift out high bytes.
 #[inline(always)]
 fn BrotliLoad32LE(input: &[u8], next_in_u32: u32) -> u32 {
   let next_in: usize = next_in_u32 as usize;
   let mut four_byte: [u8; 4] = fast_uninitialized![4];
   four_byte.clone_from_slice(fast!((input)[next_in ; next_in + 4]));
-  (four_byte[0] as u32) | ((four_byte[1] as u32) << 8) | ((four_byte[2] as u32) << 16) |
-      ((four_byte[3] as u32) << 24)
+  u32::from_le_bytes(four_byte)
 }
 
 #[inline(always)]
@@ -139,11 +140,7 @@ fn BrotliLoad64LE(input: &[u8], next_in_u32: u32) -> u64 {
   let next_in: usize = next_in_u32 as usize;
   let mut eight_byte: [u8; 8] = fast_uninitialized![8];
   eight_byte.clone_from_slice(fast!((input)[next_in ; next_in + 8]));
-
-  (eight_byte[0] as u64) | ((eight_byte[1] as u64) << 8) | ((eight_byte[2] as u64) << 16) |
-      ((eight_byte[3] as u64) << 24) |
-      ((eight_byte[4] as u64) << 32) | ((eight_byte[5] as u64) << 40) |
-      ((eight_byte[6] as u64) << 48) | ((eight_byte[7] as u64) << 56)
+  u64::from_le_bytes(eight_byte)
 }
 pub const BROTLI_ALIGNED_READ: u8 = 0;
 
@@ -335,9 +332,20 @@ pub fn BrotliTakeBits(br: &mut BrotliBitReader, n_bits: u32, val: &mut u32) {
 
 // Reads the specified number of bits from br and advances the bit pos.
 // Assumes that there is enough input to perform BrotliFillBitWindow.
+//
+// Callers pass a data-dependent n_bits (extra bits of lengths and distances),
+// for which C's BrotliReadBits24 compiles BrotliFillBitWindow to its generic
+// case alone: refill 32 bits once half the window is consumed, which leaves at
+// least 33 bits for any n_bits up to 32. Choosing among the narrower n_bits
+// cases at run time, as before, costs extra unpredictable branches.
 #[inline(always)]
 pub fn BrotliReadBits(br: &mut BrotliBitReader, n_bits: u32, input: &[u8]) -> u32 {
-  if ::core::mem::size_of::<reg_t>() == 8 || (n_bits <= 16) {
+  if ::core::mem::size_of::<reg_t>() == 8 {
+    let mut val: u32 = 0;
+    BrotliFillBitWindowCompileTimeNbits(br, 32, input);
+    BrotliTakeBits(br, n_bits, &mut val);
+    val
+  } else if n_bits <= 16 {
     let mut val: u32 = 0;
     BrotliFillBitWindow(br, n_bits, input);
     BrotliTakeBits(br, n_bits, &mut val);
@@ -474,6 +482,13 @@ pub fn BrotliWarmupBitReader(br: &mut BrotliBitReader, input: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn bit_mask_matches_the_table() {
+    for n in 0..kBitMask.len() as u32 {
+      assert_eq!(BitMask(n), kBitMask[n as usize]);
+    }
+  }
 
   #[test]
   fn input_range_checks_the_end_cursor() {
