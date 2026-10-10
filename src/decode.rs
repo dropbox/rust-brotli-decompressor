@@ -3083,6 +3083,23 @@ fn memmove16(data: &mut [u8], u32off_dst: u32, u32off_src: u32) -> bool {
 }
 
 #[inline(always)]
+fn copy_overlapping_backreference(data: &mut [u8], dst: usize, distance: usize,
+                                 size: usize) -> bool {
+  if distance == 0 || distance > dst || dst > data.len() || size > data.len() - dst {
+    return false;
+  }
+  let seed = core::cmp::min(distance, size);
+  data.copy_within(dst - distance..dst - distance + seed, dst);
+  let mut copied = seed;
+  while copied < size {
+    let step = core::cmp::min(copied, size - copied);
+    data.copy_within(dst..dst + step, dst + copied);
+    copied += step;
+  }
+  true
+}
+
+#[inline(always)]
 fn memcpy_within_slice(data: &mut [u8], off_dst: usize, off_src: usize, size: usize) -> bool {
   // Both ranges must fit and must not overlap: the `unsafe` build lowers this to
   // copy_nonoverlapping, and the safe build's split_at_mut would panic.
@@ -3630,6 +3647,23 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
         }
         BrotliRunningState::BROTLI_STATE_COMMAND_POST_WRAP_COPY => {
           let mut wrap_guard = s.ringbuffer_size - pos;
+          if i >= 16 && pos >= 0 && wrap_guard > 0 &&
+             s.distance_code > 0 && s.distance_code <= pos {
+            // Seed one period from preceding bytes, then double the filled
+            // prefix. Stop exactly at the ring boundary, as the scalar path
+            // does; wrapped sources and tiny copies retain that path.
+            let count = core::cmp::min(i, wrap_guard);
+            if copy_overlapping_backreference(s.ringbuffer.slice_mut(), pos as usize,
+                                              s.distance_code as usize, count as usize) {
+              pos += count;
+              i -= count;
+              wrap_guard -= count;
+              if wrap_guard == 0 {
+                s.state = BrotliRunningState::BROTLI_STATE_COMMAND_POST_WRITE_2;
+                break;
+              }
+            }
+          }
           let mut inner_return: bool = false;
           while i > 0 {
             i -= 1;
@@ -4385,7 +4419,37 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
 
 #[cfg(test)]
 mod safeguard_tests {
-  use super::{memcpy_within_slice, memmove16};
+  use super::{copy_overlapping_backreference, memcpy_within_slice, memmove16};
+
+  #[test]
+  fn overlapping_backreferences_match_sequential_copy() {
+    for distance in 1..65 {
+      for size in 0..257 {
+        let mut data = [0u8; 384];
+        for (index, byte) in data.iter_mut().enumerate() {
+          *byte = (index.wrapping_mul(73) ^ (index >> 3)) as u8;
+        }
+        let mut expected = data;
+        for index in 64..64 + size {
+          expected[index] = expected[index - distance];
+        }
+        assert!(copy_overlapping_backreference(&mut data, 64, distance, size));
+        assert_eq!(&data[..], &expected[..]);
+      }
+    }
+  }
+
+  #[test]
+  fn overlapping_backreferences_reject_invalid_ranges() {
+    let original = [37u8; 32];
+    for &(dst, distance, size) in &[
+        (8, 0, 4), (8, 9, 4), (33, 1, 0), (31, 1, 2),
+        (usize::MAX, 1, 0), (8, usize::MAX, 1), (8, 1, usize::MAX)] {
+      let mut data = original;
+      assert!(!copy_overlapping_backreference(&mut data, dst, distance, size));
+      assert_eq!(data, original);
+    }
+  }
 
   #[test]
   fn memmove16_rejects_out_of_bounds_ranges() {
