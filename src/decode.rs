@@ -2539,6 +2539,26 @@ mod tests {
   }
 
   #[test]
+  fn set_parameter_disables_growth_only_before_decoding() {
+    use state::BrotliDecoderParameter::{BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION,
+                                        BROTLI_DECODER_PARAM_LARGE_WINDOW};
+    let (input, expected) = uncompressed_stream(&[10, 1000, 1500, 3000, 30000, 40000, 5000]);
+    let mut s = counting_state(0);
+    assert!(s.set_parameter(BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION, 1));
+    assert!(decode_in_chunks(&mut s, &input, usize::MAX, usize::MAX) == expected);
+    // The whole window at once, where the stream above grows to it in four.
+    assert_eq!(s.alloc_u8.requests, [65536 + kRingBufferAllocationSlack]);
+    // Once decoding has started, nothing changes.
+    let large_window = s.large_window;
+    for &value in &[0, 1] {
+      assert!(!s.set_parameter(BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION, value));
+      assert!(!s.set_parameter(BROTLI_DECODER_PARAM_LARGE_WINDOW, value));
+    }
+    assert!(!s.canny_ringbuffer_allocation);
+    assert_eq!(s.large_window, large_window);
+  }
+
+  #[test]
   fn take_output_returns_every_consumed_byte() {
     // The existing 10x10y stream, embedded so this regression needs no fixture.
     let input = [0x1b, 0x13, 0x00, 0x00, 0xa4, 0xb0, 0xb2, 0xea, 0x81, 0x47, 0x02, 0x8a];

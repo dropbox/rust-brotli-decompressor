@@ -5,12 +5,8 @@ pub enum c_void{
     _Nothing = 0,
 }
 
-#[repr(C)]
-#[allow(dead_code)]
-pub enum BrotliDecoderParameter {
-    BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION = 0,
-    BROTLI_DECODER_PARAM_LARGE_WINDOW = 1,
-}
+// Defined with BrotliState::set_parameter, which the C API wraps.
+pub use ::state::BrotliDecoderParameter;
 
 
 #[repr(C)]

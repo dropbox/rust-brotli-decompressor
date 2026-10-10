@@ -20,6 +20,14 @@ pub enum WhichTreeGroup {
   INSERT_COPY,
   DISTANCE,
 }
+// Options for BrotliState::set_parameter and the C API's
+// BrotliDecoderSetParameter, with the C header's values.
+#[repr(C)]
+#[derive(Clone,Copy, Debug)]
+pub enum BrotliDecoderParameter {
+  BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION = 0,
+  BROTLI_DECODER_PARAM_LARGE_WINDOW = 1,
+}
 #[repr(C)]
 #[derive(Clone,Copy, Debug)]
 pub enum BrotliDecoderErrorCode{
@@ -544,6 +552,26 @@ impl <'brotli_state,
         retval.large_window =  false;
         BrotliInitBitReader(&mut retval.br);
         retval
+    }
+    // Sets a decoder parameter, the equivalent of the C API
+    // BrotliDecoderSetParameter: a nonzero value disables ring buffer
+    // reallocation (the whole window is allocated at once) or accepts
+    // large-window streams. Allowed only before any compressed data has been
+    // processed; returns false, changing nothing, afterwards.
+    pub fn set_parameter(self : &mut Self,
+                         param: BrotliDecoderParameter,
+                         value: u32) -> bool {
+        match self.state {
+            BrotliRunningState::BROTLI_STATE_UNINITED => {},
+            _ => return false,
+        }
+        match param {
+            BrotliDecoderParameter::BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION =>
+                self.canny_ringbuffer_allocation = value == 0,
+            BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW =>
+                self.large_window = value != 0,
+        }
+        true
     }
     // Attaches a raw LZ77 prefix dictionary, the equivalent of the C API
     // BrotliDecoderAttachDictionary with BROTLI_SHARED_DICTIONARY_RAW.

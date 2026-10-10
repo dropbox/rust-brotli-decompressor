@@ -7,6 +7,7 @@ pub use alloc_stdlib::StandardAlloc;
 pub use alloc_stdlib::HeapAlloc;
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
 pub use state::BrotliState;
+use state::BrotliDecoderParameter;
 // use io_wrappers::write_all;
 pub use io_wrappers::{CustomWrite};
 #[cfg(feature="std")]
@@ -58,6 +59,9 @@ impl<W: Write,
     }
     pub fn attach_serialized_dictionary(&mut self, dict: AllocU8::AllocatedMemory) -> bool {
       self.0.attach_serialized_dictionary(dict)
+    }
+    pub fn set_parameter(&mut self, param: BrotliDecoderParameter, value: u32) -> bool {
+      self.0.set_parameter(param, value)
     }
 
     pub fn get_ref(&self) -> &W {
@@ -150,6 +154,12 @@ impl<W: Write> DecompressorWriter<W> {
     self.0.attach_serialized_dictionary(dict)
   }
 
+  // Sets a decoder parameter (see BrotliState::set_parameter); only allowed
+  // before the first write.
+  pub fn set_parameter(&mut self, param: BrotliDecoderParameter, value: u32) -> bool {
+    self.0.set_parameter(param, value)
+  }
+
   pub fn get_ref(&self) -> &W {
       self.0.get_ref()
   }
@@ -202,6 +212,12 @@ impl<W: Write> DecompressorWriter<W> {
   // before the first write.
   pub fn attach_serialized_dictionary(&mut self, dict: <HeapAlloc<u8> as Allocator<u8>>::AllocatedMemory) -> bool {
     self.0.attach_serialized_dictionary(dict)
+  }
+
+  // Sets a decoder parameter (see BrotliState::set_parameter); only allowed
+  // before the first write.
+  pub fn set_parameter(&mut self, param: BrotliDecoderParameter, value: u32) -> bool {
+    self.0.set_parameter(param, value)
   }
 
   pub fn get_ref(&self) -> &W {
@@ -332,6 +348,12 @@ impl<ErrType,
     // allowed before the first write.
     pub fn attach_serialized_dictionary(&mut self, dict: AllocU8::AllocatedMemory) -> bool {
       self.state.attach_serialized_dictionary(dict)
+    }
+
+    // Sets a decoder parameter (see BrotliState::set_parameter); only
+    // allowed before the first write.
+    pub fn set_parameter(&mut self, param: BrotliDecoderParameter, value: u32) -> bool {
+      self.state.set_parameter(param, value)
     }
 
     pub fn get_ref(&self) -> &W {

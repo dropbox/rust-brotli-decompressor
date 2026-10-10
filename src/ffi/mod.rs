@@ -165,23 +165,16 @@ pub unsafe extern "C" fn BrotliDecoderSetParameter(state_ptr: *mut BrotliDecoder
   if state_ptr.is_null() {
     return 0;
   }
-  let state = &mut (*state_ptr).decompressor;
-  match &state.state {
-    &super::state::BrotliRunningState::BROTLI_STATE_UNINITED => {},
-    _ => return 0,
-  }
   // Unknown C enum values must return false, not create an invalid Rust enum
   // discriminant at the ABI boundary. Rust callers can cast the enum to i32.
-  match selector {
-    x if x == BrotliDecoderParameter::BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION as i32 => {
-      state.canny_ringbuffer_allocation = value == 0;
-    },
-    x if x == BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW as i32 => {
-      state.large_window = value != 0;
-    },
+  let param = match selector {
+    x if x == BrotliDecoderParameter::BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION as i32 =>
+      BrotliDecoderParameter::BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION,
+    x if x == BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW as i32 =>
+      BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW,
     _ => return 0,
-  }
-  1
+  };
+  if (*state_ptr).decompressor.set_parameter(param, value) {1} else {0}
 }
 
 #[no_mangle]

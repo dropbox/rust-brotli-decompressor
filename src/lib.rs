@@ -49,6 +49,7 @@ pub mod writer;
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
 pub use state::BrotliState;
 pub use state::BrotliDecoderErrorCode;
+pub use state::BrotliDecoderParameter;
 pub use shared_dictionary::BrotliSharedDictionary;
 #[cfg(feature="ffi-api")]
 pub mod ffi;
