@@ -437,10 +437,11 @@ pub fn BrotliCopyBytes(dest: &mut [u8], br: &mut BrotliBitReader, mut num: u32, 
     offset += 1;
     num -= 1;
   }
-  for index in 0..num {
-    fast_mut!((dest)[offset as usize + index as usize]) =
-      fast!((input)[br.next_in as usize + index as usize]);
-  }
+  // One bulk copy of the same bytes the per-byte loop used to copy.
+  let dest_start = offset as usize;
+  let input_start = br.next_in as usize;
+  fast_mut!((dest)[dest_start ; dest_start + num as usize])
+    .clone_from_slice(fast!((input)[input_start ; input_start + num as usize]));
   br.avail_in -= num;
   br.next_in += num;
 }
