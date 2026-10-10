@@ -176,20 +176,26 @@ fn decode_with_caller_pool(input: &[u8], output_len: usize, u8_pool_len: usize,
 }
 
 // A caller's own pool that holds the window, all this stream needed before
-// growth on demand, runs out as the ring buffer grows, since the pool cannot
-// reuse the smaller ring buffers left behind. Starting the ring buffer at the
-// whole window needs no more of the pool than before.
+// growth on demand, decodes it when the ring buffer starts from the whole
+// window, needing no more of the pool than before.
 #[test]
 fn caller_pool_that_holds_the_window_decodes_a_growing_stream_from_the_whole_window() {
   let (input, expected) = growing_stream();
   let pool_len = WINDOW + RING_BUFFER_SLACK;
   assert!(decode_with_caller_pool(&input, expected.len(), pool_len, u32::MAX).as_ref() ==
           Some(&expected));
-  // Growing from the default size, MemPool panics once it runs out.
-  let grown = std::panic::catch_unwind(|| {
-    decode_with_caller_pool(&input, expected.len(), pool_len, 0)
-  });
-  assert!(grown.map(|output| output.is_none()).unwrap_or(true));
+}
+
+// Growing the ring buffer from the default size instead, the same pool runs
+// out, since it cannot reuse the smaller ring buffers left behind, and MemPool
+// panics. This is a should_panic test rather than a catch_unwind, so that it
+// also runs with panic=abort, where the test harness runs it in its own
+// process and nothing can catch the panic.
+#[test]
+#[should_panic(expected = "OOM")]
+fn caller_pool_that_holds_the_window_runs_out_growing_from_the_default_size() {
+  let (input, expected) = growing_stream();
+  let _ = decode_with_caller_pool(&input, expected.len(), WINDOW + RING_BUFFER_SLACK, 0);
 }
 
 // Small or incompressible input, which encoders store as an uncompressed
