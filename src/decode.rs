@@ -2155,19 +2155,25 @@ fn InitializeCompoundDictionaryCopy<AllocU8: alloc::Allocator<u8>,
 
 // Copies the prepared dictionary reference into the ring buffer at `pos`,
 // stopping at the end of the ring buffer if necessary (the caller flushes
-// and re-invokes). Returns the number of bytes copied.
+// and re-invokes). An external chunk's bytes are `external`, whose size
+// BrotliDecompressStreamWithDictionary has checked. Returns the number of
+// bytes copied.
 fn CopyFromCompoundDictionary<AllocU8: alloc::Allocator<u8>,
                               AllocU32: alloc::Allocator<u32>,
                               AllocHC: alloc::Allocator<HuffmanCode>>
   (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
-   pos: i32)
+   pos: i32,
+   external: &[u8])
    -> i32 {
   let ringbuffer_size = s.ringbuffer_size as usize;
   let mut pos = pos as usize;
   let orig_pos = pos;
   let addon = &mut s.compound_dictionary;
   while addon.br_length != addon.br_copied {
-    let chunk = addon.chunks[addon.br_index].slice();
+    let chunk = match addon.chunks[addon.br_index] {
+      state::MaybeOwnedSlice::External(_) => external,
+      ref chunk => chunk.slice(),
+    };
     let space = ringbuffer_size - pos;
     let rem_chunk_length = chunk.len() - addon.br_offset;
     let mut length = addon.br_length - addon.br_copied;
@@ -2822,7 +2828,7 @@ mod tests {
     state.max_distance = 0;
     state.max_backward_distance = 0;
 
-    let result = ProcessCommandsInternal(true, &mut state, &[]);
+    let result = ProcessCommandsInternal(true, &mut state, &[], &[]);
 
     assert_eq!(result as i32,
                BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_DISTANCE as i32);
@@ -3200,7 +3206,8 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                            AllocHC: alloc::Allocator<HuffmanCode>>
   (safe: bool,
    s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
-   input: &[u8])
+   input: &[u8],
+   dictionary: &[u8])
    -> BrotliDecoderErrorCode {
   if (!CheckInputAmount(safe, &s.br, 28)) || (!WarmupBitReader(safe, &mut s.br, input)) {
     mark_unlikely();
@@ -3462,7 +3469,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                 result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_COMPOUND_DICTIONARY;
                 break; // return
               }
-              pos += CopyFromCompoundDictionary(s, pos);
+              pos += CopyFromCompoundDictionary(s, pos, dictionary);
               if pos >= s.ringbuffer_size {
                 s.state = BrotliRunningState::BROTLI_STATE_COMMAND_POST_WRITE_1;
                 break; // return
@@ -3688,18 +3695,20 @@ fn ProcessCommands<AllocU8: alloc::Allocator<u8>,
                    AllocU32: alloc::Allocator<u32>,
                    AllocHC: alloc::Allocator<HuffmanCode>>
   (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
-   input: &[u8])
+   input: &[u8],
+   dictionary: &[u8])
    -> BrotliDecoderErrorCode {
-  ProcessCommandsInternal(false, s, input)
+  ProcessCommandsInternal(false, s, input, dictionary)
 }
 
 fn SafeProcessCommands<AllocU8: alloc::Allocator<u8>,
                        AllocU32: alloc::Allocator<u32>,
                        AllocHC: alloc::Allocator<HuffmanCode>>
   (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
-   input: &[u8])
+   input: &[u8],
+   dictionary: &[u8])
    -> BrotliDecoderErrorCode {
-  ProcessCommandsInternal(true, s, input)
+  ProcessCommandsInternal(true, s, input, dictionary)
 }
 
 /* Returns the maximum number of distance symbols which can only represent
@@ -3723,10 +3732,32 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
   (available_in: &mut usize,
    input_offset: &mut usize,
    xinput: &[u8],
+   available_out: &mut usize,
+   output_offset: &mut usize,
+   output: &mut [u8],
+   total_out: &mut usize,
+   s: &mut BrotliState<AllocU8, AllocU32, AllocHC>)
+   -> BrotliResult {
+  BrotliDecompressStreamWithDictionary(available_in, input_offset, xinput,
+                                       available_out, output_offset, output,
+                                       total_out, &[], s)
+}
+
+// As BrotliDecompressStream, lending the decoder `dictionary` for this call:
+// the dictionary attached with BrotliState::attach_external_dictionary, or an
+// empty slice if there is none. Any other size fails with
+// BROTLI_DECODER_ERROR_INVALID_ARGUMENTS.
+pub fn BrotliDecompressStreamWithDictionary<AllocU8: alloc::Allocator<u8>,
+                                            AllocU32: alloc::Allocator<u32>,
+                                            AllocHC: alloc::Allocator<HuffmanCode>>
+  (available_in: &mut usize,
+   input_offset: &mut usize,
+   xinput: &[u8],
    mut available_out: &mut usize,
    mut output_offset: &mut usize,
    mut output: &mut [u8],
    mut total_out: &mut usize,
+   dictionary: &[u8],
    mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>)
    -> BrotliResult {
 
@@ -3738,6 +3769,9 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
     return BrotliResult::ResultFailure;
   }
   if !bit_reader::is_valid_input_range(*input_offset, *available_in, xinput.len()) {
+    return SaveErrorCode!(s, BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS);
+  }
+  if dictionary.len() != s.external_dictionary_len() {
     return SaveErrorCode!(s, BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS);
   }
   match output_offset.checked_add(*available_out) {
@@ -4258,9 +4292,9 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
         BrotliRunningState::BROTLI_STATE_COMMAND_INNER |
         BrotliRunningState::BROTLI_STATE_COMMAND_POST_DECODE_LITERALS |
         BrotliRunningState::BROTLI_STATE_COMMAND_POST_WRAP_COPY => {
-          result = ProcessCommands(s, local_input);
+          result = ProcessCommands(s, local_input, dictionary);
           if let BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT = result {
-            result = SafeProcessCommands(s, local_input)
+            result = SafeProcessCommands(s, local_input, dictionary)
           }
           break;
         }
@@ -4290,7 +4324,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
               if s.compound_dictionary.br_length != s.compound_dictionary.br_copied {
                 // Resume an interrupted copy from the compound dictionary.
                 let pos = s.pos;
-                let copied = CopyFromCompoundDictionary(&mut s, pos);
+                let copied = CopyFromCompoundDictionary(&mut s, pos, dictionary);
                 s.pos += copied;
                 if s.pos >= s.ringbuffer_size {
                   // Ring buffer is full again; flush it and continue copying.

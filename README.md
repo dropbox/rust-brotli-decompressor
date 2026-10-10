@@ -249,5 +249,28 @@ Both can only be set before decoding starts, and the `Decompressor` and
 variants, offer them too. `brotli_decode_prealloc` sizes the ring buffer for
 its scratch pool by itself.
 
+### With a dictionary that lives elsewhere
+
+`attach_dictionary` takes memory from the decoder's own allocator, and
+`attach_dictionary_borrowed` borrows only a `&'static [u8]`. A dictionary
+owned elsewhere, such as a buffer read at runtime and shared by many decoders,
+can instead be attached by its size alone and lent to every call, so it only
+has to outlive each call:
+
+```rust
+brotli_state.attach_external_dictionary(dictionary.len()); // before decoding
+loop {
+    result = BrotliDecompressStreamWithDictionary(&mut available_in, &mut input_offset, &input,
+                                                  &mut available_out, &mut output_offset, &mut output,
+                                                  &mut written, &dictionary, &mut brotli_state);
+    // ...
+}
+```
+
+Every call must lend a dictionary of the attached size; any other size,
+including none from `BrotliDecompressStream`, fails with
+`BROTLI_DECODER_ERROR_INVALID_ARGUMENTS`. At most one dictionary can be
+attached this way.
+
 Also feel free to use custom allocators that invoke Box directly.
 This example illustrates a mechanism to avoid subsequent syscalls after the initial allocation
