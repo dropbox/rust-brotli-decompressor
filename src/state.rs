@@ -291,6 +291,9 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   // BrotliCalculateRingBufferSize then sizes it to never need more of the pool
   // than before the ring buffer grew on demand.
   pub(crate) u8_pool_size: usize,
+  // Smallest size the ring buffer starts from, as set by
+  // set_initial_ring_buffer_size; 0 for the default.
+  pub(crate) initial_ringbuffer_size: u32,
   pub dist_rb_idx: i32,
   pub dist_rb: [i32; 4],
   pub ringbuffer: AllocU8::AllocatedMemory,
@@ -414,6 +417,7 @@ macro_rules! make_brotli_state {
             ringbuffer_mask: 0,
             new_ringbuffer_size : 0,
             u8_pool_size : 0,
+            initial_ringbuffer_size : 0,
             dist_rb_idx : 0,
             dist_rb : [16, 15, 11, 4],
             ringbuffer : AllocU8::AllocatedMemory::default(),
@@ -571,6 +575,27 @@ impl <'brotli_state,
             BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW =>
                 self.large_window = value != 0,
         }
+        true
+    }
+    // Sets the smallest ring buffer the decoder starts from, rounded up to a
+    // power of two of at least 32 bytes and capped at the stream's window,
+    // which is only known once decoding starts; 0 restores the default of
+    // 1 KiB. With u32::MAX the whole window is allocated at once and never
+    // regrown, so a u8 allocator that is a fixed pool that never merges freed
+    // blocks needs only the window from it, rather than up to twice that. If
+    // the stream's first metablock of data is its last, the ring buffer is
+    // still sized to just hold it; an uncompressed metablock is never last,
+    // so small or incompressible input, which encoders store as one
+    // uncompressed metablock and an empty last one, gets the whole window
+    // too. Disabling ring buffer reallocation with set_parameter overrides
+    // this. Allowed only before any compressed data has been processed;
+    // returns false, changing nothing, afterwards.
+    pub fn set_initial_ring_buffer_size(self : &mut Self, size: u32) -> bool {
+        match self.state {
+            BrotliRunningState::BROTLI_STATE_UNINITED => {},
+            _ => return false,
+        }
+        self.initial_ringbuffer_size = size;
         true
     }
     // Attaches a raw LZ77 prefix dictionary, the equivalent of the C API

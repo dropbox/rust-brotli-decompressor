@@ -5,7 +5,9 @@
 // process. Growing the ring buffer on demand can take up to twice the window
 // from such a pool. With the same scratch memory, these decoders must still
 // decode everything they decoded before the ring buffer grew on demand. So must
-// a caller's own pool, for a stream whose data is all in its last metablock.
+// a caller's own pool, for a stream whose data is all in its last metablock,
+// and for any stream once the caller starts the ring buffer at the whole
+// window with set_initial_ring_buffer_size.
 
 extern crate brotli_decompressor;
 #[macro_use]
@@ -142,6 +144,52 @@ fn caller_pool_decodes_a_tiny_last_metablock_as_before() {
                                       &mut total_out, &mut state);
   assert!(matches!(result, BrotliResult::ResultSuccess));
   assert_eq!(&output[..output_offset], b"hello hello hello");
+}
+
+// Decodes in one call from the caller's own pools, as the README's manual
+// memory management does, with the ring buffer starting at
+// initial_ring_buffer_size (0 for the default). None if decoding fails.
+fn decode_with_caller_pool(input: &[u8], output_len: usize, u8_pool_len: usize,
+                           initial_ring_buffer_size: u32) -> Option<Vec<u8>> {
+  let mut u8_pool = vec![0u8; u8_pool_len];
+  let mut u32_pool = vec![0u32; 4 << 10];
+  let mut hc_pool = vec![HuffmanCode::default(); 20 << 10];
+  let mut state = BrotliState::new(MemPool::<u8>::new_allocator(&mut u8_pool, bzero),
+                                   MemPool::<u32>::new_allocator(&mut u32_pool, bzero),
+                                   MemPool::<HuffmanCode>::new_allocator(&mut hc_pool, bzero));
+  assert!(state.set_initial_ring_buffer_size(initial_ring_buffer_size));
+  let mut output = vec![0u8; output_len];
+  let mut available_in = input.len();
+  let mut input_offset = 0;
+  let mut available_out = output.len();
+  let mut output_offset = 0;
+  let mut total_out = 0;
+  match BrotliDecompressStream(&mut available_in, &mut input_offset, input,
+                               &mut available_out, &mut output_offset, &mut output,
+                               &mut total_out, &mut state) {
+    BrotliResult::ResultSuccess => {
+      output.truncate(output_offset);
+      Some(output)
+    }
+    _ => None,
+  }
+}
+
+// A caller's own pool that holds the window, all this stream needed before
+// growth on demand, runs out as the ring buffer grows, since the pool cannot
+// reuse the smaller ring buffers left behind. Starting the ring buffer at the
+// whole window needs no more of the pool than before.
+#[test]
+fn caller_pool_that_holds_the_window_decodes_a_growing_stream_from_the_whole_window() {
+  let (input, expected) = growing_stream();
+  let pool_len = WINDOW + RING_BUFFER_SLACK;
+  assert!(decode_with_caller_pool(&input, expected.len(), pool_len, u32::MAX).as_ref() ==
+          Some(&expected));
+  // Growing from the default size, MemPool panics once it runs out.
+  let grown = std::panic::catch_unwind(|| {
+    decode_with_caller_pool(&input, expected.len(), pool_len, 0)
+  });
+  assert!(grown.map(|output| output.is_none()).unwrap_or(true));
 }
 
 // The no_std brotli_decode splits one buffer between the output and the u8

@@ -63,6 +63,9 @@ impl<W: Write,
     pub fn set_parameter(&mut self, param: BrotliDecoderParameter, value: u32) -> bool {
       self.0.set_parameter(param, value)
     }
+    pub fn set_initial_ring_buffer_size(&mut self, size: u32) -> bool {
+      self.0.set_initial_ring_buffer_size(size)
+    }
 
     pub fn get_ref(&self) -> &W {
         &self.0.get_ref().0
@@ -160,6 +163,13 @@ impl<W: Write> DecompressorWriter<W> {
     self.0.set_parameter(param, value)
   }
 
+  // Sets the smallest ring buffer the decoder starts from (see
+  // BrotliState::set_initial_ring_buffer_size); only allowed before the first
+  // write.
+  pub fn set_initial_ring_buffer_size(&mut self, size: u32) -> bool {
+    self.0.set_initial_ring_buffer_size(size)
+  }
+
   pub fn get_ref(&self) -> &W {
       self.0.get_ref()
   }
@@ -218,6 +228,13 @@ impl<W: Write> DecompressorWriter<W> {
   // before the first write.
   pub fn set_parameter(&mut self, param: BrotliDecoderParameter, value: u32) -> bool {
     self.0.set_parameter(param, value)
+  }
+
+  // Sets the smallest ring buffer the decoder starts from (see
+  // BrotliState::set_initial_ring_buffer_size); only allowed before the first
+  // write.
+  pub fn set_initial_ring_buffer_size(&mut self, size: u32) -> bool {
+    self.0.set_initial_ring_buffer_size(size)
   }
 
   pub fn get_ref(&self) -> &W {
@@ -354,6 +371,13 @@ impl<ErrType,
     // allowed before the first write.
     pub fn set_parameter(&mut self, param: BrotliDecoderParameter, value: u32) -> bool {
       self.state.set_parameter(param, value)
+    }
+
+    // Sets the smallest ring buffer the decoder starts from (see
+    // BrotliState::set_initial_ring_buffer_size); only allowed before the
+    // first write.
+    pub fn set_initial_ring_buffer_size(&mut self, size: u32) -> bool {
+      self.state.set_initial_ring_buffer_size(size)
     }
 
     pub fn get_ref(&self) -> &W {

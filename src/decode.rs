@@ -1928,6 +1928,11 @@ const kSmallRingBufferMinSize: i64 = 32;
 // gets it at once for any metablock but the last one, as it always did, and
 // otherwise the ring buffer grows from 32 bytes.
 //
+// A caller can raise the size the ring buffer starts from with
+// set_initial_ring_buffer_size; u32::MAX allocates the whole window at once.
+// A last metablock is still sized to fit, as the ring buffer never grows
+// after it.
+//
 // This only computes new_ringbuffer_size: BrotliEnsureRingBuffer (re)allocates
 // once the metablock is about to write to the ring buffer.
 //
@@ -1945,7 +1950,13 @@ fn BrotliCalculateRingBufferSize<AllocU8: alloc::Allocator<u8>,
   // bytes for context from there
   let mut min_size = if s.ringbuffer_size != 0 {
     s.ringbuffer_size as i64
-  } else if fixed_pool || s.is_last_metablock != 0 {
+  } else if s.is_last_metablock != 0 {
+    kSmallRingBufferMinSize
+  } else if s.initial_ringbuffer_size != 0 {
+    // Rounded up to a power of two, and capped at the window, by the loop
+    // below.
+    core::cmp::max(s.initial_ringbuffer_size as i64, kSmallRingBufferMinSize)
+  } else if fixed_pool {
     kSmallRingBufferMinSize
   } else {
     kRingBufferMinSize
@@ -2556,6 +2567,58 @@ mod tests {
     }
     assert!(!s.canny_ringbuffer_allocation);
     assert_eq!(s.large_window, large_window);
+  }
+
+  #[test]
+  fn initial_ring_buffer_size_sets_the_first_ring_buffer() {
+    let first_size = |initial: u32, mlen: i32, is_last: bool| {
+      let mut s = counting_state(22);
+      assert!(s.set_initial_ring_buffer_size(initial));
+      s.is_last_metablock = is_last as u8;
+      assert_success(start_metablock(&mut s, mlen));
+      s.ringbuffer_size
+    };
+    assert_eq!(first_size(0, 10, false), 1024);
+    // Rounded up to a power of two of at least 32 bytes...
+    assert_eq!(first_size(4096, 10, false), 4096);
+    assert_eq!(first_size(5000, 10, false), 8192);
+    assert_eq!(first_size(1, 10, false), 32);
+    // ...that still holds the metablock...
+    assert_eq!(first_size(4096, 5000, false), 8192);
+    // ...and is no larger than the window.
+    assert_eq!(first_size(u32::MAX, 10, false), 1 << 22);
+    // A last metablock is sized to fit, as the ring buffer never grows after it.
+    assert_eq!(first_size(u32::MAX, 10, true), 32);
+    // Disabling reallocation still allocates the whole window.
+    let mut s = counting_state(22);
+    assert!(s.set_initial_ring_buffer_size(4096));
+    s.canny_ringbuffer_allocation = false;
+    assert_success(start_metablock(&mut s, 10));
+    assert_eq!(s.ringbuffer_size, 1 << 22);
+  }
+
+  #[test]
+  fn initial_ring_buffer_size_is_only_set_before_decoding() {
+    let (input, expected) = uncompressed_stream(&[10, 1000, 1500, 3000, 30000, 40000, 5000]);
+    let mut s = counting_state(0);
+    assert!(s.set_initial_ring_buffer_size(4096));
+    assert!(s.set_initial_ring_buffer_size(u32::MAX));
+    // One byte starts decoding the stream header, before any ring buffer...
+    let (mut available_in, mut input_offset) = (1, 0);
+    let (mut available_out, mut output_offset, mut total_out) = (0, 0, 0);
+    match BrotliDecompressStream(&mut available_in, &mut input_offset, &input,
+                                 &mut available_out, &mut output_offset, &mut [],
+                                 &mut total_out, &mut s) {
+      BrotliResult::NeedsMoreInput => {}
+      _ => panic!("expected NeedsMoreInput"),
+    }
+    assert!(s.alloc_u8.requests.is_empty());
+    // ...after which the size no longer changes.
+    assert!(!s.set_initial_ring_buffer_size(0));
+    assert!(decode_in_chunks(&mut s, &input[1..], 333, 777) == expected);
+    // The whole window at once, where by default this stream grows to it in
+    // four allocations (see ring_buffer_grows_across_metablocks_then_wraps).
+    assert_eq!(s.alloc_u8.requests, [65536 + kRingBufferAllocationSlack]);
   }
 
   #[test]
