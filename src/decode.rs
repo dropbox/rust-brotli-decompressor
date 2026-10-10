@@ -3221,9 +3221,12 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                        HuffmanTreeGroup::<AllocU32, AllocHC>::default());
   {
 
-    let literal_hgroup = saved_literal_hgroup.build_hgroup_cache();
-    let distance_hgroup = saved_distance_hgroup.build_hgroup_cache();
-    let insert_copy_hgroup = saved_insert_copy_hgroup.build_hgroup_cache();
+    let mut literal_hgroup: [&[HuffmanCode]; 256] = [&[]; 256];
+    let mut distance_hgroup: [&[HuffmanCode]; 256] = [&[]; 256];
+    let mut insert_copy_hgroup: [&[HuffmanCode]; 256] = [&[]; 256];
+    saved_literal_hgroup.fill_hgroup_cache(&mut literal_hgroup);
+    saved_distance_hgroup.fill_hgroup_cache(&mut distance_hgroup);
+    saved_insert_copy_hgroup.fill_hgroup_cache(&mut insert_copy_hgroup);
 
     loop {
       match s.state {
