@@ -403,7 +403,6 @@ pub fn BrotliJumpToByteBoundary(br: &mut BrotliBitReader) -> bool {
 // Peeks a byte at specified offset.
 // Precondition: bit reader is parked to a byte boundary.
 // Returns -1 if operation is not feasible.
-#[allow(dead_code)]
 pub fn BrotliPeekByte(br: &mut BrotliBitReader, mut offset: u32, input: &[u8]) -> i32 {
   if !is_valid_bit_reader(br, input) {
     return -1;

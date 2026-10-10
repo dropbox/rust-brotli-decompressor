@@ -192,6 +192,19 @@ fn caller_pool_that_holds_the_window_decodes_a_growing_stream_from_the_whole_win
   assert!(grown.map(|output| output.is_none()).unwrap_or(true));
 }
 
+// Small or incompressible input, which encoders store as an uncompressed
+// metablock and an empty last one, needs no more of a caller's own pool than
+// before growth on demand: here a 32-byte ring buffer rather than 1 KiB, or
+// the whole 4 MiB window when the ring buffer starts from the whole window.
+#[test]
+fn caller_pool_decodes_a_tiny_uncompressed_stream_as_before() {
+  for &initial_ring_buffer_size in &[0, u32::MAX] {
+    let output = decode_with_caller_pool(&X_COMPRESSED, 1, 32 + RING_BUFFER_SLACK,
+                                         initial_ring_buffer_size);
+    assert!(output.as_ref().map(|output| &output[..]) == Some(&b"X"[..]));
+  }
+}
+
 // The no_std brotli_decode splits one buffer between the output and the u8
 // pool. Each buffer size here is one that decoded before growth on demand but
 // leaves the pool too small for growing on demand.

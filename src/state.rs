@@ -584,12 +584,12 @@ impl <'brotli_state,
     // regrown, so a u8 allocator that is a fixed pool that never merges freed
     // blocks needs only the window from it, rather than up to twice that. If
     // the stream's first metablock of data is its last, the ring buffer is
-    // still sized to just hold it; an uncompressed metablock is never last,
-    // so small or incompressible input, which encoders store as one
-    // uncompressed metablock and an empty last one, gets the whole window
-    // too. Disabling ring buffer reallocation with set_parameter overrides
-    // this. Allowed only before any compressed data has been processed;
-    // returns false, changing nothing, afterwards.
+    // still sized to just hold it, as it is for small or incompressible
+    // input, which encoders store as one uncompressed metablock and an
+    // empty last one, when that empty metablock is already in the input as
+    // the uncompressed one starts. Disabling ring buffer reallocation with
+    // set_parameter overrides this. Allowed only before any compressed data
+    // has been processed; returns false, changing nothing, afterwards.
     pub fn set_initial_ring_buffer_size(self : &mut Self, size: u32) -> bool {
         match self.state {
             BrotliRunningState::BROTLI_STATE_UNINITED => {},

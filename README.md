@@ -234,15 +234,16 @@ so growing the ring buffer to the window can take up to twice the window
 from it, and the pool panics when it runs out. Calling
 `set_initial_ring_buffer_size(u32::MAX)` before decoding allocates the whole
 window at once instead, so the pool needs only the window plus 566 bytes for
-the ring buffer. Only a stream whose data is all in a compressed last
-metablock still gets a ring buffer of just its size; encoders store small or
-incompressible input as an uncompressed metablock and an empty last one,
-which gets the whole window. Other values set the smallest ring buffer to
-start from, rounded up to a power of two. The C API's
+the ring buffer. A stream whose data is all in its last metablock still gets
+a ring buffer of just its size, as does small or incompressible input, which
+encoders store as an uncompressed metablock and an empty last one, when that
+empty metablock is already in the input as the uncompressed one starts.
+Other values set the smallest ring buffer to start from, rounded up to a
+power of two. The C API's
 `BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION`, set with
 `set_parameter(BrotliDecoderParameter::BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION, 1)`,
-always allocates the whole window, even for such a last metablock, and
-overrides `set_initial_ring_buffer_size`.
+always allocates the whole window, even for such streams, and overrides
+`set_initial_ring_buffer_size`.
 Both can only be set before decoding starts, and the `Decompressor` and
 `DecompressorWriter` wrappers, including their custom allocator and I/O
 variants, offer them too. `brotli_decode_prealloc` sizes the ring buffer for

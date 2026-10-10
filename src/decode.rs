@@ -1908,8 +1908,8 @@ const kRingBufferMinSize: i64 = 1024;
 // buffer never grows, so the C decoder's larger minimum would buy nothing: the
 // 32 bytes this decoder used for a stream of one short metablock before growth
 // on demand. A fixed u8 pool (see u8_pool_size) starts every ring buffer this
-// small, which also covers the short uncompressed metablock followed by an
-// empty last one that this decoder used to detect and size the same way.
+// small, which also covers a short uncompressed metablock followed by an empty
+// last one when BrotliCalculateRingBufferSize cannot see that last one yet.
 const kSmallRingBufferMinSize: i64 = 32;
 
 // Calculates the smallest feasible ring buffer; a port of the C decoder's
@@ -1933,6 +1933,13 @@ const kSmallRingBufferMinSize: i64 = 32;
 // A last metablock is still sized to fit, as the ring buffer never grows
 // after it.
 //
+// An uncompressed metablock is never the last one, but encoders store small or
+// incompressible input as one followed by an empty last metablock. So, as this
+// decoder did before growth on demand, the first ring buffer for an
+// uncompressed metablock is sized as for a last one when the header after its
+// data, peeked from `input`, is an empty last metablock. If that header is not
+// in `input` yet, the metablock is sized as one that is not last.
+//
 // This only computes new_ringbuffer_size: BrotliEnsureRingBuffer (re)allocates
 // once the metablock is about to write to the ring buffer.
 //
@@ -1940,17 +1947,29 @@ const kSmallRingBufferMinSize: i64 = 32;
 fn BrotliCalculateRingBufferSize<AllocU8: alloc::Allocator<u8>,
                                  AllocU32: alloc::Allocator<u32>,
                                  AllocHC: alloc::Allocator<HuffmanCode>>
-  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>) {
+  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   input: &[u8]) {
   // window_bits is 10..=24, or 10..=30 for large-window streams. The sizes are
   // computed as i64, and the shift masked, so no state can overflow them.
   let window_size = 1i64 << (s.window_bits & 63);
   let mut new_ringbuffer_size = window_size;
   let fixed_pool = s.u8_pool_size != 0;
+  // Whether no data follows this metablock.
+  let mut is_last = s.is_last_metablock != 0;
+  if s.is_uncompressed != 0 && s.ringbuffer.slice().len() == 0 {
+    let next_block_header =
+      bit_reader::BrotliPeekByte(&mut s.br, s.meta_block_remaining_len as u32, input);
+    // -1 if the header is not in the input yet; else ISLAST and ISLASTEMPTY
+    // are its two low bits.
+    if next_block_header != -1 && (next_block_header & 3) == 3 {
+      is_last = true;
+    }
+  }
   // We need at least 2 bytes of ring buffer size to get the last two
   // bytes for context from there
   let mut min_size = if s.ringbuffer_size != 0 {
     s.ringbuffer_size as i64
-  } else if s.is_last_metablock != 0 {
+  } else if is_last {
     kSmallRingBufferMinSize
   } else if s.initial_ringbuffer_size != 0 {
     // Rounded up to a power of two, and capped at the window, by the loop
@@ -1988,7 +2007,7 @@ fn BrotliCalculateRingBufferSize<AllocU8: alloc::Allocator<u8>,
   // taken in u64, which cannot overflow: window_size as u64 is at most 2^63.
   let pool_holds_window = fixed_pool &&
     s.u8_pool_size as u64 >= window_size as u64 + kRingBufferAllocationSlack as u64;
-  if s.canny_ringbuffer_allocation && !(pool_holds_window && s.is_last_metablock == 0) {
+  if s.canny_ringbuffer_allocation && !(pool_holds_window && !is_last) {
     // Reduce ring buffer size to save memory when server is unscrupulous.
     // In worst case memory usage might be 1.5x bigger for a short period of
     // ring buffer reallocation. A min_size of at least 1 keeps the loop
@@ -2235,7 +2254,7 @@ mod tests {
   // ring buffer at the header, then allocate before writing to it.
   fn start_metablock(s: &mut CountingState, mlen: i32) -> BrotliDecoderErrorCode {
     s.meta_block_remaining_len = mlen;
-    BrotliCalculateRingBufferSize(s);
+    BrotliCalculateRingBufferSize(s, &[]);
     BrotliEnsureRingBuffer(s, BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2)
   }
 
@@ -2341,7 +2360,7 @@ mod tests {
     let mut s = counting_state(22);
     s.is_metadata = 1;
     s.meta_block_remaining_len = 100;
-    BrotliCalculateRingBufferSize(&mut s);
+    BrotliCalculateRingBufferSize(&mut s, &[]);
     assert_eq!(s.new_ringbuffer_size, 0);
     assert!(s.alloc_u8.requests.is_empty());
   }
@@ -2619,6 +2638,30 @@ mod tests {
     // The whole window at once, where by default this stream grows to it in
     // four allocations (see ring_buffer_grows_across_metablocks_then_wraps).
     assert_eq!(s.alloc_u8.requests, [65536 + kRingBufferAllocationSlack]);
+  }
+
+  // Encoders store small or incompressible input as an uncompressed metablock
+  // and an empty last one. When the decoder can see the empty one, it sizes the
+  // ring buffer for the uncompressed one as for a last metablock.
+  #[test]
+  fn uncompressed_metablock_before_an_empty_last_one_is_sized_to_fit() {
+    let (input, expected) = uncompressed_stream(&[10]);
+    let requests = |initial: u32, canny: bool, in_chunk: usize| {
+      let mut s = counting_state(0);
+      assert!(s.set_initial_ring_buffer_size(initial));
+      s.canny_ringbuffer_allocation = canny;
+      assert!(decode_in_chunks(&mut s, &input, in_chunk, usize::MAX) == expected);
+      s.alloc_u8.requests.clone()
+    };
+    let slack = kRingBufferAllocationSlack;
+    // With the empty last metablock in the input, whatever the initial size...
+    assert_eq!(requests(0, true, usize::MAX), [32 + slack]);
+    assert_eq!(requests(u32::MAX, true, usize::MAX), [32 + slack]);
+    // ...though disabling reallocation still takes the whole window.
+    assert_eq!(requests(0, false, usize::MAX), [65536 + slack]);
+    // One byte at a time, the uncompressed metablock is sized as not last.
+    assert_eq!(requests(0, true, 1), [1024 + slack]);
+    assert_eq!(requests(u32::MAX, true, 1), [65536 + slack]);
   }
 
   #[test]
@@ -3917,7 +3960,7 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
             s.state = BrotliRunningState::BROTLI_STATE_METABLOCK_DONE;
             break;
           }
-          BrotliCalculateRingBufferSize(s);
+          BrotliCalculateRingBufferSize(s, local_input);
           if s.is_uncompressed != 0 {
             s.state = BrotliRunningState::BROTLI_STATE_UNCOMPRESSED;
             break;
