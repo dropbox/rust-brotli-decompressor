@@ -18,12 +18,17 @@ pub const BROTLI_HUFFMAN_MAX_CODE_LENGTHS_SIZE: usize = 704;
 // 256, 402, 436, 468, 500, 534, 566, 598, 630, 662, 694, 726, 758, 790, 822,
 // 854, 886, 920, 952, 984, 1016, 1048, 1080, 1112, 1144,1176,1208,1240,272,
 // 1304, 1336, 1368, 1400, 1432, 1464, 1496, 1528];
-// pub const BROTLI_HUFFMAN_MAX_SIZE_26 : u32 = 396;
-// pub const BROTLI_HUFFMAN_MAX_SIZE_258 : u32 = 632;
-// pub const BROTLI_HUFFMAN_MAX_SIZE_272 : u32 = 646;
 //
 pub const BROTLI_HUFFMAN_MAX_TABLE_SIZE: u32 = 1080;
 pub const BROTLI_HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH: u32 = 5;
+
+// Largest table (root table plus second-level tables) for a complete prefix
+// code over at most N symbols, with root bits 8 and code lengths up to 15, as
+// in c/dec/huffman.h. Block type codes have up to 258 symbols, block length
+// codes 26 and context map codes 272.
+pub const BROTLI_HUFFMAN_MAX_SIZE_26: u32 = 396;
+pub const BROTLI_HUFFMAN_MAX_SIZE_258: u32 = 632;
+pub const BROTLI_HUFFMAN_MAX_SIZE_272: u32 = 646;
 
 #[repr(C)]
 #[derive(PartialEq, Copy, Clone, Debug)]

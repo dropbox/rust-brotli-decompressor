@@ -63,7 +63,8 @@ impl<AllocHC: Allocator<HuffmanCode>> Allocator<HuffmanCode>
   type AllocatedMemory = AllocHC::AllocatedMemory;
 
   fn alloc_cell(&mut self, len: usize) -> Self::AllocatedMemory {
-    if len == 3 * super::huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize {
+    if len == 3 * super::huffman::BROTLI_HUFFMAN_MAX_SIZE_258 as usize ||
+       len == 3 * super::huffman::BROTLI_HUFFMAN_MAX_SIZE_26 as usize {
       self.block_tree_allocations += 1;
       if self.block_tree_allocations == 2 {
         return Self::AllocatedMemory::default();
@@ -147,7 +148,10 @@ fn decode_in_chunks(input: &[u8],
 
 #[test]
 fn test_block_len_trees_allocation_failure() {
-  let input = [0x06u8];
+  // testdata/fuzz502.compressed: its first metablock has several block types,
+  // which is when the block type and length trees are allocated.
+  let input = [0xe2u8, 0xe1, 0x84, 0x88, 0x6a, 0x56, 0x30, 0x80, 0xe0, 0x39, 0x16, 0x03,
+               0xe4, 0x30, 0xf9];
   let mut output = [0u8; 1];
   let mut stack_u8_buffer = define_allocator_memory_pool!(4096, u8, [0; 16 * 1024], stack);
   let mut stack_u32_buffer = define_allocator_memory_pool!(4096, u32, [0; 4 * 1024], stack);
@@ -184,6 +188,125 @@ fn test_block_len_trees_allocation_failure() {
     super::state::BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES => {}
     _ => panic!("unexpected decoder error after block_len_trees allocation failure"),
   }
+}
+
+#[test]
+fn test_stream_without_block_switches_needs_no_block_trees() {
+  // An empty stream decodes even if the block tree allocations would fail.
+  let input = [0x06u8];
+  let mut output = [0u8; 1];
+  let mut stack_u8_buffer = define_allocator_memory_pool!(4096, u8, [0; 16 * 1024], stack);
+  let mut stack_u32_buffer = define_allocator_memory_pool!(4096, u32, [0; 4 * 1024], stack);
+  let mut stack_hc_buffer = define_allocator_memory_pool!(4096,
+                                                          HuffmanCode,
+                                                          [HuffmanCode::default(); 20 * 1024],
+                                                          stack);
+  let stack_u8_allocator = MemPool::<u8>::new_allocator(&mut stack_u8_buffer, bzero);
+  let stack_u32_allocator = MemPool::<u32>::new_allocator(&mut stack_u32_buffer, bzero);
+  let stack_hc_allocator =
+    FailSecondBlockTreeAllocation::new(MemPool::<HuffmanCode>::new_allocator(&mut stack_hc_buffer,
+                                                                             bzero));
+  let mut state = BrotliState::new(stack_u8_allocator, stack_u32_allocator, stack_hc_allocator);
+  let mut available_in = input.len();
+  let mut input_offset = 0;
+  let mut available_out = output.len();
+  let mut output_offset = 0;
+  let mut total_out = 0;
+  match BrotliDecompressStream(&mut available_in, &mut input_offset, &input,
+                               &mut available_out, &mut output_offset, &mut output,
+                               &mut total_out, &mut state) {
+    BrotliResult::ResultSuccess => {}
+    _ => panic!("an empty stream must decode without the block trees"),
+  }
+  assert_eq!(state.alloc_hc.block_tree_allocations, 0);
+}
+
+// Records whether the block trees are allocated after a HuffmanCode allocation
+// has been freed, as the tree groups are at the end of each metablock.
+#[cfg(feature="std")]
+struct BlockTreesAfterFree<AllocHC> {
+  alloc: AllocHC,
+  freed: bool,
+  block_trees: usize,
+  block_trees_after_free: bool,
+}
+
+#[cfg(feature="std")]
+impl<AllocHC: Allocator<HuffmanCode>> Allocator<HuffmanCode> for BlockTreesAfterFree<AllocHC> {
+  type AllocatedMemory = AllocHC::AllocatedMemory;
+
+  fn alloc_cell(&mut self, len: usize) -> Self::AllocatedMemory {
+    if len == 3 * super::huffman::BROTLI_HUFFMAN_MAX_SIZE_258 as usize ||
+       len == 3 * super::huffman::BROTLI_HUFFMAN_MAX_SIZE_26 as usize {
+      self.block_trees += 1;
+      self.block_trees_after_free |= self.freed;
+    }
+    self.alloc.alloc_cell(len)
+  }
+
+  fn free_cell(&mut self, data: Self::AllocatedMemory) {
+    self.freed |= data.slice().len() != 0;
+    self.alloc.free_cell(data);
+  }
+}
+
+// The C encoder at quality 5, window 16, given the first 300 bytes of
+// alice29.txt, a flush, then the next 8000: the flushed first metablock has no
+// block switches, the second has, so the block trees are first needed after
+// the first tree groups are freed.
+#[test]
+#[cfg(feature="std")]
+fn test_block_switches_after_a_flushed_metablock() {
+  let mut input = include_bytes!("../testdata/flushed_then_block_switches.compressed").to_vec();
+  let expected = &include_bytes!("../testdata/alice29.txt")[..8300];
+  let mut output = vec![0u8; expected.len() + 1];
+  let (result, _, written) = oneshot_std(&mut input, &mut output);
+  match result {
+    BrotliResult::ResultSuccess => {}
+    _ => panic!("decoding failed"),
+  }
+  assert_eq!(&output[..written], expected);
+}
+
+// The block trees are allocated only when first needed, but never after a
+// tree group has been freed: in a pool allocator that never merges what it
+// gets back, they then cannot take a gap that a later tree group would have
+// reused, so the pool never needs more than when they were allocated first.
+#[test]
+#[cfg(feature="std")]
+fn test_block_trees_are_never_allocated_after_a_free() {
+  let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata");
+  let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path())
+    .filter(|p| p.extension().map_or(false, |e| e == "compressed")).collect();
+  paths.sort();
+  let (mut with_trees, mut without_trees) = (0, 0);
+  for path in paths {
+    let input = std::fs::read(&path).unwrap();
+    let mut state = BrotliState::new(super::StandardAlloc::default(),
+                                     super::StandardAlloc::default(),
+                                     BlockTreesAfterFree { alloc: super::StandardAlloc::default(),
+                                                           freed: false,
+                                                           block_trees: 0,
+                                                           block_trees_after_free: false });
+    let mut available_in = input.len();
+    let mut input_offset = 0;
+    let mut total_out = 0;
+    let mut output = [0u8; 65536];
+    loop {
+      let mut available_out = output.len();
+      let mut output_offset = 0;
+      match BrotliDecompressStream(&mut available_in, &mut input_offset, &input,
+                                   &mut available_out, &mut output_offset, &mut output,
+                                   &mut total_out, &mut state) {
+        BrotliResult::NeedsMoreOutput => {}
+        _ => break,
+      }
+    }
+    assert!(!state.alloc_hc.block_trees_after_free, "{}", path.display());
+    if state.alloc_hc.block_trees != 0 { with_trees += 1 } else { without_trees += 1 }
+  }
+  // Guard against the corpus not covering both cases.
+  assert!(with_trees >= 5 && without_trees >= 5, "{} {}", with_trees, without_trees);
 }
 
 #[test]
