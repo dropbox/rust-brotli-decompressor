@@ -717,6 +717,26 @@ pub const kTransforms: [Transform; kNumTransforms as usize] = [Transform {
 
 
 
+// Copies src to dst, which are equally long. Dictionary words are mostly 4 to
+// 16 bytes, too short for a memcpy call to pay off: two overlapping copies of
+// their first and last 4 or 8 bytes cover them. Other lengths are rare.
+#[inline(always)]
+pub(crate) fn copy_bytes(dst: &mut [u8], src: &[u8]) {
+  let n = src.len();
+  let dst = &mut dst[..n];
+  match n {
+    4..=7 => {
+      dst[..4].copy_from_slice(&src[..4]);
+      dst[n - 4..].copy_from_slice(&src[n - 4..]);
+    }
+    8..=16 => {
+      dst[..8].copy_from_slice(&src[..8]);
+      dst[n - 8..].copy_from_slice(&src[n - 8..]);
+    }
+    _ => dst.copy_from_slice(src),
+  }
+}
+
 pub(crate) fn ToUpperCase(p: &mut [u8]) -> i32 {
   if (fast!((p)[0]) < 0xc0) {
     if (fast!((p)[0]) >= b'a' && fast!((p)[0]) <= b'z') {
@@ -755,7 +775,6 @@ pub fn TransformDictionaryWord(dst: &mut [u8],
     } else {
       t as i32 - (kOmitFirst1 - 1) as i32
     };
-    let mut i: i32 = 0;
     if (skip > len) {
       skip = len;
     }
@@ -764,10 +783,10 @@ pub fn TransformDictionaryWord(dst: &mut [u8],
     if (t <= kOmitLast9) {
       len -= t as i32;
     }
-    while (i < len) {
-      fast_mut!((dst)[idx as usize]) = fast!((word)[i as usize]);
-      idx += 1;
-      i += 1;
+    if len > 0 {
+      let start = idx as usize;
+      copy_bytes(fast_mut!((dst)[start ; start + len as usize]), fast!((word)[0 ; len as usize]));
+      idx += len;
     }
     let uppercase = &mut fast_mut!((dst)[(idx - len) as usize ;]);
     if (t == kUppercaseFirst) {
@@ -791,5 +810,88 @@ pub fn TransformDictionaryWord(dst: &mut [u8],
       i += 1;
     }
     idx
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{copy_bytes, kNumTransforms, kPrefixSuffix, kTransforms, kOmitFirst1, kOmitLast9,
+              kUppercaseAll, kUppercaseFirst, ToUpperCase, TransformDictionaryWord};
+
+  // TransformDictionaryWord as it was written before it copied whole slices:
+  // byte by byte, scanning the prefix and the suffix for their terminators.
+  fn reference(dst: &mut [u8], mut word: &[u8], mut len: i32, transform: i32) -> i32 {
+    let mut idx: i32 = 0;
+    let prefix = &kPrefixSuffix[kTransforms[transform as usize].prefix_id as usize..];
+    while prefix[idx as usize] != 0 {
+      dst[idx as usize] = prefix[idx as usize];
+      idx += 1;
+    }
+    let t = kTransforms[transform as usize].transform;
+    let mut skip: i32 = if t < kOmitFirst1 { 0 } else { t as i32 - (kOmitFirst1 - 1) as i32 };
+    let mut i: i32 = 0;
+    if skip > len {
+      skip = len;
+    }
+    word = &word[skip as usize..];
+    len -= skip;
+    if t <= kOmitLast9 {
+      len -= t as i32;
+    }
+    while i < len {
+      dst[idx as usize] = word[i as usize];
+      idx += 1;
+      i += 1;
+    }
+    let uppercase = &mut dst[(idx - len) as usize..];
+    if t == kUppercaseFirst {
+      ToUpperCase(uppercase);
+    } else if t == kUppercaseAll {
+      let mut uppercase_offset: usize = 0;
+      while len > 0 {
+        let step = ToUpperCase(&mut uppercase[uppercase_offset..]);
+        uppercase_offset += step as usize;
+        len -= step;
+      }
+    }
+    let suffix = &kPrefixSuffix[kTransforms[transform as usize].suffix_id as usize..];
+    let mut i: usize = 0;
+    while suffix[i] != 0 {
+      dst[idx as usize] = suffix[i];
+      idx += 1;
+      i += 1;
+    }
+    idx
+  }
+
+  #[test]
+  fn transforms_match_the_byte_by_byte_reference() {
+    // ASCII, two- and three-byte UTF-8 lead bytes, so that every uppercase
+    // branch runs.
+    let source: [u8; 24] = [b'w', 0xc3, 0xa9, b'r', b'd', 0xe2, 0x82, 0xac, b'a', b'b', b'c',
+                            b'D', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l', b'm', b'n',
+                            b'o', b'p'];
+    for transform in 0..kNumTransforms {
+      for len in 0..=source.len() {
+        let word = &source[..len];
+        let mut expected = [0x5au8; 64];
+        let mut actual = [0x5au8; 64];
+        let expected_len = reference(&mut expected, word, len as i32, transform);
+        let actual_len = TransformDictionaryWord(&mut actual, word, len as i32, transform);
+        assert_eq!(actual_len, expected_len, "transform {} len {}", transform, len);
+        assert_eq!(&actual[..], &expected[..], "transform {} len {}", transform, len);
+      }
+    }
+  }
+
+  #[test]
+  fn copy_bytes_copies_every_length() {
+    let source: [u8; 40] = core::array::from_fn(|i| (i * 7 + 1) as u8);
+    for len in 0..=source.len() {
+      let mut dst = [0u8; 48];
+      copy_bytes(&mut dst[3..3 + len], &source[..len]);
+      assert_eq!(&dst[3..3 + len], &source[..len]);
+      assert!(dst[..3].iter().chain(dst[3 + len..].iter()).all(|b| *b == 0));
+    }
   }
 }
