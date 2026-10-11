@@ -2945,18 +2945,18 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
   (safe: bool,
    s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    input: &[u8],
-   distance_hgroup: &[&[HuffmanCode]; 256])
+   distance_tree: &[HuffmanCode])
    -> bool {
   let mut distval: i32;
   let mut memento = bit_reader::BrotliBitReaderState::default();
   if (!safe) {
-    s.distance_code = ReadSymbol(fast!((distance_hgroup)[s.dist_htree_index as usize]),
+    s.distance_code = ReadSymbol(distance_tree,
                                  &mut s.br,
                                  input) as i32;
   } else {
     let mut code: u32 = 0;
     memento = bit_reader::BrotliBitReaderSaveState(&s.br);
-    if !SafeReadSymbol(fast!((distance_hgroup)[s.dist_htree_index as usize]),
+    if !SafeReadSymbol(distance_tree,
                        &mut s.br,
                        &mut code,
                        input) {
@@ -3014,7 +3014,7 @@ pub fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
    s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    insert_length: &mut i32,
    input: &[u8],
-   insert_copy_hgroup: &[&[HuffmanCode]; 256])
+   insert_copy_tree: &[HuffmanCode])
    -> bool {
   let mut cmd_code: u32 = 0;
   let mut insert_len_extra: u32 = 0;
@@ -3022,12 +3022,12 @@ pub fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
   let v: prefix::CmdLutElement;
   let mut memento = bit_reader::BrotliBitReaderState::default();
   if (!safe) {
-    cmd_code = ReadSymbol(fast!((insert_copy_hgroup)[s.htree_command_index as usize]),
+    cmd_code = ReadSymbol(insert_copy_tree,
                           &mut s.br,
                           input);
   } else {
     memento = bit_reader::BrotliBitReaderSaveState(&s.br);
-    if (!SafeReadSymbol(fast!((insert_copy_hgroup)[s.htree_command_index as usize]),
+    if (!SafeReadSymbol(insert_copy_tree,
                         &mut s.br,
                         &mut cmd_code,
                         input)) {
@@ -3242,6 +3242,36 @@ pub fn BrotliDecoderGetErrorCode<AllocU8: alloc::Allocator<u8>,
   s.error_code
 }
 
+// The tree with the given index in a Huffman tree group, as
+// HuffmanTreeGroup::build_hgroup_cache lists them; empty if there is none.
+#[inline(always)]
+fn huffman_tree<AllocU32: alloc::Allocator<u32>, AllocHC: alloc::Allocator<HuffmanCode>>(
+  group: &HuffmanTreeGroup<AllocU32, AllocHC>,
+  index: usize,
+) -> &[HuffmanCode] {
+  match group.htrees.slice().get(index) {
+    Some(offset) => group.codes.slice().get(*offset as usize..).unwrap_or(&[]),
+    None => &[],
+  }
+}
+
+// Fills trees[context] with the literal tree of each of the 64 contexts of the
+// literal block type whose context map starts at context_map[slice_index].
+#[inline(never)]
+fn fill_context_trees<'a, AllocU32: alloc::Allocator<u32>, AllocHC: alloc::Allocator<HuffmanCode>>(
+  trees: &mut [&'a [HuffmanCode]; 64],
+  group: &'a HuffmanTreeGroup<AllocU32, AllocHC>,
+  context_map: &[u8],
+  slice_index: usize,
+) {
+  match context_map.get(slice_index..).and_then(|map| map.get(..64)) {
+    Some(map) => for (tree, index) in trees.iter_mut().zip(map.iter()) {
+      *tree = huffman_tree(group, *index as usize);
+    },
+    None => *trees = [&[]; 64],
+  }
+}
+
 #[inline(always)]
 fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                            AllocU32: alloc::Allocator<u32>,
@@ -3270,12 +3300,25 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                        HuffmanTreeGroup::<AllocU32, AllocHC>::default());
   {
 
-    let mut literal_hgroup: [&[HuffmanCode]; 256] = [&[]; 256];
-    let mut distance_hgroup: [&[HuffmanCode]; 256] = [&[]; 256];
-    let mut insert_copy_hgroup: [&[HuffmanCode]; 256] = [&[]; 256];
-    saved_literal_hgroup.fill_hgroup_cache(&mut literal_hgroup);
-    saved_distance_hgroup.fill_hgroup_cache(&mut distance_hgroup);
-    saved_insert_copy_hgroup.fill_hgroup_cache(&mut insert_copy_hgroup);
+    // Trees are looked up when the tree to use can change, rather than through
+    // tables of all of each group's trees, which took 12 KiB of stores to set
+    // up every time decoding resumed here: the command tree at command block
+    // switches, the distance tree when a distance needs another one than the
+    // previous distance, and, for literals whose tree depends on their
+    // context, the trees of all 64 contexts of the literal block type when
+    // the block type changes. The safe variant, which decodes the last few
+    // bytes of input each time, looks each such literal's tree up instead.
+    let literal_hgroup = &saved_literal_hgroup;
+    let distance_hgroup = &saved_distance_hgroup;
+    let insert_copy_hgroup = &saved_insert_copy_hgroup;
+    let mut insert_copy_tree = huffman_tree(insert_copy_hgroup, s.htree_command_index as usize);
+    let mut context_trees: [&[HuffmanCode]; 64] = [&[]; 64];
+    // The tree for s.dist_htree_index, which most distances share with the
+    // previous one.
+    let mut distance_tree_index = s.dist_htree_index;
+    let mut distance_tree = huffman_tree(distance_hgroup, distance_tree_index as usize);
+    // The context_map_slice_index for which context_trees was filled.
+    let mut context_trees_slice: Option<usize> = None;
 
     loop {
       match s.state {
@@ -3292,11 +3335,12 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               result = BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;
               break; // return
             }
+            insert_copy_tree = huffman_tree(insert_copy_hgroup, s.htree_command_index as usize);
             s.state = BrotliRunningState::BROTLI_STATE_COMMAND_BEGIN;
             continue; // goto CommandBegin;
           }
           // Read the insert/copy length in the command
-          if (!ReadCommandInternal(safe, s, &mut i, input, &insert_copy_hgroup)) && safe {
+          if (!ReadCommandInternal(safe, s, &mut i, input, insert_copy_tree)) && safe {
             result = BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;
             break; // return
           }
@@ -3314,7 +3358,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
           if (s.trivial_literal_context != 0) {
             let mut bits: u32 = 0;
             let mut value: u32 = 0;
-            let mut literal_htree = &fast!((literal_hgroup)[s.literal_htree_index as usize]);
+            let mut literal_htree = huffman_tree(literal_hgroup, s.literal_htree_index as usize);
             PreloadSymbol(safe, literal_htree, &mut s.br, &mut bits, &mut value, input);
             let mut inner_return: bool = false;
             let mut inner_continue: bool = false;
@@ -3332,7 +3376,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                   inner_return = true;
                   break;
                 }
-                literal_htree = fast_ref!((literal_hgroup)[s.literal_htree_index as usize]);
+                literal_htree = huffman_tree(literal_hgroup, s.literal_htree_index as usize);
                 PreloadSymbol(safe, literal_htree, &mut s.br, &mut bits, &mut value, input);
                 if (s.trivial_literal_context == 0) {
                   s.state = BrotliRunningState::BROTLI_STATE_COMMAND_INNER;
@@ -3382,6 +3426,11 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               continue;
             }
           } else {
+            if !safe && context_trees_slice != Some(s.context_map_slice_index) {
+              fill_context_trees(&mut context_trees, literal_hgroup, s.context_map.slice(),
+                                 s.context_map_slice_index);
+              context_trees_slice = Some(s.context_map_slice_index);
+            }
             let mut p1 = fast_slice!((s.ringbuffer)[((pos - 1) & s.ringbuffer_mask) as usize]);
             let mut p2 = fast_slice!((s.ringbuffer)[((pos - 2) & s.ringbuffer_mask) as usize]);
             let mut inner_return: bool = false;
@@ -3406,16 +3455,24 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                   inner_continue = true;
                   break;
                 }
+                if !safe && context_trees_slice != Some(s.context_map_slice_index) {
+                  fill_context_trees(&mut context_trees, literal_hgroup, s.context_map.slice(),
+                                     s.context_map_slice_index);
+                  context_trees_slice = Some(s.context_map_slice_index);
+                }
               }
               let context = s.context_lookup[p1 as usize] | s.context_lookup[p2 as usize |256];
               BROTLI_LOG_UINT!(p1);
               BROTLI_LOG_UINT!(p2);
               BROTLI_LOG_UINT!(context);
-              let hc: &[HuffmanCode];
-              {
+              let hc: &[HuffmanCode] = if !safe {
+                // context < 64: every kContextLookup entry is (see the test
+                // context_lookup_values_fit_the_context_map).
+                context_trees[context as usize & 63]
+              } else {
                 let i = fast_slice!((s.context_map)[s.context_map_slice_index + context as usize]);
-                hc = fast!((literal_hgroup)[i as usize]);
-              }
+                huffman_tree(literal_hgroup, i as usize)
+              };
               p2 = p1;
               if (!safe) {
                 p1 = ReadSymbol(hc, &mut s.br, input) as u8;
@@ -3481,7 +3538,11 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                 break; // return
               }
             }
-            if (!ReadDistanceInternal(safe, s, input, &distance_hgroup)) && safe {
+            if s.dist_htree_index != distance_tree_index {
+              distance_tree_index = s.dist_htree_index;
+              distance_tree = huffman_tree(distance_hgroup, distance_tree_index as usize);
+            }
+            if (!ReadDistanceInternal(safe, s, input, distance_tree)) && safe {
               result = BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;
               break; // return
             }
@@ -4499,6 +4560,18 @@ pub fn BrotliDecompressStreamWithDictionary<AllocU8: alloc::Allocator<u8>,
 #[cfg(test)]
 mod safeguard_tests {
   use super::{copy_overlapping_backreference, memcpy_within_slice, memmove16};
+
+  // ProcessCommandsInternal indexes the 64 literal trees of a block type with
+  // `context & 63` for context = lookup[p1] | lookup[p2 + 256]: the mask
+  // changes nothing only while every entry is below 64.
+  #[test]
+  fn context_lookup_values_fit_the_context_map() {
+    for table in super::kContextLookup.iter() {
+      for value in table.iter() {
+        assert!(*value < 64);
+      }
+    }
+  }
 
   #[test]
   fn overlapping_backreferences_match_sequential_copy() {
