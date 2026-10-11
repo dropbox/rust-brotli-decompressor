@@ -18,7 +18,7 @@ use super::huffman;
 use super::state;
 use super::prefix;
 
-use super::transform::{TransformDictionaryWord, kNumTransforms};
+use super::transform::{TransformDictionaryWord, copy_bytes, kNumTransforms};
 use state::{BlockTypeAndLengthState, BrotliRunningContextMapState, BrotliRunningDecodeUint8State,
             BrotliRunningHuffmanState, BrotliRunningMetablockHeaderState,
             BrotliRunningReadBlockLengthState, BrotliRunningState, BrotliRunningTreeGroupState,
@@ -3656,8 +3656,8 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                 let mut len = i;
                 let word = fast!((kBrotliDictionary)[offset as usize ; (offset + len) as usize]);
                 if (transform_idx == 0) {
-                  fast_slice_mut!((s.ringbuffer)[pos as usize ; ((pos + len) as usize)])
-                    .clone_from_slice(word);
+                  copy_bytes(fast_slice_mut!((s.ringbuffer)[pos as usize ; ((pos + len) as usize)]),
+                             word);
                 } else {
                   len = TransformDictionaryWord(fast_slice_mut!((s.ringbuffer)[pos as usize;]),
                                                 word,
