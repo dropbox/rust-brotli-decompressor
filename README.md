@@ -3,6 +3,14 @@
 [![crates.io](https://img.shields.io/crates/v/brotli-decompressor.svg)](https://crates.io/crates/brotli-decompressor)
 [![Build Status](https://travis-ci.org/dropbox/rust-brotli-decompressor.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli-decompressor)
 
+## What's new in version 6.1.0
+
+* Dynamic ring buffer: ring buffer is only allocated as needed
+* Ability to select previous mechanisms at init time.
+* Copy performance optimization
+* Optimize huffman tree sizes
+* Bit reader optimizations
+
 ## What's new in version 6.0.1
 
 * The C API's default Rust allocator now reports allocation failures as decoder
