@@ -3278,8 +3278,10 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
     saved_insert_copy_hgroup.fill_hgroup_cache(&mut insert_copy_hgroup);
 
     loop {
-      match s.state {
-        BrotliRunningState::BROTLI_STATE_COMMAND_BEGIN => {
+      // The states each command passes through are tested in that order, so
+      // that decoding goes on from one to the next without dispatching on
+      // s.state again.
+      if let BrotliRunningState::BROTLI_STATE_COMMAND_BEGIN = s.state {
           if (!CheckInputAmount(safe, &s.br, 28)) {
             // 156 bits + 7 bytes
             mark_unlikely();
@@ -3308,8 +3310,8 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
           }
           s.meta_block_remaining_len -= i;
           s.state = BrotliRunningState::BROTLI_STATE_COMMAND_INNER;
-        }
-        BrotliRunningState::BROTLI_STATE_COMMAND_INNER => {
+      }
+      if let BrotliRunningState::BROTLI_STATE_COMMAND_INNER = s.state {
           // Read the literals in the command
           if (s.trivial_literal_context != 0) {
             let mut bits: u32 = 0;
@@ -3465,7 +3467,8 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
             break; // return
           }
           s.state = BrotliRunningState::BROTLI_STATE_COMMAND_POST_DECODE_LITERALS;
-        }
+      }
+      match s.state {
         BrotliRunningState::BROTLI_STATE_COMMAND_POST_DECODE_LITERALS => {
           if s.distance_code >= 0 {
             let not_distance_code = if s.distance_code != 0 { 0 } else { 1 };
