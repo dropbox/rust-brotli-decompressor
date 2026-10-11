@@ -15,6 +15,9 @@ pub const BROTLI_SHORT_FILL_BIT_WINDOW_READ: u32 = 4;
 pub type reg_t = u64;
 
 #[cfg(test)]
+mod regression_tests;
+
+#[cfg(test)]
 #[allow(non_upper_case_globals)]
 const kBitMask: [u32; 33] =
   [0x0000, 0x00000001, 0x00000003, 0x00000007, 0x0000000F, 0x0000001F, 0x0000003F, 0x0000007F,
