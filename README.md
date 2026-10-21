@@ -3,6 +3,10 @@
 [![crates.io](https://img.shields.io/crates/v/brotli-decompressor.svg)](https://crates.io/crates/brotli-decompressor)
 [![Build Status](https://travis-ci.org/dropbox/rust-brotli-decompressor.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli-decompressor)
 
+## What's new in version 6.1.1
+
+* Performance improvements for dictionaries, small reads, and large streams
+
 ## What's new in version 6.1.0
 
 * Dynamic ring buffer: ring buffer is only allocated as needed
