@@ -4129,7 +4129,7 @@ pub fn BrotliDecompressStreamWithDictionaryAndMetadata<AllocU8: alloc::Allocator
           BROTLI_LOG_UINT!(s.is_uncompressed);
           if (s.is_metadata != 0 || s.is_uncompressed != 0) &&
              !bit_reader::BrotliJumpToByteBoundary(&mut s.br) {
-            result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_PADDING_2;
+            result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_PADDING_1;
             break;
           }
           if s.is_metadata != 0 {
