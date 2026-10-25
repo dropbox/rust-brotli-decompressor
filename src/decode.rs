@@ -1483,19 +1483,23 @@ fn DecodeContextMap<AllocU8: alloc::Allocator<u8>,
 
 // Decodes a command or literal and updates block type ringbuffer.
 // Reads 3..54 bits.
+// A block switch in a category with a single block type is a format error,
+// not a lack of input: reporting it as BROTLI_DECODER_NEEDS_MORE_INPUT makes
+// the streaming decoder buffer input that will never complete the read
+// (CVE-2026-111497 in the C decoder).
 fn DecodeBlockTypeAndLength<
   AllocHC : alloc::Allocator<HuffmanCode>> (safe : bool,
                                             s : &mut BlockTypeAndLengthState<AllocHC>,
                                             br : &mut bit_reader::BrotliBitReader,
                                             tree_type : i32,
-                                            input : &[u8]) -> bool {
+                                            input : &[u8]) -> BrotliDecoderErrorCode {
   let max_block_type = fast!((s.num_block_types)[tree_type as usize]);
   let type_tree_offset = tree_type as usize * huffman::BROTLI_HUFFMAN_MAX_SIZE_258 as usize;
   let len_tree_offset = tree_type as usize * huffman::BROTLI_HUFFMAN_MAX_SIZE_26 as usize;
 
   let mut block_type: u32 = 0;
   if max_block_type <= 1 {
-    return false;
+    return BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH;
   }
   // Read 0..15 + 3..39 bits
   if (!safe) {
@@ -1508,7 +1512,7 @@ fn DecodeBlockTypeAndLength<
                         br,
                         &mut block_type,
                         input)) {
-      return false;
+      return BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;
     }
     let mut block_length_out: u32 = 0;
 
@@ -1521,7 +1525,7 @@ fn DecodeBlockTypeAndLength<
       s.substate_read_block_length =
         BrotliRunningReadBlockLengthState::BROTLI_STATE_READ_BLOCK_LENGTH_NONE;
       bit_reader::BrotliBitReaderRestoreState(br, &memento);
-      return false;
+      return BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;
     }
     fast_mut!((s.block_length)[tree_type as usize]) = block_length_out;
   }
@@ -1538,7 +1542,7 @@ fn DecodeBlockTypeAndLength<
   }
   fast_mut!((ringbuffer)[0]) = fast!((ringbuffer)[1]);
   fast_mut!((ringbuffer)[1]) = block_type;
-  true
+  BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS
 }
 fn DetectTrivialLiteralBlockTypes<AllocU8: alloc::Allocator<u8>,
                                   AllocU32: alloc::Allocator<u32>,
@@ -1596,13 +1600,14 @@ fn DecodeLiteralBlockSwitchInternal<AllocU8: alloc::Allocator<u8>,
   (safe: bool,
    s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    input: &[u8])
-   -> bool {
+   -> BrotliDecoderErrorCode {
 
-  if !DecodeBlockTypeAndLength(safe, &mut s.block_type_length_state, &mut s.br, 0, input) {
-    return false;
+  match DecodeBlockTypeAndLength(safe, &mut s.block_type_length_state, &mut s.br, 0, input) {
+    BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS => {}
+    result => return result,
   }
   PrepareLiteralDecoding(s);
-  true
+  BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS
 }
 // fn DecodeLiteralBlockSwitch<
 // 'a,
@@ -1630,12 +1635,13 @@ fn DecodeCommandBlockSwitchInternal<AllocU8: alloc::Allocator<u8>,
   (safe: bool,
    s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    input: &[u8])
-   -> bool {
-  if (!DecodeBlockTypeAndLength(safe, &mut s.block_type_length_state, &mut s.br, 1, input)) {
-    return false;
+   -> BrotliDecoderErrorCode {
+  match DecodeBlockTypeAndLength(safe, &mut s.block_type_length_state, &mut s.br, 1, input) {
+    BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS => {}
+    result => return result,
   }
   s.htree_command_index = fast!((s.block_type_length_state.block_type_rb)[3]) as u16;
-  true
+  BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS
 }
 
 #[allow(dead_code)]
@@ -1643,8 +1649,9 @@ fn DecodeCommandBlockSwitch<AllocU8: alloc::Allocator<u8>,
                             AllocU32: alloc::Allocator<u32>,
                             AllocHC: alloc::Allocator<HuffmanCode>>
   (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
-   input: &[u8]) {
-  DecodeCommandBlockSwitchInternal(false, s, input);
+   input: &[u8])
+   -> BrotliDecoderErrorCode {
+  DecodeCommandBlockSwitchInternal(false, s, input)
 }
 #[allow(dead_code)]
 fn SafeDecodeCommandBlockSwitch<AllocU8: alloc::Allocator<u8>,
@@ -1652,7 +1659,7 @@ fn SafeDecodeCommandBlockSwitch<AllocU8: alloc::Allocator<u8>,
                                 AllocHC: alloc::Allocator<HuffmanCode>>
   (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    input: &[u8])
-   -> bool {
+   -> BrotliDecoderErrorCode {
   DecodeCommandBlockSwitchInternal(true, s, input)
 }
 
@@ -1664,15 +1671,16 @@ fn DecodeDistanceBlockSwitchInternal<AllocU8: alloc::Allocator<u8>,
   (safe: bool,
    s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    input: &[u8])
-   -> bool {
-  if (!DecodeBlockTypeAndLength(safe, &mut s.block_type_length_state, &mut s.br, 2, input)) {
-    return false;
+   -> BrotliDecoderErrorCode {
+  match DecodeBlockTypeAndLength(safe, &mut s.block_type_length_state, &mut s.br, 2, input) {
+    BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS => {}
+    result => return result,
   }
   s.dist_context_map_slice_index =
     (fast!((s.block_type_length_state.block_type_rb)[5]) << kDistanceContextBits) as usize;
   s.dist_htree_index = fast_slice!((s.dist_context_map)[s.dist_context_map_slice_index
                                                   + s.distance_context as usize]);
-  true
+  BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS
 }
 
 #[allow(dead_code)]
@@ -1680,8 +1688,9 @@ fn DecodeDistanceBlockSwitch<AllocU8: alloc::Allocator<u8>,
                              AllocU32: alloc::Allocator<u32>,
                              AllocHC: alloc::Allocator<HuffmanCode>>
   (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
-   input: &[u8]) {
-  DecodeDistanceBlockSwitchInternal(false, s, input);
+   input: &[u8])
+   -> BrotliDecoderErrorCode {
+  DecodeDistanceBlockSwitchInternal(false, s, input)
 }
 
 #[allow(dead_code)]
@@ -1690,7 +1699,7 @@ fn SafeDecodeDistanceBlockSwitch<AllocU8: alloc::Allocator<u8>,
                                  AllocHC: alloc::Allocator<HuffmanCode>>
   (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    input: &[u8])
-   -> bool {
+   -> BrotliDecoderErrorCode {
   DecodeDistanceBlockSwitchInternal(true, s, input)
 }
 
@@ -3333,9 +3342,12 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
           }
           if (fast_mut!((s.block_type_length_state.block_length)[1]) == 0) {
             mark_unlikely();
-            if !DecodeCommandBlockSwitchInternal(safe, s, input) {
-              result = BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;
-              break; // return
+            match DecodeCommandBlockSwitchInternal(safe, s, input) {
+              BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS => {}
+              status => {
+                result = status;
+                break; // return
+              }
             }
             insert_copy_tree = huffman_tree(insert_copy_hgroup, s.htree_command_index as usize);
             s.state = BrotliRunningState::BROTLI_STATE_COMMAND_BEGIN;
@@ -3373,10 +3385,13 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               }
               if (fast!((s.block_type_length_state.block_length)[0]) == 0) {
                 mark_unlikely();
-                if (!DecodeLiteralBlockSwitchInternal(safe, s, input)) && safe {
-                  result = BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;
-                  inner_return = true;
-                  break;
+                match DecodeLiteralBlockSwitchInternal(safe, s, input) {
+                  BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS => {}
+                  status => {
+                    result = status;
+                    inner_return = true;
+                    break;
+                  }
                 }
                 literal_htree = huffman_tree(literal_hgroup, s.literal_htree_index as usize);
                 PreloadSymbol(safe, literal_htree, &mut s.br, &mut bits, &mut value, input);
@@ -3447,10 +3462,13 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               }
               if (fast!((s.block_type_length_state.block_length)[0]) == 0) {
                 mark_unlikely();
-                if (!DecodeLiteralBlockSwitchInternal(safe, s, input)) && safe {
-                  result = BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;
-                  inner_return = true;
-                  break;
+                match DecodeLiteralBlockSwitchInternal(safe, s, input) {
+                  BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS => {}
+                  status => {
+                    result = status;
+                    inner_return = true;
+                    break;
+                  }
                 }
                 if s.trivial_literal_context != 0 {
                   s.state = BrotliRunningState::BROTLI_STATE_COMMAND_INNER;
@@ -3536,9 +3554,12 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
           } else {
             if fast!((s.block_type_length_state.block_length)[2]) == 0 {
               mark_unlikely();
-              if (!DecodeDistanceBlockSwitchInternal(safe, s, input)) && safe {
-                result = BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;
-                break; // return
+              match DecodeDistanceBlockSwitchInternal(safe, s, input) {
+                BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS => {}
+                status => {
+                  result = status;
+                  break; // return
+                }
               }
             }
             if s.dist_htree_index != distance_tree_index {
@@ -4123,6 +4144,7 @@ pub fn BrotliDecompressStreamWithDictionaryAndMetadata<AllocU8: alloc::Allocator
             BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS => {}
             _ => break,
           }
+          debug_assert!(s.meta_block_remaining_len <= 1 << 24);
           BROTLI_LOG_UINT!(s.is_last_metablock);
           BROTLI_LOG_UINT!(s.meta_block_remaining_len);
           BROTLI_LOG_UINT!(s.is_metadata);
@@ -4701,6 +4723,8 @@ mod safeguard_tests {
 mod state_guard_tests {
   use super::{CheckRingBufferConsistency, DecodeContextMap, ReadHuffmanCode, UnwrittenBytes,
               WrapRingBuffer, WriteRingBuffer};
+  use super::{DecodeCommandBlockSwitchInternal, DecodeDistanceBlockSwitchInternal,
+              DecodeLiteralBlockSwitchInternal};
   use super::{BrotliDecoderErrorCode, BrotliRunningState, BrotliState, HuffmanCode};
   use ::state::BrotliRunningHuffmanState;
   use ::alloc::Allocator;
@@ -4966,6 +4990,32 @@ mod state_guard_tests {
       BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_UNREACHABLE => {}
       other => panic!("expected UNREACHABLE, got {:?}", other),
     }
+  }
+
+  // CVE-2026-111497: the C decoder reported a block switch in a category with
+  // a single block type as needing more input, and the streaming loop then
+  // overran its 8-byte input buffer waiting for input that could not help.
+  #[test]
+  fn block_switch_with_one_block_type_is_a_format_error() {
+    let mut s = state();
+    s.block_type_length_state.num_block_types = [1, 1, 1];
+    s.block_type_length_state.block_length = [0, 0, 0];
+    for &safe in [false, true].iter() {
+      for category in 0..3 {
+        let result = match category {
+          0 => DecodeLiteralBlockSwitchInternal(safe, &mut s, &[]),
+          1 => DecodeCommandBlockSwitchInternal(safe, &mut s, &[]),
+          _ => DecodeDistanceBlockSwitchInternal(safe, &mut s, &[]),
+        };
+        match result {
+          BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH => {}
+          other => panic!("category {} safe {}: expected FORMAT_BLOCK_SWITCH, got {:?}",
+                          category, safe, other),
+        }
+      }
+    }
+    assert_eq!(s.br.avail_in, 0);
+    assert_eq!(s.buffer_length, 0);
   }
 }
 
