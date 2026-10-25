@@ -3,6 +3,12 @@
 [![crates.io](https://img.shields.io/crates/v/brotli-decompressor.svg)](https://crates.io/crates/brotli-decompressor)
 [![Build Status](https://travis-ci.org/dropbox/rust-brotli-decompressor.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli-decompressor)
 
+## What's new in version 6.2.0
+
+* Configurable metadata metablock callback
+* Return correct error code for inputs that would trigger CVE-2026-111497 on the C decoder
+
+
 ## What's new in version 6.1.1
 
 * Performance improvements for dictionaries, small reads, and large streams
