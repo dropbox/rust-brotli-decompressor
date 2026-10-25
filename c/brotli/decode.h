@@ -406,6 +406,51 @@ BROTLI_DEC_API const char* BrotliDecoderErrorString(BrotliDecoderErrorCode c);
  */
 BROTLI_DEC_API uint32_t BrotliDecoderVersion(void);
 
+/**
+ * Callback to fire on metadata block start.
+ *
+ * After this callback is fired, if @p size is not @c 0, it is followed by
+ * ::brotli_decoder_metadata_chunk_func as more metadata block contents become
+ * accessible.
+ *
+ * @param opaque callback handle
+ * @param size size of metadata block
+ */
+typedef void (*brotli_decoder_metadata_start_func)(void* opaque, size_t size);
+
+/**
+ * Callback to fire on metadata block chunk becomes available.
+ *
+ * This function can be invoked multiple times per metadata block; block is
+ * finished when sum of all callbacks size params matches the announced metadata
+ * block size. Chunks contents pointed by data are transient and should not
+ * be accessed after the callback returns.
+ *
+ * @param opaque callback function
+ * @param data pointer to metadata bytes
+ * @param size size of nonzero metadata chunk of bytes
+ */
+typedef void (*brotli_decoder_metadata_chunk_func)(void* opaque,
+                                                   const uint8_t* data,
+                                                   size_t size);
+
+/**
+ * Sets callback for receiving metadata blocks.
+ *
+ * Calling this again replaces the previous callbacks
+ * Callbacks are only invoked from ::BrotliDecoderDecompressStream;
+ * ::BrotliDecoderDecompress does not invoke the metadata callback.
+ *
+ * @param state decoder instance
+ * @param start_func callback on metadata block start
+ * @param chunk_func callback on metadata block chunk
+ * @param opaque callback handle
+ */
+BROTLI_DEC_API void BrotliDecoderSetMetadataCallbacks(
+    BrotliDecoderState* state,
+    brotli_decoder_metadata_start_func start_func,
+    brotli_decoder_metadata_chunk_func chunk_func, void* opaque);
+
 #if defined(__cplusplus) || defined(c_plusplus)
 } /* extern "C" */
 #endif

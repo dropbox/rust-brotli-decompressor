@@ -3869,9 +3869,10 @@ pub fn BrotliDecompressStream<AllocU8: alloc::Allocator<u8>,
    total_out: &mut usize,
    s: &mut BrotliState<AllocU8, AllocU32, AllocHC>)
    -> BrotliResult {
-  BrotliDecompressStreamWithDictionary(available_in, input_offset, xinput,
-                                       available_out, output_offset, output,
-                                       total_out, &[], s)
+  BrotliDecompressStreamWithDictionaryAndMetadata(
+      available_in, input_offset, xinput,
+      available_out, output_offset, output,
+      total_out, &[], None, s)
 }
 
 // As BrotliDecompressStream, lending the decoder `dictionary` for this call:
@@ -3884,11 +3885,36 @@ pub fn BrotliDecompressStreamWithDictionary<AllocU8: alloc::Allocator<u8>,
   (available_in: &mut usize,
    input_offset: &mut usize,
    xinput: &[u8],
+   available_out: &mut usize,
+   output_offset: &mut usize,
+   output: &mut [u8],
+   total_out: &mut usize,
+   dictionary: &[u8],
+   s: &mut BrotliState<AllocU8, AllocU32, AllocHC>)
+   -> BrotliResult {
+  BrotliDecompressStreamWithDictionaryAndMetadata(
+      available_in, input_offset, xinput,
+      available_out, output_offset, output,
+      total_out, dictionary, None, s)
+}
+
+
+// As BrotliDecompressStream, lending the decoder `dictionary` for this call:
+// the dictionary attached with BrotliState::attach_external_dictionary, or an
+// empty slice if there is none. Also pass in a callback to be called back with any
+// metadata metablocks that are encountered.
+pub fn BrotliDecompressStreamWithDictionaryAndMetadata<AllocU8: alloc::Allocator<u8>,
+                                                       AllocU32: alloc::Allocator<u32>,
+                                                       AllocHC: alloc::Allocator<HuffmanCode>>
+  (available_in: &mut usize,
+   input_offset: &mut usize,
+   xinput: &[u8],
    mut available_out: &mut usize,
    mut output_offset: &mut usize,
    mut output: &mut [u8],
    mut total_out: &mut usize,
    dictionary: &[u8],
+   mut metadata_cb: Option<&mut dyn state::BrotliMetadataCallback>,
    mut s: &mut BrotliState<AllocU8, AllocU32, AllocHC>)
    -> BrotliResult {
 
@@ -4108,6 +4134,10 @@ pub fn BrotliDecompressStreamWithDictionary<AllocU8: alloc::Allocator<u8>,
           }
           if s.is_metadata != 0 {
             s.state = BrotliRunningState::BROTLI_STATE_METADATA;
+
+            if let Some(ref mut callback) = metadata_cb {
+              callback.start(s.meta_block_remaining_len as usize);
+            }
             break;
           }
           if s.meta_block_remaining_len == 0 {
@@ -4140,15 +4170,11 @@ pub fn BrotliDecompressStreamWithDictionary<AllocU8: alloc::Allocator<u8>,
           break;
         }
         BrotliRunningState::BROTLI_STATE_METADATA => {
-          while s.meta_block_remaining_len > 0 {
-            let mut bits = 0u32;
-            // Read one byte and ignore it.
-            if !bit_reader::BrotliSafeReadBits(&mut s.br, 8, &mut bits, local_input) {
-              result = BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;
-              break;
-            }
-            s.meta_block_remaining_len -= 1;
-          }
+          result = read_metadata_block(
+              &mut s.br,
+              &mut s.meta_block_remaining_len,
+              local_input,
+              &mut metadata_cb);
           if let BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS = result {
             s.state = BrotliRunningState::BROTLI_STATE_METABLOCK_DONE
           }
@@ -4558,6 +4584,47 @@ pub fn BrotliDecompressStreamWithDictionary<AllocU8: alloc::Allocator<u8>,
   }
 
   SaveErrorCode!(s, result)
+}
+
+fn read_metadata_block(
+    br: &mut bit_reader::BrotliBitReader,
+    meta_block_remaining_len: &mut i32,
+    local_input: &[u8],
+    metadata_cb: &mut Option<&mut dyn state::BrotliMetadataCallback>,
+) -> BrotliDecoderErrorCode {
+    if *meta_block_remaining_len <= 0 {
+        return BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS;
+    }
+
+    let bit_reader_bits_avail = bit_reader::BrotliGetAvailableBits(br);
+    debug_assert_eq!(bit_reader_bits_avail & 7, 0);
+    let amt_in_bit_reader = core::cmp::min(
+        (bit_reader_bits_avail / 8) as usize,
+        *meta_block_remaining_len as usize);
+
+    if amt_in_bit_reader > 0 {
+        let mut scratch = [0u8; core::mem::size_of::<bit_reader::BrotliBitReader>()];
+        bit_reader::BrotliCopyBytes(&mut scratch[..], br, amt_in_bit_reader as u32, local_input);
+        *meta_block_remaining_len -= amt_in_bit_reader as i32;
+        if let Some(callback) = metadata_cb {
+            callback.chunk(&scratch[..amt_in_bit_reader]);
+        }
+    }
+    let remaining_bytes = core::cmp::min(*meta_block_remaining_len as usize,
+                                         br.avail_in as usize);
+    if remaining_bytes != 0 {
+        if let Some(callback) = metadata_cb {
+            let all_remaining_input = local_input.split_at(br.next_in as usize).1;
+            callback.chunk(&all_remaining_input.split_at(remaining_bytes).0);
+        }
+        br.next_in += remaining_bytes as u32;
+        br.avail_in -= remaining_bytes as u32;
+        *meta_block_remaining_len -= remaining_bytes as i32;
+    }
+    if *meta_block_remaining_len == 0 {
+        return BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS;
+    }
+    BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT
 }
 
 #[cfg(test)]

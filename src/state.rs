@@ -213,6 +213,12 @@ impl<AllocU8: alloc::Allocator<u8>> alloc::SliceWrapper<u8> for MaybeOwnedSlice<
 // the field is unsigned here.
 pub const COMPOUND_DICTIONARY_BLOCK_MAP_UNINITIALIZED: u32 = 255;
 
+
+pub trait BrotliMetadataCallback {
+    fn start(&mut self, _size: usize);
+    fn chunk(&mut self, _data: &[u8]);
+}
+
 // LZ77 prefix ("compound") dictionaries attached to the decoder. Unlike the
 // historical approach of copying the dictionary into the ring buffer, chunks
 // are kept in their own buffers and referenced by backward distances in
