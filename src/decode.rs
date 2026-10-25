@@ -4968,3 +4968,206 @@ mod state_guard_tests {
     }
   }
 }
+
+// read_metadata_block driven directly from bit readers holding 0..=8 whole
+// bytes in the accumulator, as a byte-aligned metadata header can leave them.
+#[cfg(all(test, feature="std"))]
+mod metadata_block_tests {
+  use super::{read_metadata_block, BrotliDecoderErrorCode};
+  use ::bit_reader::{self, BrotliBitReader};
+  use ::state::BrotliMetadataCallback;
+  use std::vec::Vec;
+
+  #[derive(Default)]
+  struct Chunks(Vec<Vec<u8>>);
+
+  impl BrotliMetadataCallback for Chunks {
+    fn start(&mut self, _size: usize) {
+      panic!("read_metadata_block must not start a block");
+    }
+    fn chunk(&mut self, data: &[u8]) {
+      assert!(!data.is_empty());
+      self.0.push(data.to_vec());
+    }
+  }
+
+  fn input() -> Vec<u8> {
+    (0..64u32).map(|i| (i * 37 + 11) as u8).collect()
+  }
+
+  // A reader over all of `input` with its first `buffered` bytes pulled into
+  // the accumulator.
+  fn reader(input: &[u8], buffered: u32) -> BrotliBitReader {
+    let mut br = BrotliBitReader::default();
+    bit_reader::BrotliInitBitReader(&mut br);
+    br.avail_in = input.len() as u32;
+    for _ in 0..buffered {
+      assert!(bit_reader::BrotliPullByte(&mut br, input));
+    }
+    br
+  }
+
+  fn copy(br: &BrotliBitReader) -> BrotliBitReader {
+    let mut copy = BrotliBitReader::default();
+    bit_reader::BrotliBitReaderRestoreState(&mut copy, &bit_reader::BrotliBitReaderSaveState(br));
+    copy
+  }
+
+  fn fields(br: &BrotliBitReader) -> (u64, u32, u32, u32) {
+    (br.val_ as u64, br.bit_pos_, br.next_in, br.avail_in)
+  }
+
+  fn run(br: &mut BrotliBitReader, remaining: &mut i32, input: &[u8], with_callback: bool)
+         -> (bool, Vec<Vec<u8>>) {
+    let mut chunks = Chunks::default();
+    let result = {
+      let mut cb: Option<&mut dyn BrotliMetadataCallback> =
+        if with_callback { Some(&mut chunks) } else { None };
+      read_metadata_block(br, remaining, input, &mut cb)
+    };
+    let done = match result {
+      BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS => true,
+      BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT => false,
+      other => panic!("unexpected {:?}", other),
+    };
+    (done, chunks.0)
+  }
+
+  #[test]
+  fn zero_length_block_touches_nothing() {
+    let input = input();
+    for buffered in 0..9 {
+      let mut br = reader(&input, buffered);
+      let before = fields(&br);
+      let mut remaining = 0;
+      let (done, chunks) = run(&mut br, &mut remaining, &input, true);
+      assert!(done);
+      assert!(chunks.is_empty());
+      assert_eq!(fields(&br), before);
+    }
+  }
+
+  #[test]
+  fn block_inside_the_accumulator_leaves_the_rest_buffered() {
+    let input = input();
+    for buffered in 1..9u32 {
+      for len in 1..buffered + 1 {
+        let mut br = reader(&input, buffered);
+        let mut remaining = len as i32;
+        let (done, chunks) = run(&mut br, &mut remaining, &input, true);
+        assert!(done);
+        assert_eq!(remaining, 0);
+        assert_eq!(chunks, vec![input[..len as usize].to_vec()]);
+        // Input untouched; the bytes after the block are still buffered, in
+        // order, ahead of the input.
+        assert_eq!((br.next_in, br.avail_in), (buffered, input.len() as u32 - buffered));
+        assert_eq!(bit_reader::BrotliGetAvailableBits(&br), (buffered - len) * 8);
+        for expected in &input[len as usize..buffered as usize + 4] {
+          let mut byte = 0u32;
+          assert!(bit_reader::BrotliSafeReadBits(&mut br, 8, &mut byte, &input));
+          assert_eq!(byte, *expected as u32);
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn longer_block_drains_the_accumulator_then_reads_input_directly() {
+    let input = input();
+    for buffered in 0..9u32 {
+      for len in buffered + 1..48 {
+        let mut br = reader(&input, buffered);
+        let mut remaining = len as i32;
+        let (done, chunks) = run(&mut br, &mut remaining, &input, true);
+        assert!(done);
+        assert_eq!(remaining, 0);
+        let mut expected = Vec::new();
+        if buffered != 0 {
+          expected.push(input[..buffered as usize].to_vec());
+        }
+        expected.push(input[buffered as usize..len as usize].to_vec());
+        assert_eq!(chunks, expected);
+        assert_eq!((br.next_in, br.avail_in), (len, input.len() as u32 - len));
+        assert_eq!(bit_reader::BrotliGetAvailableBits(&br), 0);
+
+        // The accumulator is now cold. Both ways the decoder reads next must
+        // resume at the first byte after the block: the safe byte-at-a-time
+        // reads of a meta-block header, and the warmed-up, window-filling
+        // reads of the compressed fast path.
+        let mut safe = copy(&br);
+        let mut byte = 0u32;
+        assert!(bit_reader::BrotliSafeReadBits(&mut safe, 8, &mut byte, &input));
+        assert_eq!(byte, input[len as usize] as u32);
+
+        let mut fast = copy(&br);
+        assert!(bit_reader::BrotliWarmupBitReader(&mut fast, &input));
+        for expected in &input[len as usize..len as usize + 8] {
+          bit_reader::BrotliFillBitWindow(&mut fast, 8, &input);
+          assert_eq!(bit_reader::BrotliReadBits(&mut fast, 8, &input), *expected as u32);
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn block_longer_than_the_input_resumes_on_the_next_call() {
+    let input = input();
+    for buffered in 0..9u32 {
+      for available in buffered..buffered + 6 {
+        let len = available + 5;
+        let first = &input[..available as usize];
+        let mut br = reader(first, buffered);
+        let mut remaining = len as i32;
+        let (done, mut chunks) = run(&mut br, &mut remaining, first, true);
+        assert!(!done);
+        assert_eq!(remaining, 5);
+        assert_eq!(br.avail_in, 0);
+        assert_eq!(bit_reader::BrotliGetAvailableBits(&br), 0);
+        assert!(chunks.iter().all(|c| !c.is_empty()));
+
+        // The decoder hands over more input the same way: same buffer
+        // extended, cursor where it stopped.
+        br.avail_in = (input.len() - available as usize) as u32;
+        let (done, more) = run(&mut br, &mut remaining, &input, true);
+        assert!(done);
+        assert_eq!(more, vec![input[available as usize..len as usize].to_vec()]);
+        chunks.extend(more);
+        assert_eq!(chunks.concat(), &input[..len as usize]);
+        assert_eq!(br.next_in, len);
+      }
+    }
+  }
+
+  #[test]
+  fn no_callback_has_the_same_effect_on_the_reader() {
+    let input = input();
+    for buffered in 0..9u32 {
+      for len in 0..20i32 {
+        for &available in [input.len() as u32, buffered + 2].iter() {
+          let limited = &input[..available as usize];
+          let mut with = reader(limited, buffered);
+          let mut without = copy(&with);
+          let (mut with_remaining, mut without_remaining) = (len, len);
+          let (with_done, _) = run(&mut with, &mut with_remaining, limited, true);
+          let (without_done, chunks) = run(&mut without, &mut without_remaining, limited, false);
+          assert!(chunks.is_empty());
+          assert_eq!(with_done, without_done);
+          assert_eq!(with_remaining, without_remaining);
+          assert_eq!(fields(&with), fields(&without));
+        }
+      }
+    }
+  }
+
+  #[cfg(debug_assertions)]
+  #[test]
+  #[should_panic(expected = "assertion")]
+  fn unaligned_accumulator_is_a_precondition_violation() {
+    let input = input();
+    let mut br = reader(&input, 2);
+    let mut bits = 0u32;
+    assert!(bit_reader::BrotliSafeReadBits(&mut br, 3, &mut bits, &input));
+    let mut remaining = 4;
+    run(&mut br, &mut remaining, &input, true);
+  }
+}

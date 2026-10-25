@@ -42,6 +42,7 @@ mod context;
 mod shared_dictionary;
 pub mod transform;
 mod test;
+mod test_metadata;
 mod decode;
 pub mod io_wrappers;
 pub mod reader;
