@@ -284,6 +284,7 @@ fn BrotliReverseBits(num: u8) -> u32 {
 // The written extent is table[offset .. offset + end], so bounds-checking the
 // last index covers the whole loop. That check is what makes the `fast_mut!`
 // write sound under --features=unsafe, where it is an unchecked store.
+#[inline(always)]
 fn ReplicateValue(table: &mut [HuffmanCode],
                   offset: u32,
                   step: i32,
@@ -311,6 +312,7 @@ fn ReplicateValue(table: &mut [HuffmanCode],
 //
 // The scan runs len up to BROTLI_HUFFMAN_MAX_CODE_LENGTH, which can be past the
 // caller's max_length, so `count` may run out underneath it.
+#[inline(always)]
 fn NextTableBitSize(count: &[u16], mut len: i32, root_bits: i32) -> Option<i32> {
   debug_assert!(len > root_bits);
   let mut left: i64 = 1i64 << (len - root_bits);

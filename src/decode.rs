@@ -567,6 +567,7 @@ fn ReadSimpleHuffmanSymbols<AllocU8: alloc::Allocator<u8>,
 // D) reduce the huffman space
 // E) update the histogram
 //
+#[inline(always)]
 fn ProcessSingleCodeLength(code_len: u32,
                            symbol: &mut u32,
                            repeat: &mut u32,
@@ -602,6 +603,7 @@ fn ProcessSingleCodeLength(code_len: u32,
 //
 // PRECONDITION: code_len == kCodeLengthRepeatCode or kCodeLengthRepeatCode + 1
 //
+#[inline(always)]
 fn ProcessRepeatedCodeLength(code_len: u32,
                              mut repeat_delta: u32,
                              alphabet_size: u32,
