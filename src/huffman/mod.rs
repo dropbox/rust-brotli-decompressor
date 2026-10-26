@@ -20,6 +20,15 @@ pub const BROTLI_HUFFMAN_MAX_CODE_LENGTHS_SIZE: usize = 704;
 // 1304, 1336, 1368, 1400, 1432, 1464, 1496, 1528];
 //
 pub const BROTLI_HUFFMAN_MAX_TABLE_SIZE: u32 = 1080;
+
+// Upper bound on the table BrotliBuildHuffmanTable produces for an alphabet of
+// `alphabet_size_limit` symbols: a 256-entry root table plus at most
+// 4 + 7 + 15 + 31 + 63 second-level entries, as the C decoder computes it.
+// For the largest alphabet (704 insert-and-copy codes) it equals
+// BROTLI_HUFFMAN_MAX_TABLE_SIZE.
+pub fn BrotliHuffmanMaxTableSize(alphabet_size_limit: u16) -> usize {
+  alphabet_size_limit as usize + 376
+}
 pub const BROTLI_HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH: u32 = 5;
 
 // Largest table (root table plus second-level tables) for a complete prefix
@@ -63,17 +72,27 @@ pub struct HuffmanTreeGroup<Alloc32: Allocator<u32>, AllocHC: Allocator<HuffmanC
 
 impl<AllocU32 : alloc::Allocator<u32>,
      AllocHC : alloc::Allocator<HuffmanCode> > HuffmanTreeGroup<AllocU32, AllocHC> {
-    pub fn init(self : &mut Self, mut alloc_u32 : &mut AllocU32, mut alloc_hc : &mut AllocHC,
+    // Buffers from a previous metablock are kept when they are large enough.
+    // Every table entry a valid stream can reach is written by the table
+    // builder before it is read, and trees past num_htrees are never looked
+    // up, so stale contents are not observable.
+    pub fn init(self : &mut Self, alloc_u32 : &mut AllocU32, alloc_hc : &mut AllocHC,
                 alphabet_size : u16, max_symbol: u16, ntrees : u16) {
-        self.reset(&mut alloc_u32, &mut alloc_hc);
         self.alphabet_size = alphabet_size;
         self.max_symbol = max_symbol;
         self.num_htrees = ntrees;
         let nt = ntrees as usize;
-        let _ = core::mem::replace(&mut self.htrees,
-                           alloc_u32.alloc_cell(nt));
-        let _ = core::mem::replace(&mut self.codes,
-                           alloc_hc.alloc_cell(nt * BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize));
+        // Exactly ntrees long, so that no lookup can reach a tree of an
+        // earlier metablock.
+        if self.htrees.slice().len() != nt {
+            alloc_u32.free_cell(core::mem::take(&mut self.htrees));
+            self.htrees = alloc_u32.alloc_cell(nt);
+        }
+        let codes_len = nt * BrotliHuffmanMaxTableSize(alphabet_size.max(max_symbol));
+        if self.codes.slice().len() < codes_len {
+            alloc_hc.free_cell(core::mem::take(&mut self.codes));
+            self.codes = alloc_hc.alloc_cell(codes_len);
+        }
     }
 
 //  pub fn get_tree_mut<'a>(self :&'a mut Self, index : u32, mut tree_out : &'a mut [HuffmanCode]) {
