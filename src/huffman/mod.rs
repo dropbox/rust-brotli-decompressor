@@ -88,12 +88,51 @@ impl<AllocU32 : alloc::Allocator<u32>,
             alloc_u32.free_cell(core::mem::take(&mut self.htrees));
             self.htrees = alloc_u32.alloc_cell(nt);
         }
-        let codes_len = nt * BrotliHuffmanMaxTableSize(alphabet_size.max(max_symbol));
+        let codes_len = self.initial_codes_len();
         if self.codes.slice().len() < codes_len {
             alloc_hc.free_cell(core::mem::take(&mut self.codes));
             self.codes = alloc_hc.alloc_cell(codes_len);
         }
     }
+
+    pub fn max_table_size(&self) -> usize {
+        BrotliHuffmanMaxTableSize(self.alphabet_size.max(self.max_symbol))
+    }
+
+    // Room for one worst-case table and typical tables for the rest.  Real
+    // tables are rarely much over the 256-entry root table, and allocators
+    // must initialize what they return, so sizing every tree for the worst
+    // case cost more than decoding small streams did.  ensure_codes_room
+    // grows the buffer when a stream needs more.
+    fn initial_codes_len(&self) -> usize {
+        let max = self.max_table_size();
+        let typical = 256 + (max - 256) / 4;
+        max + (self.num_htrees as usize).saturating_sub(1) * typical
+    }
+}
+
+// Makes room for one more worst-case table at `offset` in `codes`, keeping the
+// tables already built below `offset`.  False if the allocation fails.
+pub fn ensure_codes_room<AllocHC: Allocator<HuffmanCode>>(codes: &mut AllocHC::AllocatedMemory,
+                                                          alloc_hc: &mut AllocHC,
+                                                          offset: usize, max_table_size: usize)
+                                                          -> bool {
+    let needed = offset + max_table_size;
+    let len = codes.slice().len();
+    if len >= needed {
+        return true;
+    }
+    let mut grown = alloc_hc.alloc_cell(core::cmp::max(needed, len + len / 2));
+    if grown.slice().len() < needed {
+        return false;
+    }
+    grown.slice_mut()[..offset].copy_from_slice(&codes.slice()[..offset]);
+    alloc_hc.free_cell(core::mem::replace(codes, grown));
+    true
+}
+
+impl<AllocU32 : alloc::Allocator<u32>,
+     AllocHC : alloc::Allocator<HuffmanCode> > HuffmanTreeGroup<AllocU32, AllocHC> {
 
 //  pub fn get_tree_mut<'a>(self :&'a mut Self, index : u32, mut tree_out : &'a mut [HuffmanCode]) {
 //        let start : usize = fast!((self.htrees)[index as usize]) as usize;

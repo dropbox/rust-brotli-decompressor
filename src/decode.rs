@@ -1195,9 +1195,15 @@ fn HuffmanTreeGroupDecode<AllocU8: alloc::Allocator<u8>,
     BrotliRunningTreeGroupState::BROTLI_STATE_TREE_GROUP_LOOP => {}
   }
   let mut result = BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS;
+  let max_table_size = huffman::BrotliHuffmanMaxTableSize(alphabet_size.max(group_max_symbol));
   for htree_iter in
       fast_mut!((htrees.slice_mut())[s.htree_index as usize ; (group_num_htrees as usize)])
     .iter_mut() {
+    if !huffman::ensure_codes_room(&mut hcodes, &mut s.alloc_hc, s.htree_next_offset as usize,
+                                   max_table_size) {
+      result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS;
+      break;
+    }
     let mut table_size: u32 = 0;
     result = ReadHuffmanCode(u32::from(alphabet_size), u32::from(group_max_symbol),
                              hcodes.slice_mut(),
