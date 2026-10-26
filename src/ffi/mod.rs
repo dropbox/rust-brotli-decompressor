@@ -131,6 +131,9 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
         SubclassableAllocator::new(allocators.clone()),
         custom_dictionary,
       );
+      // As the C decoder does, fail creation rather than a later call if the
+      // allocator cannot supply the state's tables.
+      decompressor.ensure_context_map_table();
       if decompressor.context_map_table.slice().len() == 0 {
         return core::ptr::null_mut();
       }

@@ -376,7 +376,8 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   pub context_index: u32,
   pub max_run_length_prefix: u32,
   pub code: u32,
-  // always pre-allocated on state creation
+  // Allocated when first needed, by a context map of more than one tree; see
+  // ensure_context_map_table.
   pub context_map_table: AllocHC::AllocatedMemory,
 
   // For InverseMoveToFrontTransform
@@ -527,8 +528,6 @@ impl <'brotli_state,
            alloc_hc : AllocHC) -> Self{
         let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default());
         retval.large_window = true;
-        retval.context_map_table = retval.alloc_hc.alloc_cell(
-          BROTLI_HUFFMAN_MAX_SIZE_272 as usize);
         BrotliInitBitReader(&mut retval.br);
         retval
     }
@@ -538,8 +537,6 @@ impl <'brotli_state,
            custom_dict: AllocU8::AllocatedMemory) -> Self{
         let custom_dict_len = custom_dict.slice().len();
         let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, custom_dict);
-        retval.context_map_table = retval.alloc_hc.alloc_cell(
-          BROTLI_HUFFMAN_MAX_SIZE_272 as usize);
         retval.large_window =  true;
         BrotliInitBitReader(&mut retval.br);
         // The dictionary becomes the furthest compound dictionary chunk;
@@ -560,8 +557,6 @@ impl <'brotli_state,
            alloc_u32 : AllocU32,
            alloc_hc : AllocHC) -> Self{
         let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default());
-        retval.context_map_table = retval.alloc_hc.alloc_cell(
-          BROTLI_HUFFMAN_MAX_SIZE_272 as usize);
         retval.large_window =  false;
         BrotliInitBitReader(&mut retval.br);
         retval
@@ -846,6 +841,18 @@ impl <'brotli_state,
         self.distance_hgroup.reset(&mut self.alloc_u32, &mut self.alloc_hc);
     }
 
+    // Allocates the table the context maps are decoded with unless it already
+    // is. It is only needed for a context map of more than one tree, which
+    // short streams often do not have. Allocation failure leaves it empty, so
+    // that decoding such a context map fails as it would have with the table
+    // allocated, empty, at creation.
+    pub(crate) fn ensure_context_map_table(self : &mut Self) {
+        if self.context_map_table.slice().len() == 0 {
+            self.context_map_table = self.alloc_hc.alloc_cell(
+              BROTLI_HUFFMAN_MAX_SIZE_272 as usize);
+        }
+    }
+
    fn BrotliStateCleanup(self : &mut Self) {
       self.BrotliStateCleanupAfterMetablock();
       self.alloc_u8.free_cell(core::mem::replace(&mut self.ringbuffer,
@@ -927,6 +934,7 @@ impl <'brotli_state,
 
 
 
+#[inline]
 pub fn BrotliDecoderErrorStr(c: BrotliDecoderErrorCode) -> &'static str {
   match c {
   BrotliDecoderErrorCode::BROTLI_DECODER_NO_ERROR => "NO_ERROR\0",

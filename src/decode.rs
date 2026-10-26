@@ -194,6 +194,7 @@ fn DecodeWindowBits(s_large_window: &mut bool,
 #[cold]
 fn mark_unlikely() {}
 
+#[inline]
 fn DecodeVarLenUint8(substate_decode_uint8: &mut state::BrotliRunningDecodeUint8State,
                      mut br: &mut bit_reader::BrotliBitReader,
                      value: &mut u32,
@@ -403,6 +404,8 @@ fn ReadSymbol(table: &[HuffmanCode], br: &mut bit_reader::BrotliBitReader, input
 
 // Same as DecodeSymbol, but it is known that there is less than 15 bits of
 // input are currently available.
+#[cold]
+#[inline(never)]
 fn SafeDecodeSymbol(table: &[HuffmanCode],
                     mut br: &mut bit_reader::BrotliBitReader,
                     result: &mut u32)
@@ -444,6 +447,7 @@ fn SafeDecodeSymbol(table: &[HuffmanCode],
   true
 }
 
+#[inline]
 fn SafeReadSymbol(table: &[HuffmanCode],
                   br: &mut bit_reader::BrotliBitReader,
                   result: &mut u32,
@@ -503,13 +507,9 @@ fn ReadPreloadedSymbol(table: &[HuffmanCode],
   result
 }
 
-fn Log2Floor(mut x: u32) -> u32 {
-  let mut result: u32 = 0;
-  while x != 0 {
-    x >>= 1;
-    result += 1;
-  }
-  result
+#[inline(always)]
+fn Log2Floor(x: u32) -> u32 {
+  u32::BITS - x.leading_zeros()
 }
 
 
@@ -566,6 +566,7 @@ fn ReadSimpleHuffmanSymbols<AllocU8: alloc::Allocator<u8>,
 // D) reduce the huffman space
 // E) update the histogram
 //
+#[inline(always)]
 fn ProcessSingleCodeLength(code_len: u32,
                            symbol: &mut u32,
                            repeat: &mut u32,
@@ -601,6 +602,7 @@ fn ProcessSingleCodeLength(code_len: u32,
 //
 // PRECONDITION: code_len == kCodeLengthRepeatCode or kCodeLengthRepeatCode + 1
 //
+#[inline(always)]
 fn ProcessRepeatedCodeLength(code_len: u32,
                              mut repeat_delta: u32,
                              alphabet_size: u32,
@@ -703,7 +705,7 @@ fn ReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
                               &mut space,
                               &mut prev_code_len,
                               &mut s.symbols_lists_array,
-                              s.symbol_lists_index as usize,
+                              huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1,
                               &mut s.code_length_histo[..],
                               &mut s.next_symbol[..]);
     } else {
@@ -725,7 +727,7 @@ fn ReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
                                 &mut prev_code_len,
                                 &mut repeat_code_len,
                                 &mut s.symbols_lists_array,
-                                s.symbol_lists_index as usize,
+                                huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1,
                                 &mut s.code_length_histo[..],
                                 &mut s.next_symbol[..]);
     }
@@ -734,6 +736,8 @@ fn ReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
   BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS
 }
 
+#[cold]
+#[inline(never)]
 fn SafeReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
                              AllocU32: alloc::Allocator<u32>,
                              AllocHC: alloc::Allocator<HuffmanCode>>
@@ -768,7 +772,7 @@ fn SafeReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
                               &mut s.space,
                               &mut s.prev_code_len,
                               &mut s.symbols_lists_array,
-                              s.symbol_lists_index as usize,
+                              huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1,
                               &mut s.code_length_histo[..],
                               &mut s.next_symbol[..]);
     } else {
@@ -792,7 +796,7 @@ fn SafeReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
                                 &mut s.prev_code_len,
                                 &mut s.repeat_code_len,
                                 &mut s.symbols_lists_array,
-                                s.symbol_lists_index as usize,
+                                huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1,
                                 &mut s.code_length_histo[..],
                                 &mut s.next_symbol[..]);
     }
@@ -978,14 +982,11 @@ fn ReadHuffmanCode<AllocU8: alloc::Allocator<u8>,
           *code_length_histo = 0; // memset
         }
 
-        let max_code_length = huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH as usize + 1;
-        for (i, next_symbol_mut) in fast_mut!((s.next_symbol)[0; max_code_length])
-          .iter_mut()
-          .enumerate() {
-          *next_symbol_mut = i as i32 - (max_code_length as i32);
-          fast_mut!((s.symbols_lists_array)[(s.symbol_lists_index as i32
-                                 + i as i32
-                                 - (max_code_length as i32)) as usize]) = 0xFFFF;
+        const MAX_CODE_LENGTH: usize = huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1;
+        debug_assert_eq!(s.symbol_lists_index, MAX_CODE_LENGTH);
+        for i in 0..MAX_CODE_LENGTH {
+          s.next_symbol[i] = i as i32 - (MAX_CODE_LENGTH as i32);
+          s.symbols_lists_array[i] = 0xFFFF;
         }
 
         s.symbol = 0;
@@ -1045,6 +1046,7 @@ fn ReadBlockLength(table: &[HuffmanCode],
 
 // WARNING: if state is not BROTLI_STATE_READ_BLOCK_LENGTH_NONE, then
 // reading can't be continued with ReadBlockLength.
+#[inline]
 fn SafeReadBlockLengthIndex(substate_read_block_length: &state::BrotliRunningReadBlockLengthState,
                             block_length_index: u32,
                             table: &[HuffmanCode],
@@ -1062,6 +1064,7 @@ fn SafeReadBlockLengthIndex(substate_read_block_length: &state::BrotliRunningRea
     _ => (true, block_length_index),
   }
 }
+#[inline]
 fn SafeReadBlockLengthFromIndex<
     AllocHC : alloc::Allocator<HuffmanCode> >(s : &mut BlockTypeAndLengthState<AllocHC>,
                                               br : &mut bit_reader::BrotliBitReader,
@@ -1110,38 +1113,33 @@ macro_rules! SafeReadBlockLength (
 // Most of input values are 0 and 1. To reduce number of branches, we replace
 // inner for loop with do-while.
 //
+#[inline]
 fn InverseMoveToFrontTransform(v: &mut [u8],
                                v_len: u32,
                                mtf: &mut [u8;256],
                                mtf_upper_bound: &mut u32) {
   // Reinitialize elements that could have been changed.
-  let mut upper_bound: u32 = *mtf_upper_bound;
-  for (i, item) in fast_mut!((mtf)[0;(upper_bound as usize + 1usize)]).iter_mut().enumerate() {
+  let upper_bound = (*mtf_upper_bound as usize).min(255);
+  for (i, item) in mtf[..=upper_bound].iter_mut().enumerate() {
     *item = i as u8;
   }
 
   // Transform the input.
-  upper_bound = 0;
+  let mut new_upper_bound: u8 = 0;
   for v_i in fast_mut!((v)[0usize ; (v_len as usize)]).iter_mut() {
-    let mut index = (*v_i) as i32;
-    let value = fast!((mtf)[index as usize]);
-    upper_bound |= (*v_i) as u32;
+    let index = (*v_i) as usize;
+    let value = mtf[index];
+    new_upper_bound |= *v_i;
     *v_i = value;
-    if index <= 0 {
-      fast_mut!((mtf)[0]) = 0;
-    } else {
-      loop {
-        index -= 1;
-        fast_mut!((mtf)[(index + 1) as usize]) = fast!((mtf)[index as usize]);
-        if index <= 0 {
-          break;
-        }
-      }
+    let mut i = index;
+    while i > 0 {
+      mtf[i] = mtf[i - 1];
+      i -= 1;
     }
-    fast_mut!((mtf)[0]) = value;
+    mtf[0] = value;
   }
   // Remember amount of elements to be reinitialized.
-  *mtf_upper_bound = upper_bound;
+  *mtf_upper_bound = new_upper_bound as u32;
 }
 // Decodes a series of Huffman table using ReadHuffmanCode function.
 fn HuffmanTreeGroupDecode<AllocU8: alloc::Allocator<u8>,
@@ -1341,7 +1339,7 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
         // No break, continue to next state.
       }
       BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_HUFFMAN => {
-
+        s.ensure_context_map_table();
         let mut local_context_map_table = mem::replace(&mut s.context_map_table,
                                                        AllocHC::AllocatedMemory::default());
         let alphabet_size = *num_htrees + s.max_run_length_prefix;
@@ -1365,7 +1363,7 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
       BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_DECODE => {
         let mut context_index: u32 = s.context_index;
         let max_run_length_prefix: u32 = s.max_run_length_prefix;
-        let context_map = &mut context_map_arg.slice_mut();
+        let context_map = &mut fast_mut!((context_map_arg.slice_mut())[; context_map_size as usize]);
         let mut code: u32 = s.code;
         let mut rleCodeGoto = (code != 0xFFFF);
         while (rleCodeGoto || context_index < context_map_size) {
@@ -1405,15 +1403,10 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
             if (context_index + reps > context_map_size) {
               return BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT;
             }
-            loop {
-              fast_mut!((context_map)[context_index as usize]) = 0;
-              BROTLI_LOG_ARRAY_INDEX!(context_map, context_index as usize);
-              context_index += 1;
-              reps -= 1;
-              if reps == 0 {
-                break;
-              }
+            for slot in fast_mut!((context_map)[context_index as usize ; (context_index + reps) as usize]).iter_mut() {
+              *slot = 0;
             }
+            context_index += reps;
           }
         }
         // No break, continue to next state.
@@ -1551,26 +1544,25 @@ fn DetectTrivialLiteralBlockTypes<AllocU8: alloc::Allocator<u8>,
   for iter in s.trivial_literal_contexts.iter_mut() {
     *iter = 0;
   }
-  let mut i: usize = 0;
-  while i < fast!((s.block_type_length_state.num_block_types)[0]) as usize {
-    let offset = (i as usize) << kLiteralContextBits;
-    let mut error = 0usize;
-    let sample: usize = fast_slice!((s.context_map)[offset]) as usize;
-    let mut j = 0usize;
-    while j < ((1 as usize) << kLiteralContextBits) {
-      error |= fast_slice!((s.context_map)[offset + j]) as usize ^ sample;
-      j += 1;
-      error |= fast_slice!((s.context_map)[offset + j]) as usize ^ sample;
-      j += 1;
-      error |= fast_slice!((s.context_map)[offset + j]) as usize ^ sample;
-      j += 1;
-      error |= fast_slice!((s.context_map)[offset + j]) as usize ^ sample;
-      j += 1
+  let num_block_types = fast!((s.block_type_length_state.num_block_types)[0]) as usize;
+  if s.num_literal_htrees <= 1 {
+    for i in 0..num_block_types {
+      s.trivial_literal_contexts[i >> 5] |= 1u32 << (i & 31);
+    }
+    return;
+  }
+  let context_map = s.context_map.slice();
+  for (i, block_map) in context_map.chunks_exact(1usize << kLiteralContextBits)
+                                   .take(num_block_types)
+                                   .enumerate() {
+    let sample = block_map[0];
+    let mut error = 0u8;
+    for &entry in &block_map[1..] {
+      error |= entry ^ sample;
     }
     if error == 0 {
-      s.trivial_literal_contexts[i >> 5] |= ((1 as u32) << (i & 31));
+      s.trivial_literal_contexts[i >> 5] |= (1 as u32) << (i & 31);
     }
-    i += 1
   }
 }
 fn PrepareLiteralDecoding<AllocU8: alloc::Allocator<u8>,
@@ -3865,6 +3857,7 @@ fn SafeProcessCommands<AllocU8: alloc::Allocator<u8>,
 
 /* Returns the maximum number of distance symbols which can only represent
    distances not exceeding BROTLI_MAX_ALLOWED_DISTANCE. */
+#[inline]
 pub fn BrotliMaxDistanceSymbol(ndirect: u32, npostfix: u32) -> u32{
   let bound:[u32;kBrotliMaxPostfix + 1] = [0, 4, 12, 28];
   let diff:[u32;kBrotliMaxPostfix + 1] = [73, 126, 228, 424];
@@ -4558,10 +4551,14 @@ pub fn BrotliDecompressStreamWithDictionaryAndMetadata<AllocU8: alloc::Allocator
           // its two header bits, ISLAST and ISLASTEMPTY, are usually buffered.
           let empty_last_follows = bit_reader::BrotliGetAvailableBits(&s.br) >= 2 &&
             (bit_reader::BrotliGetBitsUnmasked(&s.br) & 3) == 3;
+          // The same goes for the context map table.
           if s.is_last_metablock == 0 && !empty_last_follows &&
-             s.literal_hgroup.codes.slice().len() != 0 && !EnsureBlockTrees(&mut s) {
-            result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES;
-            break;
+             s.literal_hgroup.codes.slice().len() != 0 {
+            if !EnsureBlockTrees(&mut s) {
+              result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES;
+              break;
+            }
+            s.ensure_context_map_table();
           }
           s.BrotliStateCleanupAfterMetablock();
           if (s.is_last_metablock == 0) {

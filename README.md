@@ -157,6 +157,12 @@ The current expected performance losses come from
 2. array bounds checks on every access
 3. no ability to load a full aligned 64 bit or 128 bit item from a [u8]
 
+With the `std` feature, `brotli_decode` uses an internal allocator that
+bulk-initializes Huffman storage by copying initialized entries. This reduces
+one-shot setup work without using uninitialized memory or unsafe code.
+Streaming constructors, custom allocators, and `brotli_decode_prealloc` keep
+their existing allocation interfaces.
+
 the system also enables all syscalls to be "frontloaded" in the initial generation
 of a memory pool for the allocator. Afterwards, SECCOMP can be activated or
 other mechanisms can be used to secure the application, if desired
