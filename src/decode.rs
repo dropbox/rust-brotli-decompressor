@@ -1199,6 +1199,13 @@ fn HuffmanTreeGroupDecode<AllocU8: alloc::Allocator<u8>,
   for htree_iter in
       fast_mut!((htrees.slice_mut())[s.htree_index as usize ; (group_num_htrees as usize)])
     .iter_mut() {
+    // Growing frees the old buffer.  Block trees must not be allocated after a
+    // free (see EnsureBlockTrees), so allocate them first in that rare case.
+    let room_needed = s.htree_next_offset as usize + max_table_size;
+    if hcodes.slice().len() < room_needed && !EnsureBlockTrees(&mut s) {
+      result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES;
+      break;
+    }
     if !huffman::ensure_codes_room(&mut hcodes, &mut s.alloc_hc, s.htree_next_offset as usize,
                                    max_table_size) {
       result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS;
