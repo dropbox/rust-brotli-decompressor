@@ -36,6 +36,7 @@ pub fn BitMask(n: u32) -> u32 {
   (!(u64::MAX << (n & 63))) as u32
 }
 
+#[derive(Clone, Copy)]
 pub struct BrotliBitReader {
   pub val_: reg_t, // pre-fetched bits
   pub bit_pos_: u32, // current bit-reading position in val_
