@@ -1354,7 +1354,9 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
         // No break, continue to next state.
       }
       BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_HUFFMAN => {
-
+        if !EnsureContextMapTable(s) {
+          return BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP;
+        }
         let mut local_context_map_table = mem::replace(&mut s.context_map_table,
                                                        AllocHC::AllocatedMemory::default());
         let alphabet_size = *num_htrees + s.max_run_length_prefix;
@@ -2863,11 +2865,29 @@ mod tests {
 
 // Allocates the block type and block length trees unless they already are.
 // Returns false if an allocation fails.
+// The table for decoding context maps, needed only by metablocks with more
+// than one tree in a group.
+fn EnsureContextMapTable<AllocU8: alloc::Allocator<u8>,
+                         AllocU32: alloc::Allocator<u32>,
+                         AllocHC: alloc::Allocator<HuffmanCode>>
+  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>)
+   -> bool {
+  if s.context_map_table.slice().len() == 0 {
+    s.context_map_table = s.alloc_hc.alloc_cell(huffman::BROTLI_HUFFMAN_MAX_SIZE_272 as usize);
+  }
+  s.context_map_table.slice().len() != 0
+}
+
+// Also allocates the context map table: the callers allocate everything a
+// later metablock may need before anything is freed.
 fn EnsureBlockTrees<AllocU8: alloc::Allocator<u8>,
                     AllocU32: alloc::Allocator<u32>,
                     AllocHC: alloc::Allocator<HuffmanCode>>
   (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>)
    -> bool {
+  if !EnsureContextMapTable(s) {
+    return false;
+  }
   if s.block_type_length_state.block_type_trees.slice().len() == 0 {
     s.block_type_length_state.block_type_trees =
       s.alloc_hc.alloc_cell(3 * huffman::BROTLI_HUFFMAN_MAX_SIZE_258 as usize);

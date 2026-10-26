@@ -527,8 +527,6 @@ impl <'brotli_state,
            alloc_hc : AllocHC) -> Self{
         let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default());
         retval.large_window = true;
-        retval.context_map_table = retval.alloc_hc.alloc_cell(
-          BROTLI_HUFFMAN_MAX_SIZE_272 as usize);
         BrotliInitBitReader(&mut retval.br);
         retval
     }
@@ -538,8 +536,6 @@ impl <'brotli_state,
            custom_dict: AllocU8::AllocatedMemory) -> Self{
         let custom_dict_len = custom_dict.slice().len();
         let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, custom_dict);
-        retval.context_map_table = retval.alloc_hc.alloc_cell(
-          BROTLI_HUFFMAN_MAX_SIZE_272 as usize);
         retval.large_window =  true;
         BrotliInitBitReader(&mut retval.br);
         // The dictionary becomes the furthest compound dictionary chunk;
@@ -560,8 +556,6 @@ impl <'brotli_state,
            alloc_u32 : AllocU32,
            alloc_hc : AllocHC) -> Self{
         let mut retval = make_brotli_state!(alloc_u8, alloc_u32, alloc_hc, AllocU8::AllocatedMemory::default());
-        retval.context_map_table = retval.alloc_hc.alloc_cell(
-          BROTLI_HUFFMAN_MAX_SIZE_272 as usize);
         retval.large_window =  false;
         BrotliInitBitReader(&mut retval.br);
         retval

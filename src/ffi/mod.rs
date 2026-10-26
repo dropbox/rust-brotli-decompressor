@@ -131,9 +131,6 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
         SubclassableAllocator::new(allocators.clone()),
         custom_dictionary,
       );
-      if decompressor.context_map_table.slice().len() == 0 {
-        return core::ptr::null_mut();
-      }
       decompressor.large_window = false;
       let to_box = BrotliDecoderState {
         custom_allocator: allocators.clone(),
@@ -788,12 +785,16 @@ mod tests {
   #[cfg(all(feature="std", not(feature="pass-through-ffi-panics"), panic="unwind"))]
   #[test]
   fn prealloc_catches_scratch_exhaustion() {
+    // Decoding needs tree groups and a ring buffer, which the empty scratch
+    // buffers cannot provide.
+    let input = include_bytes!("../../testdata/alice29.txt.compressed");
+    let mut output = [0u8; 256];
     let ret = unsafe {
       BrotliDecoderDecompressPrealloc(
-        0,
-        core::ptr::null(),
-        0,
-        core::ptr::null_mut(),
+        input.len(),
+        input.as_ptr(),
+        output.len(),
+        output.as_mut_ptr(),
         0,
         core::ptr::null_mut(),
         0,

@@ -65,9 +65,9 @@ extern "C" fn test_free(opaque: *mut c_void, allocation: *mut c_void) {
 
 #[test]
 fn create_instance_returns_null_when_custom_allocator_is_exhausted() {
-  // Failure 0 is the eagerly-created Huffman table; failure 1 is the outer
-  // BrotliDecoderState allocation after that table was created.
-  for fail_at in 0..2 {
+  // Creating an instance allocates only the outer BrotliDecoderState; the
+  // decoder's tables are allocated as decoding needs them.
+  for fail_at in 0..1 {
     let mut allocator = FailingAllocator::new(Some(fail_at));
     let opaque = &mut allocator as *mut FailingAllocator as *mut c_void;
     let state = unsafe {
