@@ -58,12 +58,7 @@ fn variable_reads_match_reference_bits_and_cursors() {
       // Fast reads require a warmed-up register (bit_pos < 64).
       for position in 0..64 {
         for count in 0..33 {
-          let mut reader = BrotliBitReader {
-            val_: reference_word(&input[..8]),
-            bit_pos_: position,
-            next_in: 8,
-            avail_in: input.len() as u32 - 8,
-          };
+          let mut reader = super::tests::old_layout(reference_word(&input[..8]), position, input.len() as u32 - 8, 8);
           let expected = reference_bits(input, position as usize, count);
           assert_eq!(
             BrotliReadBits(&mut reader, count, input),

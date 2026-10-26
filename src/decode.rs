@@ -4023,6 +4023,7 @@ pub fn BrotliDecompressStreamWithDictionaryAndMetadata<AllocU8: alloc::Allocator
     local_input = xinput;
     s.br.avail_in = *available_in as u32;
     s.br.next_in = *input_offset as u32;
+    bit_reader::BrotliBitReaderClearUnclaimed(&mut s.br);
   } else {
     result = BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;
     let copy_len = core::cmp::min(saved_buffer.len() - s.buffer_length as usize, *available_in);
@@ -4034,6 +4035,7 @@ pub fn BrotliDecompressStreamWithDictionaryAndMetadata<AllocU8: alloc::Allocator
     }
     local_input = &saved_buffer[..];
     s.br.next_in = 0;
+    bit_reader::BrotliBitReaderClearUnclaimed(&mut s.br);
   }
   loop {
     match result {
@@ -4065,6 +4067,7 @@ pub fn BrotliDecompressStreamWithDictionaryAndMetadata<AllocU8: alloc::Allocator
                 local_input = xinput;
                 s.br.avail_in = *available_in as u32;
                 s.br.next_in = *input_offset as u32;
+                bit_reader::BrotliBitReaderClearUnclaimed(&mut s.br);
                 continue;
               } else if *available_in != 0 {
                 // Not enough data in buffer, but can take one more byte from
@@ -4700,6 +4703,7 @@ fn read_metadata_block(
             callback.chunk(&all_remaining_input.split_at(remaining_bytes).0);
         }
         br.next_in += remaining_bytes as u32;
+        bit_reader::BrotliBitReaderClearUnclaimed(br);
         br.avail_in -= remaining_bytes as u32;
         *meta_block_remaining_len -= remaining_bytes as i32;
     }
