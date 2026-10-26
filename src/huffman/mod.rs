@@ -39,7 +39,9 @@ pub const BROTLI_HUFFMAN_MAX_SIZE_26: u32 = 396;
 pub const BROTLI_HUFFMAN_MAX_SIZE_258: u32 = 632;
 pub const BROTLI_HUFFMAN_MAX_SIZE_272: u32 = 646;
 
-#[repr(C)]
+// 4-byte aligned so that a copy, and the fill of a new table, is one 32-bit
+// access rather than separate 16- and 8-bit ones.
+#[repr(C, align(4))]
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub struct HuffmanCode {
   pub value: u16, // symbol value or table offset

@@ -28,6 +28,9 @@ extern "C" {
  */
 typedef struct BrotliDecoderStateStruct BrotliDecoderState;
 
+/* The Rust definition is 4-byte aligned; buffers of HuffmanCode passed in
+   must be too (any malloc result is), or the call fails with an invalid
+   argument error. */
 typedef struct HuffmanCodeStruct {
     uint16_t value;
     uint8_t bits;
