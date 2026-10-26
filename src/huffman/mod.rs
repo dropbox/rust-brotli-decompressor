@@ -6,6 +6,7 @@ use alloc;
 use alloc::Allocator;
 use alloc::SliceWrapper;
 use alloc::SliceWrapperMut;
+use core::convert::TryInto;
 use core::default::Default;
 pub const BROTLI_HUFFMAN_MAX_CODE_LENGTH: usize = 15;
 
@@ -20,6 +21,38 @@ pub const BROTLI_HUFFMAN_MAX_CODE_LENGTHS_SIZE: usize = 704;
 // 1304, 1336, 1368, 1400, 1432, 1464, 1496, 1528];
 //
 pub const BROTLI_HUFFMAN_MAX_TABLE_SIZE: u32 = 1080;
+
+// Huffman table lookup.  A slice is bounds checked.  A fixed window clamps the
+// index to its last entry instead, which the compiler can see is in bounds, so
+// the hot decode loops pay no check: root lookups are below 256 already, and
+// second-level ones cost a conditional move.  A window holds a whole tree when
+// it is BrotliHuffmanMaxTableSize long, so a valid index is never clamped.
+pub trait HuffmanTable {
+  fn entry(&self, index: usize) -> HuffmanCode;
+}
+
+impl HuffmanTable for [HuffmanCode] {
+  #[inline(always)]
+  fn entry(&self, index: usize) -> HuffmanCode {
+    fast!((self)[index])
+  }
+}
+
+impl<const N: usize> HuffmanTable for [HuffmanCode; N] {
+  #[inline(always)]
+  fn entry(&self, index: usize) -> HuffmanCode {
+    self[core::cmp::min(index, N - 1)]
+  }
+}
+
+// Window sizes for the literal and insert-and-copy trees, the ones decoded
+// several times per command: the largest tables of their 256- and 704-symbol
+// alphabets, which HuffmanTreeGroupDecode leaves room for anyway.
+pub const LITERAL_TABLE_WINDOW: usize = 256 + 376;
+pub const INSERT_COPY_TABLE_WINDOW: usize = 704 + 376;
+
+static EMPTY_TABLE: [HuffmanCode; INSERT_COPY_TABLE_WINDOW] =
+  [HuffmanCode { value: 0, bits: 0 }; INSERT_COPY_TABLE_WINDOW];
 
 // Upper bound on the table BrotliBuildHuffmanTable produces for an alphabet of
 // `alphabet_size_limit` symbols: a 256-entry root table plus at most
@@ -111,6 +144,18 @@ impl<AllocU32 : alloc::Allocator<u32>,
         let typical = 256 + (max - 256) / 4;
         max + (self.num_htrees as usize).saturating_sub(1) * typical
     }
+}
+
+// The `N`-entry window of `codes` starting at `offset`; HuffmanTreeGroupDecode
+// makes room for it when it builds the tree there.  An all-zero table if there
+// is no such tree.
+#[inline(always)]
+pub fn table_window<const N: usize>(codes: &[HuffmanCode], offset: Option<usize>) -> &[HuffmanCode; N] {
+  let window = offset.and_then(|off| codes.get(off..off.checked_add(N)?));
+  match window {
+    Some(w) => w.try_into().unwrap(),
+    None => (&EMPTY_TABLE[..N]).try_into().unwrap(),
+  }
 }
 
 // Makes room for one more worst-case table at `offset` in `codes`, keeping the

@@ -34,6 +34,7 @@ use ::shared_dictionary::{SHARED_BROTLI_MIN_DICTIONARY_WORD_LENGTH,
                           SHARED_BROTLI_MAX_TRANSFORM_AFFIX_LENGTH,
                           DictionaryLookupError};
 pub use huffman::{HuffmanCode, HuffmanTreeGroup};
+use huffman::{HuffmanTable, LITERAL_TABLE_WINDOW, INSERT_COPY_TABLE_WINDOW};
 #[repr(C)]
 #[derive(Debug)]
 pub enum BrotliResult {
@@ -379,16 +380,16 @@ fn DecodeMetaBlockLength<AllocU8: alloc::Allocator<u8>,
 // bits that correspond to the decoded symbol.
 // bits MUST contain at least 15 (BROTLI_HUFFMAN_MAX_CODE_LENGTH) valid bits.
 #[inline(always)]
-fn DecodeSymbol(bits: u32, table: &[HuffmanCode], br: &mut bit_reader::BrotliBitReader) -> u32 {
+fn DecodeSymbol<T: HuffmanTable + ?Sized>(bits: u32, table: &T, br: &mut bit_reader::BrotliBitReader) -> u32 {
   let mut table_index = bits & HUFFMAN_TABLE_MASK;
-  let mut table_element = fast!((table)[table_index as usize]);
+  let mut table_element = table.entry(table_index as usize);
   if table_element.bits > HUFFMAN_TABLE_BITS as u8 {
     let nbits = table_element.bits - HUFFMAN_TABLE_BITS as u8;
     bit_reader::BrotliDropBits(br, HUFFMAN_TABLE_BITS);
     table_index += table_element.value as u32;
-    table_element = fast!((table)[(table_index
+    table_element = table.entry((table_index
                            + ((bits >> HUFFMAN_TABLE_BITS)
-                              & bit_reader::BitMask(nbits as u32))) as usize]);
+                              & bit_reader::BitMask(nbits as u32))) as usize);
   }
   bit_reader::BrotliDropBits(br, table_element.bits as u32);
   table_element.value as u32
@@ -397,27 +398,27 @@ fn DecodeSymbol(bits: u32, table: &[HuffmanCode], br: &mut bit_reader::BrotliBit
 // Reads and decodes the next Huffman code from bit-stream.
 // This method peeks 16 bits of input and drops 0 - 15 of them.
 #[inline(always)]
-fn ReadSymbol(table: &[HuffmanCode], br: &mut bit_reader::BrotliBitReader, input: &[u8]) -> u32 {
+fn ReadSymbol<T: HuffmanTable + ?Sized>(table: &T, br: &mut bit_reader::BrotliBitReader, input: &[u8]) -> u32 {
   DecodeSymbol(bit_reader::BrotliGet16BitsUnmasked(br, input), table, br)
 }
 
 // Same as DecodeSymbol, but it is known that there is less than 15 bits of
 // input are currently available.
-fn SafeDecodeSymbol(table: &[HuffmanCode],
+fn SafeDecodeSymbol<T: HuffmanTable + ?Sized>(table: &T,
                     mut br: &mut bit_reader::BrotliBitReader,
                     result: &mut u32)
                     -> bool {
   let mut available_bits = bit_reader::BrotliGetAvailableBits(br);
   if (available_bits == 0) {
-    if (fast!((table)[0]).bits == 0) {
-      *result = fast!((table)[0]).value as u32;
+    if (table.entry(0).bits == 0) {
+      *result = table.entry(0).value as u32;
       return true;
     }
     return false; /* No valid bits at all. */
   }
   let mut val = bit_reader::BrotliGetBitsUnmasked(br) as u32;
   let table_index = (val & HUFFMAN_TABLE_MASK) as usize;
-  let table_element = fast!((table)[table_index]);
+  let table_element = table.entry(table_index);
   if (table_element.bits <= HUFFMAN_TABLE_BITS as u8) {
     if (table_element.bits as u32 <= available_bits) {
       bit_reader::BrotliDropBits(&mut br, table_element.bits as u32);
@@ -434,7 +435,7 @@ fn SafeDecodeSymbol(table: &[HuffmanCode],
   // Speculatively drop HUFFMAN_TABLE_BITS.
   val = (val & bit_reader::BitMask(table_element.bits as u32)) >> HUFFMAN_TABLE_BITS;
   available_bits -= HUFFMAN_TABLE_BITS;
-  let table_sub_element = fast!((table)[table_index + table_element.value as usize + val as usize]);
+  let table_sub_element = table.entry(table_index + table_element.value as usize + val as usize);
   if (available_bits < table_sub_element.bits as u32) {
     return false; /* Not enough bits for the second level. */
   }
@@ -444,7 +445,7 @@ fn SafeDecodeSymbol(table: &[HuffmanCode],
   true
 }
 
-fn SafeReadSymbol(table: &[HuffmanCode],
+fn SafeReadSymbol<T: HuffmanTable + ?Sized>(table: &T,
                   br: &mut bit_reader::BrotliBitReader,
                   result: &mut u32,
                   input: &[u8])
@@ -461,8 +462,8 @@ fn SafeReadSymbol(table: &[HuffmanCode],
 
 // Makes a look-up in first level Huffman table. Peeks 8 bits.
 #[inline(always)]
-fn PreloadSymbol(safe: bool,
-                 table: &[HuffmanCode],
+fn PreloadSymbol<T: HuffmanTable + ?Sized>(safe: bool,
+                 table: &T,
                  br: &mut bit_reader::BrotliBitReader,
                  bits: &mut u32,
                  value: &mut u32,
@@ -471,7 +472,7 @@ fn PreloadSymbol(safe: bool,
     return;
   }
   let table_element =
-    fast!((table)[bit_reader::BrotliGetBits(br, HUFFMAN_TABLE_BITS, input) as usize]);
+    table.entry(bit_reader::BrotliGetBits(br, HUFFMAN_TABLE_BITS, input) as usize);
   *bits = table_element.bits as u32;
   *value = table_element.value as u32;
 }
@@ -479,7 +480,7 @@ fn PreloadSymbol(safe: bool,
 // Decodes the next Huffman code using data prepared by PreloadSymbol.
 // Reads 0 - 15 bits. Also peeks 8 following bits.
 #[inline(always)]
-fn ReadPreloadedSymbol(table: &[HuffmanCode],
+fn ReadPreloadedSymbol<T: HuffmanTable + ?Sized>(table: &T,
                        br: &mut bit_reader::BrotliBitReader,
                        bits: &mut u32,
                        value: &mut u32,
@@ -492,7 +493,7 @@ fn ReadPreloadedSymbol(table: &[HuffmanCode],
     let mask = bit_reader::BitMask((*bits - HUFFMAN_TABLE_BITS));
     bit_reader::BrotliDropBits(br, HUFFMAN_TABLE_BITS);
     ext_index += (val >> HUFFMAN_TABLE_BITS) & mask;
-    let ext = fast!((table)[ext_index as usize]);
+    let ext = table.entry(ext_index as usize);
     bit_reader::BrotliDropBits(br, ext.bits as u32);
     ext.value as u32
   } else {
@@ -1195,6 +1196,9 @@ fn HuffmanTreeGroupDecode<AllocU8: alloc::Allocator<u8>,
     BrotliRunningTreeGroupState::BROTLI_STATE_TREE_GROUP_LOOP => {}
   }
   let mut result = BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS;
+  // This room also holds the windows the command loop reads the literal and
+  // insert-and-copy trees through (LITERAL_TABLE_WINDOW and
+  // INSERT_COPY_TABLE_WINDOW are the max table sizes of their alphabets).
   let max_table_size = huffman::BrotliHuffmanMaxTableSize(alphabet_size.max(group_max_symbol));
   for htree_iter in
       fast_mut!((htrees.slice_mut())[s.htree_index as usize ; (group_num_htrees as usize)])
@@ -3058,7 +3062,7 @@ pub fn ReadCommandInternal<AllocU8: alloc::Allocator<u8>,
    br: &mut bit_reader::BrotliBitReader,
    insert_length: &mut i32,
    input: &[u8],
-   insert_copy_tree: &[HuffmanCode])
+   insert_copy_tree: &InsertCopyTable)
    -> bool {
   let mut cmd_code: u32 = 0;
   let mut insert_len_extra: u32 = 0;
@@ -3299,20 +3303,34 @@ fn huffman_tree<AllocU32: alloc::Allocator<u32>, AllocHC: alloc::Allocator<Huffm
   }
 }
 
+// As huffman_tree, as a fixed window of N entries (see huffman::HuffmanTable).
+#[inline(always)]
+fn huffman_window<AllocU32: alloc::Allocator<u32>, AllocHC: alloc::Allocator<HuffmanCode>,
+                  const N: usize>(
+  group: &HuffmanTreeGroup<AllocU32, AllocHC>,
+  index: usize,
+) -> &[HuffmanCode; N] {
+  let offset = group.htrees.slice().get(index).map(|o| *o as usize);
+  huffman::table_window::<N>(group.codes.slice(), offset)
+}
+
+type LiteralTable = [HuffmanCode; LITERAL_TABLE_WINDOW];
+type InsertCopyTable = [HuffmanCode; INSERT_COPY_TABLE_WINDOW];
+
 // Fills trees[context] with the literal tree of each of the 64 contexts of the
 // literal block type whose context map starts at context_map[slice_index].
 #[inline(never)]
 fn fill_context_trees<'a, AllocU32: alloc::Allocator<u32>, AllocHC: alloc::Allocator<HuffmanCode>>(
-  trees: &mut [&'a [HuffmanCode]; 64],
+  trees: &mut [&'a LiteralTable; 64],
   group: &'a HuffmanTreeGroup<AllocU32, AllocHC>,
   context_map: &[u8],
   slice_index: usize,
 ) {
   match context_map.get(slice_index..).and_then(|map| map.get(..64)) {
     Some(map) => for (tree, index) in trees.iter_mut().zip(map.iter()) {
-      *tree = huffman_tree(group, *index as usize);
+      *tree = huffman_window(group, *index as usize);
     },
-    None => *trees = [&[]; 64],
+    None => *trees = [huffman::table_window(&[], None); 64],
   }
 }
 
@@ -3359,8 +3377,8 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
     let literal_hgroup = &saved_literal_hgroup;
     let distance_hgroup = &saved_distance_hgroup;
     let insert_copy_hgroup = &saved_insert_copy_hgroup;
-    let mut insert_copy_tree = huffman_tree(insert_copy_hgroup, s.htree_command_index as usize);
-    let mut context_trees: [&[HuffmanCode]; 64] = [&[]; 64];
+    let mut insert_copy_tree: &InsertCopyTable = huffman_window(insert_copy_hgroup, s.htree_command_index as usize);
+    let mut context_trees: [&LiteralTable; 64] = [huffman::table_window(&[], None); 64];
     // The tree for s.dist_htree_index, which most distances share with the
     // previous one.
     let mut distance_tree_index = s.dist_htree_index;
@@ -3388,7 +3406,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                 break; // return
               }
             }
-            insert_copy_tree = huffman_tree(insert_copy_hgroup, s.htree_command_index as usize);
+            insert_copy_tree = huffman_window(insert_copy_hgroup, s.htree_command_index as usize);
             s.state = BrotliRunningState::BROTLI_STATE_COMMAND_BEGIN;
             continue; // goto CommandBegin;
           }
@@ -3411,7 +3429,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
           if (s.trivial_literal_context != 0) {
             let mut bits: u32 = 0;
             let mut value: u32 = 0;
-            let mut literal_htree = huffman_tree(literal_hgroup, s.literal_htree_index as usize);
+            let mut literal_htree: &LiteralTable = huffman_window(literal_hgroup, s.literal_htree_index as usize);
             PreloadSymbol(safe, literal_htree, &mut br, &mut bits, &mut value, input);
             let mut inner_return: bool = false;
             let mut inner_continue: bool = false;
@@ -3432,7 +3450,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                     break;
                   }
                 }
-                literal_htree = huffman_tree(literal_hgroup, s.literal_htree_index as usize);
+                literal_htree = huffman_window(literal_hgroup, s.literal_htree_index as usize);
                 PreloadSymbol(safe, literal_htree, &mut br, &mut bits, &mut value, input);
                 if (s.trivial_literal_context == 0) {
                   s.state = BrotliRunningState::BROTLI_STATE_COMMAND_INNER;
@@ -3524,13 +3542,13 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
               BROTLI_LOG_UINT!(p1);
               BROTLI_LOG_UINT!(p2);
               BROTLI_LOG_UINT!(context);
-              let hc: &[HuffmanCode] = if !safe {
+              let hc: &LiteralTable = if !safe {
                 // context < 64: every kContextLookup entry is (see the test
                 // context_lookup_values_fit_the_context_map).
                 context_trees[context as usize & 63]
               } else {
                 let i = fast_slice!((s.context_map)[s.context_map_slice_index + context as usize]);
-                huffman_tree(literal_hgroup, i as usize)
+                huffman_window(literal_hgroup, i as usize)
               };
               p2 = p1;
               if (!safe) {
