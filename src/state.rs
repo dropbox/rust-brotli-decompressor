@@ -843,9 +843,8 @@ impl <'brotli_state,
 
     // Allocates the table the context maps are decoded with unless it already
     // is. It is only needed for a context map of more than one tree, which
-    // short streams often do not have. Allocation failure leaves it empty, so
-    // that decoding such a context map fails as it would have with the table
-    // allocated, empty, at creation.
+    // short streams often do not have. Allocation failure leaves it empty, and
+    // decoding such a context map then fails with an allocation error.
     pub(crate) fn ensure_context_map_table(self : &mut Self) {
         if self.context_map_table.slice().len() == 0 {
             self.context_map_table = self.alloc_hc.alloc_cell(

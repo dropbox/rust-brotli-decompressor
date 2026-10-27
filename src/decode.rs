@@ -1340,6 +1340,9 @@ fn DecodeContextMapInner<AllocU8: alloc::Allocator<u8>,
       }
       BrotliRunningContextMapState::BROTLI_STATE_CONTEXT_MAP_HUFFMAN => {
         s.ensure_context_map_table();
+        if s.context_map_table.slice().len() == 0 {
+          return BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP;
+        }
         let mut local_context_map_table = mem::replace(&mut s.context_map_table,
                                                        AllocHC::AllocatedMemory::default());
         let alphabet_size = *num_htrees + s.max_run_length_prefix;
