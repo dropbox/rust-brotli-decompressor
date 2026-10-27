@@ -55,12 +55,12 @@ fn variable_reads_match_reference_bits_and_cursors() {
     pattern(&mut storage, seed);
     for alignment in 0..8 {
       let input = &storage[alignment..];
-      // Fast reads require a warmed-up register (bit_pos < 64).
+      // Fast reads require a warmed-up register (bit_pos > 0).
       for position in 0..64 {
         for count in 0..33 {
           let mut reader = BrotliBitReader {
-            val_: reference_word(&input[..8]),
-            bit_pos_: position,
+            val_: reference_word(&input[..8]) >> position,
+            bit_pos_: 64 - position,
             next_in: 8,
             avail_in: input.len() as u32 - 8,
           };

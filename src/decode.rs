@@ -4036,6 +4036,7 @@ pub fn BrotliDecompressStreamWithDictionaryAndMetadata<AllocU8: alloc::Allocator
             } else {
               // Input stream doesn't contain enough input.
               // Copy tail to internal buffer and return.
+              bit_reader::BrotliBitReaderNormalize(&mut s.br);
               *input_offset = s.br.next_in as usize;
               *available_in = s.br.avail_in as usize;
               let buffer_length = s.buffer_length as usize;

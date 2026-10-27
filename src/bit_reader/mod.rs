@@ -37,8 +37,8 @@ pub fn BitMask(n: u32) -> u32 {
 }
 
 pub struct BrotliBitReader {
-  pub val_: reg_t, // pre-fetched bits
-  pub bit_pos_: u32, // current bit-reading position in val_
+  pub val_: reg_t, // pre-fetched bits, right-justified at bit 0
+  pub bit_pos_: u32, // number of valid unread bits in val_ (0..=64)
   pub next_in: u32, // the byte we're reading from
   pub avail_in: u32,
 }
@@ -55,8 +55,8 @@ impl Default for BrotliBitReader {
 }
 
 pub struct BrotliBitReaderState {
-  pub val_: reg_t, // pre-fetched bits
-  pub bit_pos_: u32, // current bit-reading position in val_
+  pub val_: reg_t, // pre-fetched bits, right-justified at bit 0
+  pub bit_pos_: u32, // number of valid unread bits in val_ (0..=64)
   pub next_in: u32, // the byte we're reading from
   pub avail_in: u32,
 }
@@ -88,8 +88,9 @@ pub fn BrotliBitReaderRestoreState(to: &mut BrotliBitReader, from: &BrotliBitRea
   to.avail_in = from.avail_in;
 }
 
+#[inline(always)]
 pub fn BrotliGetAvailableBits(br: &BrotliBitReader) -> u32 {
-  ((::core::mem::size_of::<reg_t>() as u32) << 3) - br.bit_pos_
+  br.bit_pos_
 }
 
 // The bit reader keeps its cursor in u32, so the one-past-the-end offset must
@@ -149,92 +150,48 @@ pub const BROTLI_ALIGNED_READ: u8 = 0;
 
 #[inline(always)]
 pub fn BrotliFillBitWindow(br: &mut BrotliBitReader, n_bits: u32, input: &[u8]) {
-  if ::core::mem::size_of::<reg_t>() == 8 {
-    if (n_bits <= 8 && BROTLI_ALIGNED_READ == 0 && br.bit_pos_ >= 56) {
-      br.val_ >>= 56;
-      br.bit_pos_ ^= 56;  // here same as -= 56 because of the if condition
-      br.val_ |= BrotliLoad64LE(input, br.next_in) << 8;
-      br.avail_in -= 7;
-      br.next_in += 7;
-    } else if (BROTLI_ALIGNED_READ == 0 && n_bits <= 16 && br.bit_pos_ >= 48) {
-      br.val_ >>= 48;
-      br.bit_pos_ ^= 48;  // here same as -= 48 because of the if condition
-      br.val_ |= BrotliLoad64LE(input, br.next_in) << 16;
-      br.avail_in -= 6;
-      br.next_in += 6;
-    } else if br.bit_pos_ >= 32 {
-      br.val_ >>= 32;
-      br.bit_pos_ ^= 32;  /* here same as -= 32 because of the if condition */
-      br.val_ |= (BrotliLoad32LE(input, br.next_in) as reg_t) << 32;
-      br.avail_in -= BROTLI_SHORT_FILL_BIT_WINDOW_READ;
-      br.next_in += BROTLI_SHORT_FILL_BIT_WINDOW_READ;
-    }
-  } else if (BROTLI_ALIGNED_READ == 0 && (n_bits <= 8)) {
-    if (br.bit_pos_ >= 24) {
-      br.val_ >>= 24;
-      br.bit_pos_ ^= 24;  // here same as -= 24 because of the if condition
-      br.val_ |= (BrotliLoad32LE(input, br.next_in) << 8) as u64;
-      br.avail_in -= 3;
-      br.next_in += 3;
-    }
-  } else if br.bit_pos_ >= 16 {
-    br.val_ >>= 16;
-    br.bit_pos_ ^= 16;  /* here same as -= 16 because of the if condition */
-    br.val_ |= (BrotliLoad16LE(input, br.next_in) as reg_t) << 16;
-    br.avail_in -= BROTLI_SHORT_FILL_BIT_WINDOW_READ;
-    br.next_in += BROTLI_SHORT_FILL_BIT_WINDOW_READ;
-  }
+  BrotliFillBitWindowCompileTimeNbits(br, n_bits, input);
 }
 
 #[inline(always)]
 fn BrotliFillBitWindowCompileTimeNbits(br: &mut BrotliBitReader, n_bits: u32, input: &[u8]) {
   if ::core::mem::size_of::<reg_t>() == 8 {
     if BROTLI_ALIGNED_READ == 0 && n_bits <= 8 {
-      // !BROTLI_ALIGNED_READ && IS_CONSTANT(n_bits) && (n_bits <= 8)) {
-      if br.bit_pos_ >= 56 {
-        br.val_ >>= 56;
-        br.bit_pos_ ^= 56;  /* here same as -= 56 because of the if condition */
-        br.val_ |= BrotliLoad64LE(input, br.next_in) << 8;
+      if br.bit_pos_ <= 8 {
+        br.val_ |= BrotliLoad64LE(input, br.next_in) << (br.bit_pos_ & 63);
+        br.bit_pos_ += 56;
         br.avail_in -= 7;
         br.next_in += 7;
       }
     } else if BROTLI_ALIGNED_READ == 0 && n_bits <= 16 {
-      // (!BROTLI_ALIGNED_READ && IS_CONSTANT(n_bits) && (n_bits <= 16)) {
-      if br.bit_pos_ >= 48 {
-        br.val_ >>= 48;
-        br.bit_pos_ ^= 48;  /* here same as -= 48 because of the if condition */
-        br.val_ |= BrotliLoad64LE(input, br.next_in) << 16;
+      if br.bit_pos_ <= 16 {
+        br.val_ |= BrotliLoad64LE(input, br.next_in) << (br.bit_pos_ & 63);
+        br.bit_pos_ += 48;
         br.avail_in -= 6;
         br.next_in += 6;
       }
-    } else if br.bit_pos_ >= 32 {
-      br.val_ >>= 32;
-      br.bit_pos_ ^= 32;  /* here same as -= 32 because of the if condition */
-      br.val_ |= (BrotliLoad32LE(input, br.next_in) as reg_t) << 32;
+    } else if br.bit_pos_ <= 32 {
+      br.val_ |= (BrotliLoad32LE(input, br.next_in) as reg_t) << (br.bit_pos_ & 63);
+      br.bit_pos_ += 32;
       br.avail_in -= BROTLI_SHORT_FILL_BIT_WINDOW_READ;
       br.next_in += BROTLI_SHORT_FILL_BIT_WINDOW_READ;
     }
-  } else if
-      // BROTLI_ALIGNED_READ == false &&
-      n_bits <= 8 {
-    // !BROTLI_ALIGNED_READ && IS_CONSTANT(n_bits) && (n_bits <= 8)) {
-    if br.bit_pos_ >= 24 {
-      br.val_ >>= 24;
-      br.bit_pos_ ^= 24;  /* here same as -= 24 because of the if condition */
-      br.val_ |= (BrotliLoad32LE(input, br.next_in) as reg_t) << 8;
+  } else if n_bits <= 8 {
+    if br.bit_pos_ <= 8 {
+      br.val_ |= (BrotliLoad32LE(input, br.next_in) as reg_t) << (br.bit_pos_ & 31);
+      br.bit_pos_ += 24;
       br.avail_in -= 3;
       br.next_in += 3;
     }
-  } else if br.bit_pos_ >= 16 {
-      br.val_ >>= 16;
-      br.bit_pos_ ^= 16;  /* here same as -= 16 because of the if condition */
-      br.val_ |= (BrotliLoad16LE(input, br.next_in) as reg_t) << 16;
-      br.avail_in -= BROTLI_SHORT_FILL_BIT_WINDOW_READ;
-      br.next_in += BROTLI_SHORT_FILL_BIT_WINDOW_READ;
+  } else if br.bit_pos_ <= 16 {
+    br.val_ |= (BrotliLoad16LE(input, br.next_in) as reg_t) << (br.bit_pos_ & 31);
+    br.bit_pos_ += 16;
+    br.avail_in -= BROTLI_SHORT_FILL_BIT_WINDOW_READ;
+    br.next_in += BROTLI_SHORT_FILL_BIT_WINDOW_READ;
   }
 }
 
-// Mosltly like BrotliFillBitWindow, but guarantees only 16 bits and reads no
+// Mostly like BrotliFillBitWindow, but guarantees only 16 bits and reads no
 // more than BROTLI_SHORT_FILL_BIT_WINDOW_READ bytes of input.
 pub fn BrotliFillBitWindow16(br: &mut BrotliBitReader, input: &[u8]) {
   BrotliFillBitWindowCompileTimeNbits(br, 17, input);
@@ -245,23 +202,18 @@ pub fn BrotliPullByte(br: &mut BrotliBitReader, input: &[u8]) -> bool {
   if br.avail_in == 0 {
     return false;
   }
-  br.val_ >>= 8;
-  if ::core::mem::size_of::<reg_t>() == 8 {
-    br.val_ |= (fast!((input)[br.next_in as usize]) as reg_t) << 56;
-  } else {
-    br.val_ |= (fast!((input)[br.next_in as usize]) as reg_t) << 24;
-  }
-  br.bit_pos_ -= 8;
+  br.val_ |= (fast!((input)[br.next_in as usize]) as reg_t) << (br.bit_pos_ & 63);
+  br.bit_pos_ += 8;
   br.avail_in -= 1;
   br.next_in += 1;
   true
 }
 
 // Returns currently available bits.
-// The number of valid bits could be calclulated by BrotliGetAvailableBits.
+// The number of valid bits could be calculated by BrotliGetAvailableBits.
 #[inline(always)]
 pub fn BrotliGetBitsUnmasked(br: &BrotliBitReader) -> reg_t {
-  br.val_ >> br.bit_pos_
+  br.val_
 }
 
 // Like BrotliGetBits, but does not mask the result.
@@ -269,10 +221,11 @@ pub fn BrotliGetBitsUnmasked(br: &BrotliBitReader) -> reg_t {
 #[inline(always)]
 pub fn BrotliGet16BitsUnmasked(br: &mut BrotliBitReader, input: &[u8]) -> u32 {
   BrotliFillBitWindowCompileTimeNbits(br, 16, input);
-  (BrotliGetBitsUnmasked(br) & (0xffffffffu32 as reg_t)) as u32
+  BrotliGetBitsUnmasked(br) as u32
 }
 
 // Returns the specified number of bits from br without advancing bit pos.
+#[allow(dead_code)]
 #[inline(always)]
 pub fn BrotliGetBits(br: &mut BrotliBitReader, n_bits: u32, input: &[u8]) -> u32 {
   BrotliFillBitWindow(br, n_bits, input);
@@ -305,7 +258,17 @@ pub fn BrotliSafeGetBits(br: &mut BrotliBitReader,
 // Advances the bit pos by n_bits.
 #[inline(always)]
 pub fn BrotliDropBits(br: &mut BrotliBitReader, n_bits: u32) {
-  br.bit_pos_ += n_bits;
+  br.bit_pos_ -= n_bits;
+  br.val_ >>= n_bits & 63;
+}
+
+// Clears any lookahead bits above `bit_pos_` before skipping or unloading bytes.
+#[inline(always)]
+pub fn BrotliBitReaderNormalize(br: &mut BrotliBitReader) {
+  let reg_bits = (::core::mem::size_of::<reg_t>() as u32) << 3;
+  if br.bit_pos_ < reg_bits {
+    br.val_ &= (1u64 << (br.bit_pos_ & 63)) - 1;
+  }
 }
 
 pub fn BrotliBitReaderUnload(br: &mut BrotliBitReader) {
@@ -313,12 +276,8 @@ pub fn BrotliBitReaderUnload(br: &mut BrotliBitReader) {
   let unused_bits: u32 = unused_bytes << 3;
   br.avail_in += unused_bytes;
   br.next_in -= unused_bytes;
-  if unused_bits as usize == (::core::mem::size_of::<reg_t>() << 3) {
-    br.val_ = 0;
-  } else {
-    br.val_ <<= unused_bits;
-  }
-  br.bit_pos_ += unused_bits;
+  br.bit_pos_ -= unused_bits;
+  BrotliBitReaderNormalize(br);
 }
 
 // Reads the specified number of bits from br and advances the bit pos.
@@ -408,6 +367,7 @@ pub fn BrotliJumpToByteBoundary(br: &mut BrotliBitReader) -> bool {
   if pad_bits_count != 0 {
     BrotliTakeBits(br, pad_bits_count, &mut pad_bits);
   }
+  BrotliBitReaderNormalize(br);
   pad_bits == 0
 }
 
@@ -448,6 +408,7 @@ pub fn BrotliCopyBytes(dest: &mut [u8], br: &mut BrotliBitReader, mut num: u32, 
     offset += 1;
     num -= 1;
   }
+  BrotliBitReaderNormalize(br);
   // One bulk copy of the same bytes the per-byte loop used to copy.
   let dest_start = offset as usize;
   let input_start = br.next_in as usize;
@@ -459,7 +420,7 @@ pub fn BrotliCopyBytes(dest: &mut [u8], br: &mut BrotliBitReader, mut num: u32, 
 
 pub fn BrotliInitBitReader(br: &mut BrotliBitReader) {
   br.val_ = 0;
-  br.bit_pos_ = (::core::mem::size_of::<reg_t>() << 3) as u32;
+  br.bit_pos_ = 0;
 }
 
 pub fn BrotliWarmupBitReader(br: &mut BrotliBitReader, input: &[u8]) -> bool {
@@ -526,7 +487,7 @@ mod tests {
     let data: [u8; 1] = [0x7f];
     let mut unaligned_reader = BrotliBitReader {
       val_: 0,
-      bit_pos_: 1,
+      bit_pos_: 63,
       avail_in: 0,
       next_in: 0,
     };
@@ -534,7 +495,7 @@ mod tests {
 
     let mut out_of_bounds_reader = BrotliBitReader {
       val_: 0,
-      bit_pos_: 64,
+      bit_pos_: 0,
       avail_in: 1,
       next_in: 1,
     };
@@ -549,14 +510,14 @@ mod tests {
                           0xdc, 0xa0, 0x05, 0x9b, 0xd2, 0x2b, 0x30, 0x8f]; // 33 b goods
     let mut bit_reader = BrotliBitReader {
       val_: 0x0,
-      bit_pos_: 64,
+      bit_pos_: 0,
       avail_in: 33,
       next_in: 4,
     };
     let ret = BrotliWarmupBitReader(&mut bit_reader, &data[..]);
     assert_eq!(ret, true);
-    assert_eq!(bit_reader.val_, 0x2100000000000000);
-    assert_eq!(bit_reader.bit_pos_, 56);
+    assert_eq!(bit_reader.val_, 0x21);
+    assert_eq!(bit_reader.bit_pos_, 8);
     assert_eq!(bit_reader.avail_in, 32);
     assert_eq!(bit_reader.next_in, 5);
   }
@@ -564,15 +525,15 @@ mod tests {
   fn warmup_errcheck() {
     let data: [u8; 3] = [0xde, 0xad, 0xeb]; // 3 bytes garbage at beginning
     let mut bit_reader = BrotliBitReader {
-      val_: 0x86e884e1ffff577b,
-      bit_pos_: 64,
+      val_: 0x0,
+      bit_pos_: 0,
       avail_in: 0,
       next_in: 3,
     };
     let ret = BrotliWarmupBitReader(&mut bit_reader, &data[..]);
     assert_eq!(ret, false);
-    assert_eq!(bit_reader.val_, 0x86e884e1ffff577b);
-    assert_eq!(bit_reader.bit_pos_, 64);
+    assert_eq!(bit_reader.val_, 0x0);
+    assert_eq!(bit_reader.bit_pos_, 0);
     assert_eq!(bit_reader.avail_in, 0);
     assert_eq!(bit_reader.next_in, 3);
   }
@@ -581,8 +542,8 @@ mod tests {
     {
       let data: [u8; 12] = [0x50, 0x3b, 0xbb, 0x5e, 0xc5, 0x96, 0x81, 0xb7, 0x52, 0x89, 0xea, 0x3d];
       let mut bit_reader = BrotliBitReader {
-        val_: 0xe1e56a736e04fbf5,
-        bit_pos_: 6,
+        val_: 0xe1e56a736e04fbf5 >> 6,
+        bit_pos_: 58,
         avail_in: 12,
         next_in: 0,
       };
@@ -592,13 +553,13 @@ mod tests {
       assert_eq!(val, 0x6f);
       assert_eq!(bit_reader.avail_in, 12);
       assert_eq!(bit_reader.next_in, 0);
-      assert_eq!(bit_reader.bit_pos_, 13);
+      assert_eq!(bit_reader.bit_pos_, 51);
     }
     {
       let data: [u8; 7] = [0xba, 0xd0, 0xf0, 0x0d, 0xc8, 0xcd, 0xcc];
       let mut bit_reader = BrotliBitReader {
-        val_: 0x17f115ae26916f0,
-        bit_pos_: 57,
+        val_: 0x17f115ae26916f0 >> 57,
+        bit_pos_: 7,
         avail_in: 3,
         next_in: 4,
       };
@@ -608,13 +569,13 @@ mod tests {
       assert_eq!(val, 0x6400);
       assert_eq!(bit_reader.avail_in, 2);
       assert_eq!(bit_reader.next_in, 5);
-      assert_eq!(bit_reader.bit_pos_, 64);
+      assert_eq!(bit_reader.bit_pos_, 0);
     }
     {
       let data: [u8; 4] = [0xee, 0xee, 0xf0, 0xd5];
       let mut bit_reader = BrotliBitReader {
-        val_: 0x5f43f252c027e447,
-        bit_pos_: 53,
+        val_: 0x5f43f252c027e447 >> 53,
+        bit_pos_: 11,
         avail_in: 2,
         next_in: 2,
       };
@@ -623,15 +584,15 @@ mod tests {
       assert_eq!(ret, true);
       assert_eq!(bit_reader.avail_in, 1);
       assert_eq!(bit_reader.next_in, 3);
-      assert_eq!(bit_reader.bit_pos_, 59);
-      assert_eq!(bit_reader.val_, 0xf05f43f252c027e4);
+      assert_eq!(bit_reader.bit_pos_, 5);
+      assert_eq!(bit_reader.val_, 0xf05f43f252c027e4 >> 59);
       assert_eq!(val, 0x2fa);
     }
     {
       let data: [u8; 4] = [0xee, 0xee, 0xf0, 0xd5];
       let mut bit_reader = BrotliBitReader {
-        val_: 0x2f902339697460,
-        bit_pos_: 57,
+        val_: 0x2f902339697460 >> 57,
+        bit_pos_: 7,
         avail_in: 0,
         next_in: 4,
       };
@@ -640,8 +601,8 @@ mod tests {
       assert_eq!(ret, false);
       assert_eq!(bit_reader.avail_in, 0);
       assert_eq!(bit_reader.next_in, 4);
-      assert_eq!(bit_reader.bit_pos_, 57);
-      assert_eq!(bit_reader.val_, 0x2f902339697460);
+      assert_eq!(bit_reader.bit_pos_, 7);
+      assert_eq!(bit_reader.val_, 0x2f902339697460 >> 57);
       assert_eq!(val, 0x74eca3f0);
     }
   }
@@ -652,14 +613,14 @@ mod tests {
                             0xe7, 0xa0, 0x1e, 0x09, 0xd3, 0x12, 0xa1, 0x3f, 0xb8, 0x7e, 0x5a,
                             0x06, 0x86, 0xe5, 0x36, 0xef, 0x9c, 0x9f, 0x6d, 0x9b, 0xcc];
       let mut bit_reader = BrotliBitReader {
-        val_: 0xf5917f07daaaeabb,
-        bit_pos_: 33,
+        val_: 0xf5917f07daaaeabb >> 33,
+        bit_pos_: 31,
         avail_in: 29,
         next_in: 3,
       };
       let ret = BrotliReadBits(&mut bit_reader, 8, &data[..]);
       assert_eq!(ret, 0x83);
-      assert_eq!(bit_reader.bit_pos_, 9);
+      assert_eq!(bit_reader.bit_pos_, 55);
       assert_eq!(bit_reader.avail_in, 25);
       assert_eq!(bit_reader.next_in, 7);
     }
@@ -668,14 +629,14 @@ mod tests {
                             0xf4, 0xf8, 0x1d, 0x9f, 0x24, 0x48, 0x1e, 0x82, 0xce, 0x48, 0x88,
                             0xd7, 0x25, 0x74, 0xaf, 0xe3, 0xea];
       let mut bit_reader = BrotliBitReader {
-        val_: 0x27e33b2440d3feaf,
-        bit_pos_: 18,
+        val_: 0x27e33b2440d3feaf >> 18,
+        bit_pos_: 46,
         avail_in: 24,
         next_in: 4,
       };
       let ret = BrotliReadBits(&mut bit_reader, 15, &data[..]);
       assert_eq!(ret, 0x1034);
-      assert_eq!(bit_reader.bit_pos_, 33);
+      assert_eq!(bit_reader.bit_pos_, 31);
       assert_eq!(bit_reader.avail_in, 24);
       assert_eq!(bit_reader.next_in, 4);
     }
@@ -688,14 +649,14 @@ mod tests {
                             0x19, 0xdd, 0x0b, 0xe8, 0xf8, 0x33, 0x9f, 0xe0, 0x69, 0x55, 0x59,
                             0x3f, 0x5d, 0xc8];
       let mut bit_reader = BrotliBitReader {
-        val_: 0xb3fc441e0181dc4,
-        bit_pos_: 59,
+        val_: 0xb3fc441e0181dc4 >> 59,
+        bit_pos_: 5,
         avail_in: 33,
         next_in: 1,
       };
       let ret = BrotliReadConstantNBits(&mut bit_reader, 4, &data[..]);
       assert_eq!(ret, 0x1);
-      assert_eq!(bit_reader.bit_pos_, 7);
+      assert_eq!(bit_reader.bit_pos_, 57);
       assert_eq!(bit_reader.avail_in, 26);
       assert_eq!(bit_reader.next_in, 8);
     }
@@ -707,14 +668,14 @@ mod tests {
                             0x61, 0xb3, 0xdb, 0x98, 0xbb, 0xeb, 0xfa, 0xcb, 0x14, 0xcd, 0x68,
                             0x77, 0xa1, 0x33, 0x6c, 0x49, 0xfa, 0x35, 0xbb, 0xeb, 0xee, 0x7b, 0xae];
       let mut bit_reader = BrotliBitReader {
-        val_: 0x655b1fe0dd6f1e78,
-        bit_pos_: 63,
+        val_: 0x655b1fe0dd6f1e78 >> 63,
+        bit_pos_: 1,
         avail_in: 65,
         next_in: 2,
       };
       let ret = BrotliGet16BitsUnmasked(&mut bit_reader, &data[..]);
       assert_eq!(ret, 0x38e030fc);
-      assert_eq!(bit_reader.bit_pos_, 15);
+      assert_eq!(bit_reader.bit_pos_, 49);
       assert_eq!(bit_reader.avail_in, 59);
       assert_eq!(bit_reader.next_in, 8);
     }
