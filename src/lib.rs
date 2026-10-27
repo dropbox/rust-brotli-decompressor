@@ -396,6 +396,9 @@ pub fn brotli_decode_prealloc(
     BrotliState::new(stack_u8_allocator, stack_u32_allocator, stack_hc_allocator);
   // MemPool never merges freed blocks, which the ring buffer sizing must know.
   brotli_state.u8_pool_size = u8_pool_size;
+  // Keep the allocation order the pool sizes were chosen for, in which the
+  // context map table comes first, rather than when it is first needed.
+  brotli_state.ensure_context_map_table();
   let result = ::BrotliDecompressStream(&mut available_in,
                                       &mut input_offset,
                                       &input[..],
@@ -442,6 +445,9 @@ pub fn brotli_decode(
     BrotliState::new(stack_u8_allocator, stack_u32_allocator, stack_hc_allocator);
   // MemPool never merges freed blocks, which the ring buffer sizing must know.
   brotli_state.u8_pool_size = u8_pool_size;
+  // Keep the allocation order the pool sizes were chosen for, in which the
+  // context map table comes first, rather than when it is first needed.
+  brotli_state.ensure_context_map_table();
   let result = ::BrotliDecompressStream(&mut available_in,
                                       &mut input_offset,
                                       &input[..],
@@ -455,6 +461,28 @@ pub fn brotli_decode(
 }
 
 #[cfg(feature="std")]
+struct OneShotHuffmanAlloc;
+
+#[cfg(feature="std")]
+impl Allocator<HuffmanCode> for OneShotHuffmanAlloc {
+  type AllocatedMemory = <StandardAlloc as Allocator<HuffmanCode>>::AllocatedMemory;
+
+  fn alloc_cell(&mut self, len: usize) -> Self::AllocatedMemory {
+    // Cloning a padded HuffmanCode one entry at a time emits separate field
+    // stores. Copying initialized entries in bulk keeps allocation fully safe.
+    const ZEROES: [HuffmanCode; 1024] = [HuffmanCode { value: 0, bits: 0 }; 1024];
+    let mut buffer = std::vec::Vec::with_capacity(len);
+    while buffer.len() < len {
+      let chunk = core::cmp::min(len - buffer.len(), ZEROES.len());
+      buffer.extend_from_slice(&ZEROES[..chunk]);
+    }
+    buffer.into()
+  }
+
+  fn free_cell(&mut self, _memory: Self::AllocatedMemory) {}
+}
+
+#[cfg(feature="std")]
 pub fn brotli_decode(
     input: &[u8],
     mut output: &mut[u8],
@@ -465,7 +493,7 @@ pub fn brotli_decode(
   let mut output_offset: usize = 0;
   let mut written: usize = 0;
   let mut brotli_state =
-    BrotliState::new(StandardAlloc::default(), StandardAlloc::default(), StandardAlloc::default());
+    BrotliState::new(StandardAlloc::default(), StandardAlloc::default(), OneShotHuffmanAlloc);
   let result = ::BrotliDecompressStream(&mut available_in,
                                       &mut input_offset,
                                       &input[..],

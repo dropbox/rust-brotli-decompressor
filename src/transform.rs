@@ -737,6 +737,7 @@ pub(crate) fn copy_bytes(dst: &mut [u8], src: &[u8]) {
   }
 }
 
+#[inline]
 pub(crate) fn ToUpperCase(p: &mut [u8]) -> i32 {
   if (fast!((p)[0]) < 0xc0) {
     if (fast!((p)[0]) >= b'a' && fast!((p)[0]) <= b'z') {
@@ -754,6 +755,7 @@ pub(crate) fn ToUpperCase(p: &mut [u8]) -> i32 {
   3
 }
 
+#[inline]
 pub fn TransformDictionaryWord(dst: &mut [u8],
                                mut word: &[u8],
                                mut len: i32,
