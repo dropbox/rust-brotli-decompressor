@@ -12,6 +12,7 @@ use alloc::{Allocator, SliceWrapper, SliceWrapperMut, StackAllocator, AllocatedS
 use self::interface::{CAllocator, c_void, BrotliDecoderParameter, BrotliDecoderResult, brotli_alloc_func, brotli_free_func, CBrotliMetadataCallback, brotli_decoder_metadata_start_func, brotli_decoder_metadata_chunk_func};
 use ::BrotliResult;
 use ::BrotliDecoderReturnInfo;
+#[cfg(not(feature="std"))]
 use ::brotli_decode;
 pub use ::HuffmanCode;
 pub use super::state::{BrotliDecoderErrorCode, BrotliState};
@@ -101,8 +102,18 @@ fn brotli_new_decompressor_without_custom_alloc(_to_box: BrotliDecoderState) -> 
 
 #[cfg(feature="std")]
 fn brotli_new_decompressor_without_custom_alloc(to_box: BrotliDecoderState) -> *mut BrotliDecoderState{
-    alloc_util::Box::<BrotliDecoderState>::into_raw(
-        alloc_util::Box::<BrotliDecoderState>::new(to_box))
+    // Box::new would abort if this fails.  Returning null drops to_box, which
+    // releases the tables it already holds.  Layout::new is what Box::from_raw
+    // in BrotliDecoderDestroyInstance expects.
+    let layout = std::alloc::Layout::new::<BrotliDecoderState>();
+    unsafe {
+        let ptr = std::alloc::alloc(layout) as *mut BrotliDecoderState;
+        if ptr.is_null() {
+            return core::ptr::null_mut();
+        }
+        core::ptr::write(ptr, to_box);
+        ptr
+    }
 }
 
 
@@ -256,6 +267,18 @@ unsafe fn brotli_decoder_decompress_with_return_info(
     Some(output_scratch) => output_scratch,
     None => return invalid_argument_return_info(),
   };
+  // Without C allocator callbacks, as in BrotliDecoderCreateInstance, so that
+  // a failed allocation is a decoder error rather than an abort.
+  #[cfg(feature="std")]
+  {
+    let allocator = || SubclassableAllocator::new(CAllocator {
+      alloc_func: None,
+      free_func: None,
+      opaque: core::ptr::null_mut(),
+    });
+    ::brotli_decode_with_allocators(input, output_scratch, allocator(), allocator(), allocator())
+  }
+  #[cfg(not(feature="std"))]
   ::brotli_decode(input, output_scratch)
 }
 
