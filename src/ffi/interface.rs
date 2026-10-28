@@ -27,6 +27,41 @@ pub enum BrotliDecoderResult {
     BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT = 3,
 }
 
+pub type brotli_decoder_metadata_start_func = Option<extern "C" fn(opaque: *mut c_void, size: usize) -> ()>;
+pub type brotli_decoder_metadata_chunk_func = Option<extern "C" fn(opaque: *mut c_void, data: *const u8, size: usize) -> ()>;
+
+#[derive(Clone, Copy)]
+pub(crate) struct CBrotliMetadataCallback {
+    start: brotli_decoder_metadata_start_func,
+    chunk: brotli_decoder_metadata_chunk_func,
+    opaque: *mut c_void,
+}
+
+impl CBrotliMetadataCallback {
+    pub(crate) fn new(
+        start: brotli_decoder_metadata_start_func,
+        chunk: brotli_decoder_metadata_chunk_func,
+        opaque: *mut c_void,
+    ) -> CBrotliMetadataCallback {
+        CBrotliMetadataCallback {
+            start, chunk, opaque
+        }
+    }
+}
+
+impl ::state::BrotliMetadataCallback for CBrotliMetadataCallback {
+    fn start(&mut self, size: usize) {
+        if let Some(callback) = self.start {
+            callback(self.opaque, size);
+        }
+    }
+    fn chunk(&mut self, data: &[u8]) {
+        if let Some(callback) = self.chunk {
+            callback(self.opaque, data.as_ptr(), data.len());
+        }
+    }
+}
+
 
 impl From<BrotliResult> for BrotliDecoderResult {
   fn from(r: BrotliResult) -> Self {

@@ -54,8 +54,7 @@ pub enum BrotliDecoderErrorCode{
   BROTLI_DECODER_ERROR_FORMAT_PADDING_1 = -14,
   BROTLI_DECODER_ERROR_FORMAT_PADDING_2 = -15,
   BROTLI_DECODER_ERROR_FORMAT_DISTANCE = -16,
-
-  /* -17 code is reserved */
+  BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH = -17,
 
   BROTLI_DECODER_ERROR_COMPOUND_DICTIONARY = -18,
   BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET = -19,
@@ -212,6 +211,12 @@ impl<AllocU8: alloc::Allocator<u8>> alloc::SliceWrapper<u8> for MaybeOwnedSlice<
 // never collide with one. The C implementation uses -1 for the same purpose;
 // the field is unsigned here.
 pub const COMPOUND_DICTIONARY_BLOCK_MAP_UNINITIALIZED: u32 = 255;
+
+
+pub trait BrotliMetadataCallback {
+    fn start(&mut self, _size: usize) {}
+    fn chunk(&mut self, _data: &[u8]) {}
+}
 
 // LZ77 prefix ("compound") dictionaries attached to the decoder. Unlike the
 // historical approach of copying the dictionary into the ring buffer, chunks
@@ -947,8 +952,7 @@ pub fn BrotliDecoderErrorStr(c: BrotliDecoderErrorCode) -> &'static str {
   BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_PADDING_1 =>"ERROR_FORMAT_PADDING_1\0",
   BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_PADDING_2 =>"ERROR_FORMAT_PADDING_2\0",
   BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_DISTANCE =>"ERROR_FORMAT_DISTANCE\0",
-
-  /* -17 code is reserved */
+  BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH =>"ERROR_FORMAT_BLOCK_SWITCH\0",
 
   BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_COMPOUND_DICTIONARY => "ERROR_COMPOUND_DICTIONARY\0",
   BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET => "ERROR_DICTIONARY_NOT_SET\0",
