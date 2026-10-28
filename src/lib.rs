@@ -457,15 +457,30 @@ pub fn brotli_decode(
 #[cfg(feature="std")]
 pub fn brotli_decode(
     input: &[u8],
+    output: &mut[u8],
+) -> BrotliDecoderReturnInfo {
+  brotli_decode_with_allocators(input, output,
+                                StandardAlloc::default(),
+                                StandardAlloc::default(),
+                                StandardAlloc::default())
+}
+
+#[cfg(feature="std")]
+pub(crate) fn brotli_decode_with_allocators<AllocU8: Allocator<u8>,
+                                            AllocU32: Allocator<u32>,
+                                            AllocHC: Allocator<HuffmanCode>>(
+    input: &[u8],
     mut output: &mut[u8],
+    alloc_u8: AllocU8,
+    alloc_u32: AllocU32,
+    alloc_hc: AllocHC,
 ) -> BrotliDecoderReturnInfo {
   let mut available_out = output.len();
   let mut available_in: usize = input.len();
   let mut input_offset: usize = 0;
   let mut output_offset: usize = 0;
   let mut written: usize = 0;
-  let mut brotli_state =
-    BrotliState::new(StandardAlloc::default(), StandardAlloc::default(), StandardAlloc::default());
+  let mut brotli_state = BrotliState::new(alloc_u8, alloc_u32, alloc_hc);
   let result = ::BrotliDecompressStream(&mut available_in,
                                       &mut input_offset,
                                       &input[..],
