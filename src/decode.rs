@@ -3255,6 +3255,93 @@ fn decode_block_type_and_length_slice<AllocHC: alloc::Allocator<HuffmanCode>>(
   status
 }
 
+#[cold]
+#[inline(never)]
+fn switch_command_block<'a, 'b, AllocU32: alloc::Allocator<u32>, AllocHC: alloc::Allocator<HuffmanCode>>(
+  btl: &mut BlockTypeAndLengthState<AllocHC>,
+  insert_copy_hgroup: &'a HuffmanTreeGroup<AllocU32, AllocHC>,
+  htree_command_index: &mut u16,
+  mut fbr: bit_reader::BitReaderSlice<'b>,
+) -> (BrotliDecoderErrorCode, bit_reader::BitReaderSlice<'b>, &'a InsertCopyTable) {
+  let status = decode_block_type_and_length_slice(btl, &mut fbr, 1);
+  if !matches!(status, BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS) {
+    return (status, fbr, &huffman::EMPTY_TABLE);
+  }
+  let idx = btl.block_type_rb[3] as u16;
+  *htree_command_index = idx;
+  let tree: &'a InsertCopyTable = huffman_window(insert_copy_hgroup, idx as usize);
+  (BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS, fbr, tree)
+}
+
+#[cold]
+#[inline(never)]
+fn switch_literal_block<'a, 'b, AllocU32: alloc::Allocator<u32>, AllocHC: alloc::Allocator<HuffmanCode>>(
+  btl: &mut BlockTypeAndLengthState<AllocHC>,
+  trivial_literal_contexts: &[u32; 8],
+  context_map: &[u8],
+  context_modes: &[u8],
+  context_map_slice_index: &mut usize,
+  trivial_literal_context: &mut i32,
+  literal_htree_index: &mut u8,
+  context_lookup: &mut &'static [u8; 512],
+  literal_hgroup: &'a HuffmanTreeGroup<AllocU32, AllocHC>,
+  prev_literal_htree: &'a LiteralTable,
+  context_trees: &mut [&'a LiteralTable; 64],
+  context_trees_slice: &mut Option<usize>,
+  mut fbr: bit_reader::BitReaderSlice<'b>,
+) -> (BrotliDecoderErrorCode, bit_reader::BitReaderSlice<'b>, &'a LiteralTable) {
+  if !fbr.has_input() {
+    return (
+      BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT,
+      fbr,
+      prev_literal_htree,
+    );
+  }
+  let status = decode_block_type_and_length_slice(btl, &mut fbr, 0);
+  if !matches!(status, BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS) {
+    return (status, fbr, prev_literal_htree);
+  }
+  update_literal_block_state(
+    &btl.block_type_rb,
+    trivial_literal_contexts,
+    context_map,
+    context_modes,
+    context_map_slice_index,
+    trivial_literal_context,
+    literal_htree_index,
+    context_lookup,
+  );
+  let literal_htree: &'a LiteralTable = huffman_window(literal_hgroup, *literal_htree_index as usize);
+  if *trivial_literal_context == 0 && *context_trees_slice != Some(*context_map_slice_index) {
+    fill_context_trees(context_trees, literal_hgroup, context_map, *context_map_slice_index);
+    *context_trees_slice = Some(*context_map_slice_index);
+  }
+  (BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS, fbr, literal_htree)
+}
+
+#[cold]
+#[inline(never)]
+fn switch_distance_block<'b, AllocHC: alloc::Allocator<HuffmanCode>>(
+  btl: &mut BlockTypeAndLengthState<AllocHC>,
+  dist_context_map: &[u8],
+  dist_context_map_slice_index: &mut usize,
+  dist_htree_index: &mut u8,
+  distance_context: i32,
+  mut fbr: bit_reader::BitReaderSlice<'b>,
+) -> (BrotliDecoderErrorCode, bit_reader::BitReaderSlice<'b>) {
+  if !fbr.has_input() {
+    return (BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT, fbr);
+  }
+  let status = decode_block_type_and_length_slice(btl, &mut fbr, 2);
+  if !matches!(status, BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS) {
+    return (status, fbr);
+  }
+  let slice_idx = (btl.block_type_rb[5] << kDistanceContextBits) as usize;
+  *dist_context_map_slice_index = slice_idx;
+  *dist_htree_index = fast!((dist_context_map)[slice_idx + (distance_context as usize & 3)]);
+  (BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS, fbr)
+}
+
 #[derive(Clone, Copy)]
 enum LiteralBatchStatus {
   Decoded,
@@ -3610,11 +3697,14 @@ fn ProcessCommandsInternal<
       if s.block_type_length_state.block_length[1] == 0 {
         mark_unlikely();
         let status = if !SAFE {
-          let st = decode_block_type_and_length_slice(&mut s.block_type_length_state, &mut fbr, 1);
-          if matches!(st, BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS) {
-            s.htree_command_index = s.block_type_length_state.block_type_rb[3] as u16;
-            insert_copy_tree = huffman_window(&s.insert_copy_hgroup, s.htree_command_index as usize);
-          }
+          let (st, next_fbr, next_tree) = switch_command_block(
+            &mut s.block_type_length_state,
+            &s.insert_copy_hgroup,
+            &mut s.htree_command_index,
+            fbr,
+          );
+          fbr = next_fbr;
+          insert_copy_tree = next_tree;
           st
         } else {
           let st = DecodeBlockTypeAndLength(
@@ -3729,20 +3819,8 @@ fn ProcessCommandsInternal<
           }
           if s.block_type_length_state.block_length[0] == 0 {
             if !SAFE {
-              mark_unlikely();
-              let status = if !fbr.has_input() {
-                BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT
-              } else {
-                decode_block_type_and_length_slice(&mut s.block_type_length_state, &mut fbr, 0)
-              };
-              if !matches!(status, BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS) {
-                exit_state = BrotliRunningState::BROTLI_STATE_COMMAND_INNER;
-                mid_cmd = Some((i, distance_code, distance_context, copy_length));
-                result = status;
-                break 'cmd;
-              }
-              update_literal_block_state(
-                &s.block_type_length_state.block_type_rb,
+              let (status, next_fbr, next_lit_htree) = switch_literal_block(
+                &mut s.block_type_length_state,
                 &s.trivial_literal_contexts,
                 s.context_map.slice(),
                 s.context_modes.slice(),
@@ -3750,18 +3828,19 @@ fn ProcessCommandsInternal<
                 &mut s.trivial_literal_context,
                 &mut s.literal_htree_index,
                 &mut s.context_lookup,
+                &s.literal_hgroup,
+                literal_htree,
+                &mut context_trees,
+                &mut context_trees_slice,
+                fbr,
               );
-              literal_htree = huffman_window(&s.literal_hgroup, s.literal_htree_index as usize);
-              if s.trivial_literal_context == 0
-                && context_trees_slice != Some(s.context_map_slice_index)
-              {
-                fill_context_trees(
-                  &mut context_trees,
-                  &s.literal_hgroup,
-                  s.context_map.slice(),
-                  s.context_map_slice_index,
-                );
-                context_trees_slice = Some(s.context_map_slice_index);
+              fbr = next_fbr;
+              literal_htree = next_lit_htree;
+              if !matches!(status, BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS) {
+                exit_state = BrotliRunningState::BROTLI_STATE_COMMAND_INNER;
+                mid_cmd = Some((i, distance_code, distance_context, copy_length));
+                result = status;
+                break 'cmd;
               }
               continue 'inner;
             } else {
@@ -3859,19 +3938,29 @@ fn ProcessCommandsInternal<
         if s.block_type_length_state.block_length[2] == 0 {
           mark_unlikely();
           let status = if !SAFE {
-            if !fbr.has_input() {
-              BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT
-            } else {
-              decode_block_type_and_length_slice(&mut s.block_type_length_state, &mut fbr, 2)
-            }
+            let (st, next_fbr) = switch_distance_block(
+              &mut s.block_type_length_state,
+              s.dist_context_map.slice(),
+              &mut s.dist_context_map_slice_index,
+              &mut s.dist_htree_index,
+              distance_context,
+              fbr,
+            );
+            fbr = next_fbr;
+            st
           } else {
-            DecodeBlockTypeAndLength(
+            let st = DecodeBlockTypeAndLength(
               true,
               &mut s.block_type_length_state,
               &mut s.br,
               2,
               input,
-            )
+            );
+            if matches!(st, BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS) {
+              s.dist_context_map_slice_index =
+                (s.block_type_length_state.block_type_rb[5] << kDistanceContextBits) as usize;
+            }
+            st
           };
           if !matches!(status, BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS) {
             exit_state = BrotliRunningState::BROTLI_STATE_COMMAND_POST_DECODE_LITERALS;
@@ -3879,8 +3968,6 @@ fn ProcessCommandsInternal<
             result = status;
             break 'cmd;
           }
-          s.dist_context_map_slice_index =
-            (s.block_type_length_state.block_type_rb[5] << kDistanceContextBits) as usize;
         }
         let idx = fast_slice!((s.dist_context_map)[s.dist_context_map_slice_index + (distance_context as usize & 3)]);
         s.dist_htree_index = idx;
