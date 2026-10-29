@@ -4063,6 +4063,135 @@ fn ProcessCommandsInternal<
   result
 }
 
+#[cold]
+#[inline(never)]
+fn ResumePartialCommand<AllocU8: alloc::Allocator<u8>,
+                        AllocU32: alloc::Allocator<u32>,
+                        AllocHC: alloc::Allocator<HuffmanCode>>
+  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   input: &[u8],
+   dictionary: &[u8])
+   -> BrotliDecoderErrorCode {
+  // When streaming input chunks (e.g. 32 KiB) or ringbuffer flushes (`pos == 0`)
+  // split a long literal insert run, batch-decode remaining literals with
+  // BitReaderSlice before delegating the command tail to ProcessCommandsInternal::<true>.
+  while matches!(s.state, BrotliRunningState::BROTLI_STATE_COMMAND_INNER) && s.loop_counter > 0 {
+    let rb_size = s.ringbuffer_size;
+    let rb_mask = s.ringbuffer_mask;
+    let pos = s.pos;
+    if rb_size < 2 || (rb_size & (rb_size - 1)) != 0 || rb_mask != rb_size - 1 || pos < 0 || pos >= rb_size {
+      break;
+    }
+    let Some(mut fbr) = bit_reader::BitReaderSlice::new(&s.br, input) else {
+      break;
+    };
+    if !fbr.has_input() {
+      break;
+    }
+    if s.block_type_length_state.block_length[0] == 0 {
+      let status = decode_block_type_and_length_slice(&mut s.block_type_length_state, &mut fbr, 0);
+      fbr.sync_to(&mut s.br);
+      if !matches!(status, BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS) {
+        return status;
+      }
+      PrepareLiteralDecoding(s);
+      if s.block_type_length_state.block_length[0] == 0 {
+        return BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS;
+      }
+      continue;
+    }
+
+    let avail = fbr.avail_in();
+    if avail < 36 {
+      break;
+    }
+    let block_len = s.block_type_length_state.block_length[0];
+    let max_by_in = ((avail - 34) >> 1) as i32;
+    let max_by_rb = rb_size - 1 - pos;
+    let max_by_blk = (block_len.min(i32::MAX as u32)) as i32;
+    let batch = s.loop_counter.min(max_by_in).min(max_by_rb).min(max_by_blk);
+    if batch <= 0 {
+      break;
+    }
+    if s.trivial_literal_context == 0 && pos < 2 {
+      let rb_mask_usize = (rb_mask as usize) & 0x7fff_ffff;
+      let rb = s.ringbuffer.slice_mut();
+      let (Some(&b1), Some(&b2)) = (
+        rb.get((pos.wrapping_sub(1) as usize) & rb_mask_usize),
+        rb.get((pos.wrapping_sub(2) as usize) & rb_mask_usize),
+      ) else {
+        break;
+      };
+      let context = (s.context_lookup[b1 as usize] | s.context_lookup[b2 as usize | 256]) as usize;
+      let tree_idx = s.context_map.slice()[s.context_map_slice_index + (context & 63)] as usize;
+      let tree: &LiteralTable = huffman_window(&s.literal_hgroup, tree_idx);
+      let lit = read_symbol_slice(&mut fbr, tree) as u8;
+      rb[pos as usize] = lit;
+      fbr.sync_to(&mut s.br);
+      s.pos = pos + 1;
+      s.loop_counter -= 1;
+      s.block_type_length_state.block_length[0] = block_len - 1;
+      if s.loop_counter == 0 {
+        s.state = if s.meta_block_remaining_len <= 0 {
+          BrotliRunningState::BROTLI_STATE_METABLOCK_DONE
+        } else {
+          BrotliRunningState::BROTLI_STATE_COMMAND_POST_DECODE_LITERALS
+        };
+        if matches!(s.state, BrotliRunningState::BROTLI_STATE_METABLOCK_DONE) {
+          return BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS;
+        }
+        break;
+      }
+      continue;
+    }
+    let htree: &LiteralTable = huffman_window(&s.literal_hgroup, s.literal_htree_index as usize);
+    let mut trees_storage = EMPTY_CONTEXT_TREES;
+    let trees = if s.trivial_literal_context != 0 {
+      &EMPTY_CONTEXT_TREES
+    } else {
+      fill_context_trees(
+        &mut trees_storage,
+        &s.literal_hgroup,
+        s.context_map.slice(),
+        s.context_map_slice_index,
+      );
+      &trees_storage
+    };
+    let rb = s.ringbuffer.slice_mut();
+    let (next_fbr, status) = decode_literal_batch(
+      rb,
+      pos as usize,
+      batch as usize,
+      s.trivial_literal_context,
+      htree,
+      trees,
+      s.context_lookup,
+      fbr,
+    );
+    fbr = next_fbr;
+    match status {
+      LiteralBatchStatus::Decoded => {}
+      LiteralBatchStatus::NotHandled => break,
+      LiteralBatchStatus::CorruptInput => {
+        return BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_UNREACHABLE;
+      }
+    }
+    fbr.sync_to(&mut s.br);
+    s.pos = pos + batch;
+    s.loop_counter -= batch;
+    s.block_type_length_state.block_length[0] = block_len - batch as u32;
+    if s.loop_counter == 0 {
+      if s.meta_block_remaining_len <= 0 {
+        s.state = BrotliRunningState::BROTLI_STATE_METABLOCK_DONE;
+        return BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS;
+      }
+      s.state = BrotliRunningState::BROTLI_STATE_COMMAND_POST_DECODE_LITERALS;
+      break;
+    }
+  }
+  SafeProcessCommandsEntry(true, s, input, dictionary)
+}
+
 // Kept out of line: inlined into BrotliDecompressStream, the command loop would
 // share registers with the whole stream state machine and reload its state
 // from the stack.
@@ -4080,7 +4209,7 @@ fn ProcessCommands<AllocU8: alloc::Allocator<u8>,
   }
   if !matches!(s.state, BrotliRunningState::BROTLI_STATE_COMMAND_BEGIN) {
     mark_unlikely();
-    let status = SafeProcessCommandsEntry(true, s, input, dictionary);
+    let status = ResumePartialCommand(s, input, dictionary);
     if !matches!(status, BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS)
       || !matches!(s.state, BrotliRunningState::BROTLI_STATE_COMMAND_BEGIN)
     {
