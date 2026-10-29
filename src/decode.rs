@@ -404,6 +404,8 @@ fn ReadSymbol<T: HuffmanTable + ?Sized>(table: &T, br: &mut bit_reader::BrotliBi
 
 // Same as DecodeSymbol, but it is known that there is less than 15 bits of
 // input are currently available.
+#[cold]
+#[inline(never)]
 fn SafeDecodeSymbol<T: HuffmanTable + ?Sized>(table: &T,
                     mut br: &mut bit_reader::BrotliBitReader,
                     result: &mut u32)
@@ -504,13 +506,9 @@ fn ReadPreloadedSymbol<T: HuffmanTable + ?Sized>(table: &T,
   result
 }
 
-fn Log2Floor(mut x: u32) -> u32 {
-  let mut result: u32 = 0;
-  while x != 0 {
-    x >>= 1;
-    result += 1;
-  }
-  result
+#[inline(always)]
+fn Log2Floor(x: u32) -> u32 {
+  u32::BITS - x.leading_zeros()
 }
 
 
@@ -706,7 +704,7 @@ fn ReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
                               &mut space,
                               &mut prev_code_len,
                               &mut s.symbols_lists_array,
-                              s.symbol_lists_index as usize,
+                              huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1,
                               &mut s.code_length_histo[..],
                               &mut s.next_symbol[..]);
     } else {
@@ -728,7 +726,7 @@ fn ReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
                                 &mut prev_code_len,
                                 &mut repeat_code_len,
                                 &mut s.symbols_lists_array,
-                                s.symbol_lists_index as usize,
+                                huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1,
                                 &mut s.code_length_histo[..],
                                 &mut s.next_symbol[..]);
     }
@@ -737,6 +735,8 @@ fn ReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
   BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS
 }
 
+#[cold]
+#[inline(never)]
 fn SafeReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
                              AllocU32: alloc::Allocator<u32>,
                              AllocHC: alloc::Allocator<HuffmanCode>>
@@ -771,7 +771,7 @@ fn SafeReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
                               &mut s.space,
                               &mut s.prev_code_len,
                               &mut s.symbols_lists_array,
-                              s.symbol_lists_index as usize,
+                              huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1,
                               &mut s.code_length_histo[..],
                               &mut s.next_symbol[..]);
     } else {
@@ -795,7 +795,7 @@ fn SafeReadSymbolCodeLengths<AllocU8: alloc::Allocator<u8>,
                                 &mut s.prev_code_len,
                                 &mut s.repeat_code_len,
                                 &mut s.symbols_lists_array,
-                                s.symbol_lists_index as usize,
+                                huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1,
                                 &mut s.code_length_histo[..],
                                 &mut s.next_symbol[..]);
     }
@@ -981,14 +981,11 @@ fn ReadHuffmanCode<AllocU8: alloc::Allocator<u8>,
           *code_length_histo = 0; // memset
         }
 
-        let max_code_length = huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH as usize + 1;
-        for (i, next_symbol_mut) in fast_mut!((s.next_symbol)[0; max_code_length])
-          .iter_mut()
-          .enumerate() {
-          *next_symbol_mut = i as i32 - (max_code_length as i32);
-          fast_mut!((s.symbols_lists_array)[(s.symbol_lists_index as i32
-                                 + i as i32
-                                 - (max_code_length as i32)) as usize]) = 0xFFFF;
+        const MAX_CODE_LENGTH: usize = huffman::BROTLI_HUFFMAN_MAX_CODE_LENGTH + 1;
+        debug_assert_eq!(s.symbol_lists_index, MAX_CODE_LENGTH);
+        for i in 0..MAX_CODE_LENGTH {
+          s.next_symbol[i] = i as i32 - (MAX_CODE_LENGTH as i32);
+          s.symbols_lists_array[i] = 0xFFFF;
         }
 
         s.symbol = 0;
@@ -1040,9 +1037,9 @@ fn ReadBlockLength(table: &[HuffmanCode],
   let code: u32;
   let nbits: u32;
   code = ReadSymbol(table, br, input);
-  nbits = fast_ref!((prefix::kBlockLengthPrefixCode)[code as usize]).nbits as u32; /*nbits==2..24*/
-  fast_ref!((prefix::kBlockLengthPrefixCode)[code as usize]).offset as u32 +
-  bit_reader::BrotliReadBits(br, nbits, input)
+  let entry = fast_ref!((prefix::kBlockLengthPrefixCode)[code as usize]);
+  nbits = entry.nbits as u32; /*nbits==2..24*/
+  entry.offset as u32 + bit_reader::BrotliReadBits(br, nbits, input)
 }
 
 
@@ -1572,26 +1569,25 @@ fn DetectTrivialLiteralBlockTypes<AllocU8: alloc::Allocator<u8>,
   for iter in s.trivial_literal_contexts.iter_mut() {
     *iter = 0;
   }
-  let mut i: usize = 0;
-  while i < fast!((s.block_type_length_state.num_block_types)[0]) as usize {
-    let offset = (i as usize) << kLiteralContextBits;
-    let mut error = 0usize;
-    let sample: usize = fast_slice!((s.context_map)[offset]) as usize;
-    let mut j = 0usize;
-    while j < ((1 as usize) << kLiteralContextBits) {
-      error |= fast_slice!((s.context_map)[offset + j]) as usize ^ sample;
-      j += 1;
-      error |= fast_slice!((s.context_map)[offset + j]) as usize ^ sample;
-      j += 1;
-      error |= fast_slice!((s.context_map)[offset + j]) as usize ^ sample;
-      j += 1;
-      error |= fast_slice!((s.context_map)[offset + j]) as usize ^ sample;
-      j += 1
+  let num_block_types = fast!((s.block_type_length_state.num_block_types)[0]) as usize;
+  if s.num_literal_htrees <= 1 {
+    for i in 0..num_block_types {
+      s.trivial_literal_contexts[i >> 5] |= 1u32 << (i & 31);
+    }
+    return;
+  }
+  let context_map = s.context_map.slice();
+  for (i, block_map) in context_map.chunks_exact(1usize << kLiteralContextBits)
+                                   .take(num_block_types)
+                                   .enumerate() {
+    let sample = block_map[0];
+    let mut error = 0u8;
+    for &entry in &block_map[1..] {
+      error |= entry ^ sample;
     }
     if error == 0 {
-      s.trivial_literal_contexts[i >> 5] |= ((1 as u32) << (i & 31));
+      s.trivial_literal_contexts[i >> 5] |= (1 as u32) << (i & 31);
     }
-    i += 1
   }
 }
 fn PrepareLiteralDecoding<AllocU8: alloc::Allocator<u8>,
@@ -1603,7 +1599,7 @@ fn PrepareLiteralDecoding<AllocU8: alloc::Allocator<u8>,
   let block_type = fast!((s.block_type_length_state.block_type_rb)[1]) as usize;
   context_offset = (block_type << kLiteralContextBits) as u32;
   s.context_map_slice_index = context_offset as usize;
-  let trivial = fast!((s.trivial_literal_contexts)[block_type >> 5]);
+  let trivial = fast!((s.trivial_literal_contexts)[(block_type >> 5) & 7]);
   s.trivial_literal_context = ((trivial >> (block_type & 31)) & 1) as i32;
 
   s.literal_htree_index = fast_slice!((s.context_map)[s.context_map_slice_index]);
