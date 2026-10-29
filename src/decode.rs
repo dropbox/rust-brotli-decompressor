@@ -1590,22 +1590,42 @@ fn DetectTrivialLiteralBlockTypes<AllocU8: alloc::Allocator<u8>,
     }
   }
 }
+#[inline(always)]
+fn update_literal_block_state(
+  block_type_rb: &[u32; 6],
+  trivial_literal_contexts: &[u32; 8],
+  context_map: &[u8],
+  context_modes: &[u8],
+  context_map_slice_index: &mut usize,
+  trivial_literal_context: &mut i32,
+  literal_htree_index: &mut u8,
+  context_lookup: &mut &'static [u8; 512],
+) {
+  let block_type = fast!((block_type_rb)[1]) as usize;
+  let context_offset = block_type << kLiteralContextBits;
+  *context_map_slice_index = context_offset;
+  let trivial = fast!((trivial_literal_contexts)[(block_type >> 5) & 7]);
+  *trivial_literal_context = ((trivial >> (block_type & 31)) & 1) as i32;
+  *literal_htree_index = fast!((context_map)[context_offset]);
+  let context_mode_index = fast!((context_modes)[block_type]) & 3;
+  *context_lookup = &kContextLookup[context_mode_index as usize];
+}
+
+#[inline(always)]
 fn PrepareLiteralDecoding<AllocU8: alloc::Allocator<u8>,
                           AllocU32: alloc::Allocator<u32>,
                           AllocHC: alloc::Allocator<HuffmanCode>>
   (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>) {
-
-  let context_offset: u32;
-  let block_type = fast!((s.block_type_length_state.block_type_rb)[1]) as usize;
-  context_offset = (block_type << kLiteralContextBits) as u32;
-  s.context_map_slice_index = context_offset as usize;
-  let trivial = fast!((s.trivial_literal_contexts)[(block_type >> 5) & 7]);
-  s.trivial_literal_context = ((trivial >> (block_type & 31)) & 1) as i32;
-
-  s.literal_htree_index = fast_slice!((s.context_map)[s.context_map_slice_index]);
-  // s.literal_htree = fast!((s.literal_hgroup.htrees)[s.literal_htree_index]); // redundant
-  let context_mode_index = fast!((s.context_modes.slice())[block_type]) & 3;
-  s.context_lookup = &kContextLookup[context_mode_index as usize];
+  update_literal_block_state(
+    &s.block_type_length_state.block_type_rb,
+    &s.trivial_literal_contexts,
+    s.context_map.slice(),
+    s.context_modes.slice(),
+    &mut s.context_map_slice_index,
+    &mut s.trivial_literal_context,
+    &mut s.literal_htree_index,
+    &mut s.context_lookup,
+  );
 }
 
 // Decodes the block ty
@@ -2924,35 +2944,36 @@ pub fn ReadContextModes<AllocU8: alloc::Allocator<u8>,
   BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS
 }
 
-pub fn TakeDistanceFromRingBuffer<AllocU8: alloc::Allocator<u8>,
-                                  AllocU32: alloc::Allocator<u32>,
-                                  AllocHC: alloc::Allocator<HuffmanCode>>
-  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>) {
-  if (s.distance_code == 0) {
-    s.dist_rb_idx -= 1;
-    s.distance_code = fast!((s.dist_rb)[(s.dist_rb_idx & 3) as usize]);
-    s.distance_context = 1;
+#[inline(always)]
+fn TakeDistanceFromRingBuffer(
+  distance_code: &mut i32,
+  dist_rb_idx: &mut i32,
+  dist_rb: &[i32; 4],
+  distance_context: &mut i32,
+) {
+  if *distance_code == 0 {
+    *dist_rb_idx -= 1;
+    *distance_code = fast!((dist_rb)[(*dist_rb_idx & 3) as usize]);
+    *distance_context = 1;
   } else {
-    let distance_code = s.distance_code << 1;
+    let dcode = *distance_code << 1;
     // kDistanceShortCodeIndexOffset has 2-bit values from LSB:
     // 3, 2, 1, 0, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2
     const kDistanceShortCodeIndexOffset: u32 = 0xaaafff1b;
     // kDistanceShortCodeValueOffset has 2-bit values from LSB:
     // -0, 0,-0, 0,-1, 1,-2, 2,-3, 3,-1, 1,-2, 2,-3, 3
     const kDistanceShortCodeValueOffset: u32 = 0xfa5fa500;
-    let mut v = (s.dist_rb_idx as i32 +
-                 (kDistanceShortCodeIndexOffset as i32 >>
-                  distance_code as i32)) as i32 & 0x3;
-    s.distance_code = fast!((s.dist_rb)[v as usize]);
-    v = (kDistanceShortCodeValueOffset >> distance_code) as i32 & 0x3;
-    if ((distance_code & 0x3) != 0) {
-      s.distance_code += v;
+    let mut v = (*dist_rb_idx + (kDistanceShortCodeIndexOffset as i32 >> dcode)) & 0x3;
+    *distance_code = fast!((dist_rb)[v as usize]);
+    v = (kDistanceShortCodeValueOffset >> dcode) as i32 & 0x3;
+    if (dcode & 0x3) != 0 {
+      *distance_code += v;
     } else {
-      s.distance_code -= v;
-      if (s.distance_code <= 0) {
+      *distance_code -= v;
+      if *distance_code <= 0 {
         // A huge distance will cause a BROTLI_FAILURE() soon.
         // This is a little faster than failing here.
-        s.distance_code = 0x7fffffff;
+        *distance_code = 0x7fffffff;
       }
     }
   }
@@ -3003,7 +3024,12 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
   // looking up past distances from the s.ringbuffer.
   s.distance_context = 0;
   if ((s.distance_code as u64 & 0xfffffffffffffff0) == 0) {
-    TakeDistanceFromRingBuffer(s);
+    TakeDistanceFromRingBuffer(
+      &mut s.distance_code,
+      &mut s.dist_rb_idx,
+      &s.dist_rb,
+      &mut s.distance_context,
+    );
     fast_mut!((s.block_type_length_state.block_length)[2]) -= 1;
     return true;
   }
@@ -3421,6 +3447,46 @@ fn execute_dictionary_copy<AllocU8: alloc::Allocator<u8>, AllocU32: alloc::Alloc
   Err(BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_FORMAT_DICTIONARY)
 }
 
+// Copies `rem` bytes from `pos - distance_code` (modulo `rb_mask`) into `rb`,
+// stopping early and returning `(new_pos, new_rem, true)` if `pos` reaches `rb_size`.
+#[inline(always)]
+fn copy_wrap_or_overlapping(
+  rb: &mut [u8],
+  rb_size: i32,
+  rb_mask: i32,
+  mut pos: i32,
+  mut rem: i32,
+  distance_code: i32,
+) -> (i32, i32, bool) {
+  let rb_mask_usize = (rb_mask as usize) & 0x7fff_ffff;
+  if rb.len() <= rb_mask_usize {
+    return (pos, rem, false);
+  }
+  let mut wrap_guard = rb_size - pos;
+  if rem >= 16 && pos >= 0 && wrap_guard > 0 && distance_code > 0 && distance_code <= pos {
+    let count = core::cmp::min(rem, wrap_guard);
+    if copy_overlapping_backreference(rb, pos as usize, distance_code as usize, count as usize) {
+      pos += count;
+      rem -= count;
+      wrap_guard -= count;
+      if wrap_guard == 0 {
+        return (pos, rem, true);
+      }
+    }
+  }
+  while rem > 0 {
+    rem -= 1;
+    rb[(pos as usize) & rb_mask_usize] =
+      rb[(pos.wrapping_sub(distance_code) as usize) & rb_mask_usize];
+    pos += 1;
+    wrap_guard -= 1;
+    if wrap_guard == 0 {
+      return (pos, rem, true);
+    }
+  }
+  (pos, rem, false)
+}
+
 #[inline(always)]
 fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
                            AllocU32: alloc::Allocator<u32>,
@@ -3824,48 +3890,21 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
           }
         }
         BrotliRunningState::BROTLI_STATE_COMMAND_POST_WRAP_COPY => {
-          let mut wrap_guard = s.ringbuffer_size - pos;
-          if i >= 16 && pos >= 0 && wrap_guard > 0 &&
-             s.distance_code > 0 && s.distance_code <= pos {
-            // Seed one period from preceding bytes, then double the filled
-            // prefix. Stop exactly at the ring boundary, as the scalar path
-            // does; wrapped sources and tiny copies retain that path.
-            let count = core::cmp::min(i, wrap_guard);
-            if copy_overlapping_backreference(s.ringbuffer.slice_mut(), pos as usize,
-                                              s.distance_code as usize, count as usize) {
-              pos += count;
-              i -= count;
-              wrap_guard -= count;
-              if wrap_guard == 0 {
-                s.state = BrotliRunningState::BROTLI_STATE_COMMAND_POST_WRITE_2;
-                break;
-              }
-            }
-          }
-          let mut inner_return: bool = false;
-          while i > 0 {
-            i -= 1;
-            fast_slice_mut!((s.ringbuffer)[pos as usize]) =
-              fast_slice!((s.ringbuffer)[((pos - s.distance_code) & s.ringbuffer_mask) as usize]);
-            pos += 1;
-            wrap_guard -= 1;
-            if (wrap_guard == 0) {
-              mark_unlikely();
-              // s.partial_pos_rb += (size_t)s.ringbuffer_size;
-              s.state = BrotliRunningState::BROTLI_STATE_COMMAND_POST_WRITE_2;
-              inner_return = true;
-              break; //return
-            }
-          }
-          if inner_return {
+          let rb_size = s.ringbuffer_size;
+          let rb_mask = s.ringbuffer_mask;
+          let distance_code = s.distance_code;
+          let (next_pos, next_i, wrapped) =
+            copy_wrap_or_overlapping(s.ringbuffer.slice_mut(), rb_size, rb_mask, pos, i, distance_code);
+          pos = next_pos;
+          i = next_i;
+          if wrapped {
             mark_unlikely();
+            s.state = BrotliRunningState::BROTLI_STATE_COMMAND_POST_WRITE_2;
             break;
           }
-          i -= 1;
           if (s.meta_block_remaining_len <= 0) {
-            // Next metablock, if any
             s.state = BrotliRunningState::BROTLI_STATE_METABLOCK_DONE;
-            break; // return
+            break;
           } else {
             s.state = BrotliRunningState::BROTLI_STATE_COMMAND_BEGIN;
             continue;
