@@ -3236,6 +3236,28 @@ fn fill_context_trees<'a, AllocU32: alloc::Allocator<u32>, AllocHC: alloc::Alloc
   }
 }
 
+fn build_dist_context_trees<'a, AllocU32: alloc::Allocator<u32>, AllocHC: alloc::Allocator<HuffmanCode>>(
+  group: &'a HuffmanTreeGroup<AllocU32, AllocHC>,
+  dist_context_map: &[u8],
+  slice_index: usize,
+) -> [&'a InsertCopyTable; 4] {
+  let mut trees: [&'a InsertCopyTable; 4] = [&huffman::EMPTY_TABLE; 4];
+  if let Some(map) = dist_context_map.get(slice_index..).and_then(|m| m.get(..4)) {
+    for (dst, &idx) in trees.iter_mut().zip(map.iter()) {
+      *dst = huffman_window(group, idx as usize);
+    }
+  }
+  trees
+}
+
+// Two-entry LRU cache of 64-entry literal context tree arrays, avoiding
+// 512-byte pointer rebuilds on alternating block switches (common in HTML/JS).
+struct ContextTreeCache<'a> {
+  tags: [usize; 2],
+  trees: [[&'a LiteralTable; 64]; 2],
+  active: usize,
+}
+
 #[inline(always)]
 fn decode_block_type_and_length_slice<AllocHC: alloc::Allocator<HuffmanCode>>(
   btl: &mut BlockTypeAndLengthState<AllocHC>,
@@ -3286,8 +3308,7 @@ fn switch_literal_block<'a, 'b, AllocU32: alloc::Allocator<u32>, AllocHC: alloc:
   context_lookup: &mut &'static [u8; 512],
   literal_hgroup: &'a HuffmanTreeGroup<AllocU32, AllocHC>,
   prev_literal_htree: &'a LiteralTable,
-  context_trees: &mut [&'a LiteralTable; 64],
-  context_trees_slice: &mut Option<usize>,
+  ct_cache: &mut ContextTreeCache<'a>,
   mut fbr: bit_reader::BitReaderSlice<'b>,
 ) -> (BrotliDecoderErrorCode, bit_reader::BitReaderSlice<'b>, &'a LiteralTable) {
   if !fbr.has_input() {
@@ -3312,34 +3333,48 @@ fn switch_literal_block<'a, 'b, AllocU32: alloc::Allocator<u32>, AllocHC: alloc:
     context_lookup,
   );
   let literal_htree: &'a LiteralTable = huffman_window(literal_hgroup, *literal_htree_index as usize);
-  if *trivial_literal_context == 0 && *context_trees_slice != Some(*context_map_slice_index) {
-    fill_context_trees(context_trees, literal_hgroup, context_map, *context_map_slice_index);
-    *context_trees_slice = Some(*context_map_slice_index);
+  if *trivial_literal_context == 0 {
+    let slice_idx = *context_map_slice_index;
+    let cur = ct_cache.active & 1;
+    if ct_cache.tags[cur] != slice_idx {
+      let other = cur ^ 1;
+      if ct_cache.tags[other] != slice_idx {
+        ct_cache.tags[other] = slice_idx;
+        fill_context_trees(&mut ct_cache.trees[other], literal_hgroup, context_map, slice_idx);
+      }
+      ct_cache.active = other;
+    }
   }
   (BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS, fbr, literal_htree)
 }
 
 #[cold]
 #[inline(never)]
-fn switch_distance_block<'b, AllocHC: alloc::Allocator<HuffmanCode>>(
+fn switch_distance_block<'a, 'b, AllocU32: alloc::Allocator<u32>, AllocHC: alloc::Allocator<HuffmanCode>>(
   btl: &mut BlockTypeAndLengthState<AllocHC>,
+  distance_hgroup: &'a HuffmanTreeGroup<AllocU32, AllocHC>,
   dist_context_map: &[u8],
   dist_context_map_slice_index: &mut usize,
   dist_htree_index: &mut u8,
   distance_context: i32,
   mut fbr: bit_reader::BitReaderSlice<'b>,
-) -> (BrotliDecoderErrorCode, bit_reader::BitReaderSlice<'b>) {
+) -> (BrotliDecoderErrorCode, bit_reader::BitReaderSlice<'b>, [&'a InsertCopyTable; 4]) {
   if !fbr.has_input() {
-    return (BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT, fbr);
+    return (
+      BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT,
+      fbr,
+      [&huffman::EMPTY_TABLE; 4],
+    );
   }
   let status = decode_block_type_and_length_slice(btl, &mut fbr, 2);
   if !matches!(status, BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS) {
-    return (status, fbr);
+    return (status, fbr, [&huffman::EMPTY_TABLE; 4]);
   }
   let slice_idx = (btl.block_type_rb[5] << kDistanceContextBits) as usize;
   *dist_context_map_slice_index = slice_idx;
   *dist_htree_index = fast!((dist_context_map)[slice_idx + (distance_context as usize & 3)]);
-  (BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS, fbr)
+  let trees = build_dist_context_trees(distance_hgroup, dist_context_map, slice_idx);
+  (BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS, fbr, trees)
 }
 
 #[derive(Clone, Copy)]
@@ -3640,19 +3675,30 @@ fn ProcessCommandsInternal<
 
   let mut insert_copy_tree: &InsertCopyTable = huffman_window(&s.insert_copy_hgroup, s.htree_command_index as usize);
   let mut literal_htree: &LiteralTable = huffman_window(&s.literal_hgroup, s.literal_htree_index as usize);
-  let mut context_trees: [&LiteralTable; 64] = EMPTY_CONTEXT_TREES;
-  let mut context_trees_slice: Option<usize> = None;
-  let mut distance_tree_index = s.dist_htree_index;
-  let mut distance_tree: &InsertCopyTable = huffman_window(&s.distance_hgroup, distance_tree_index as usize);
-  if !SAFE && s.trivial_literal_context == 0 {
-    fill_context_trees(
-      &mut context_trees,
-      &s.literal_hgroup,
-      s.context_map.slice(),
-      s.context_map_slice_index,
+  let mut ct_cache = ContextTreeCache {
+    tags: [usize::MAX; 2],
+    trees: [EMPTY_CONTEXT_TREES, EMPTY_CONTEXT_TREES],
+    active: 0,
+  };
+  let mut dist_trees: [&InsertCopyTable; 4] = [&huffman::EMPTY_TABLE; 4];
+  if !SAFE {
+    if s.trivial_literal_context == 0 {
+      let slice_idx = s.context_map_slice_index;
+      ct_cache.tags[0] = slice_idx;
+      fill_context_trees(
+        &mut ct_cache.trees[0],
+        &s.literal_hgroup,
+        s.context_map.slice(),
+        slice_idx,
+      );
+    }
+    dist_trees = build_dist_context_trees(
+      &s.distance_hgroup,
+      s.dist_context_map.slice(),
+      s.dist_context_map_slice_index,
     );
-    context_trees_slice = Some(s.context_map_slice_index);
   }
+  let mut context_trees: &[&LiteralTable; 64] = &ct_cache.trees[0];
   let distance_postfix_bits = s.distance_postfix_bits & 3;
 
   let mut state = if SAFE {
@@ -3772,7 +3818,7 @@ fn ProcessCommandsInternal<
               i as usize,
               s.trivial_literal_context,
               literal_htree,
-              &context_trees,
+              context_trees,
               s.context_lookup,
               fbr,
             );
@@ -3830,8 +3876,7 @@ fn ProcessCommandsInternal<
                 &mut s.context_lookup,
                 &s.literal_hgroup,
                 literal_htree,
-                &mut context_trees,
-                &mut context_trees_slice,
+                &mut ct_cache,
                 fbr,
               );
               fbr = next_fbr;
@@ -3842,6 +3887,7 @@ fn ProcessCommandsInternal<
                 result = status;
                 break 'cmd;
               }
+              context_trees = &ct_cache.trees[ct_cache.active & 1];
               continue 'inner;
             } else {
               mark_unlikely();
@@ -3938,8 +3984,9 @@ fn ProcessCommandsInternal<
         if s.block_type_length_state.block_length[2] == 0 {
           mark_unlikely();
           let status = if !SAFE {
-            let (st, next_fbr) = switch_distance_block(
+            let (st, next_fbr, next_dist_trees) = switch_distance_block(
               &mut s.block_type_length_state,
+              &s.distance_hgroup,
               s.dist_context_map.slice(),
               &mut s.dist_context_map_slice_index,
               &mut s.dist_htree_index,
@@ -3947,6 +3994,7 @@ fn ProcessCommandsInternal<
               fbr,
             );
             fbr = next_fbr;
+            dist_trees = next_dist_trees;
             st
           } else {
             let st = DecodeBlockTypeAndLength(
@@ -3969,12 +4017,13 @@ fn ProcessCommandsInternal<
             break 'cmd;
           }
         }
-        let idx = fast_slice!((s.dist_context_map)[s.dist_context_map_slice_index + (distance_context as usize & 3)]);
-        s.dist_htree_index = idx;
-        if idx != distance_tree_index {
-          distance_tree_index = idx;
-          distance_tree = huffman_window(&s.distance_hgroup, idx as usize);
-        }
+        let distance_tree: &InsertCopyTable = if !SAFE {
+          dist_trees[distance_context as usize & 3]
+        } else {
+          let idx = fast_slice!((s.dist_context_map)[s.dist_context_map_slice_index + (distance_context as usize & 3)]);
+          s.dist_htree_index = idx;
+          huffman_window(&s.distance_hgroup, idx as usize)
+        };
         if !read_distance::<SAFE>(
           &mut fbr,
           &mut s.br,
