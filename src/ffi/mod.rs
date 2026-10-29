@@ -103,17 +103,15 @@ fn brotli_new_decompressor_without_custom_alloc(_to_box: BrotliDecoderState) -> 
 #[cfg(feature="std")]
 fn brotli_new_decompressor_without_custom_alloc(to_box: BrotliDecoderState) -> *mut BrotliDecoderState{
     // Box::new would abort if this fails.  Returning null drops to_box, which
-    // releases the tables it already holds.  Layout::new is what Box::from_raw
-    // in BrotliDecoderDestroyInstance expects.
-    let layout = std::alloc::Layout::new::<BrotliDecoderState>();
-    unsafe {
-        let ptr = std::alloc::alloc(layout) as *mut BrotliDecoderState;
-        if ptr.is_null() {
-            return core::ptr::null_mut();
-        }
-        core::ptr::write(ptr, to_box);
-        ptr
+    // releases the tables it already holds.  A Vec of exactly one element has
+    // the layout of a Box of it, which Box::from_raw in
+    // BrotliDecoderDestroyInstance frees.
+    let mut state = std::vec::Vec::<BrotliDecoderState>::new();
+    if state.try_reserve_exact(1).is_err() {
+        return core::ptr::null_mut();
     }
+    state.push(to_box);
+    alloc_util::Box::into_raw(state.into_boxed_slice()) as *mut BrotliDecoderState
 }
 
 
