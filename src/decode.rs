@@ -1195,10 +1195,11 @@ fn HuffmanTreeGroupDecode<AllocU8: alloc::Allocator<u8>,
     BrotliRunningTreeGroupState::BROTLI_STATE_TREE_GROUP_LOOP => {}
   }
   let mut result = BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS;
-  // This room also holds the windows the command loop reads the literal and
-  // insert-and-copy trees through (LITERAL_TABLE_WINDOW and
-  // INSERT_COPY_TABLE_WINDOW are the max table sizes of their alphabets).
-  let max_table_size = huffman::BrotliHuffmanMaxTableSize(alphabet_size.max(group_max_symbol));
+  // This room also holds the windows the command loop reads the literal,
+  // insert-and-copy, and distance trees through (LITERAL_TABLE_WINDOW and
+  // INSERT_COPY_TABLE_WINDOW).
+  let max_table_size = huffman::BrotliHuffmanMaxTableSize(alphabet_size.max(group_max_symbol))
+    .max(huffman::INSERT_COPY_TABLE_WINDOW);
   for htree_iter in
       fast_mut!((htrees.slice_mut())[s.htree_index as usize ; (group_num_htrees as usize)])
     .iter_mut() {
@@ -3001,7 +3002,7 @@ pub fn ReadDistanceInternal<AllocU8: alloc::Allocator<u8>,
    s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
    br: &mut bit_reader::BrotliBitReader,
    input: &[u8],
-   distance_tree: &[HuffmanCode])
+   distance_tree: &InsertCopyTable)
    -> bool {
   let mut distval: i32;
   let mut memento = bit_reader::BrotliBitReaderState::default();
@@ -3304,20 +3305,8 @@ pub fn BrotliDecoderGetErrorCode<AllocU8: alloc::Allocator<u8>,
   s.error_code
 }
 
-// The tree with the given index in a Huffman tree group, as
-// HuffmanTreeGroup::build_hgroup_cache lists them; empty if there is none.
-#[inline(always)]
-fn huffman_tree<AllocU32: alloc::Allocator<u32>, AllocHC: alloc::Allocator<HuffmanCode>>(
-  group: &HuffmanTreeGroup<AllocU32, AllocHC>,
-  index: usize,
-) -> &[HuffmanCode] {
-  match group.htrees.slice().get(index) {
-    Some(offset) => group.codes.slice().get(*offset as usize..).unwrap_or(&[]),
-    None => &[],
-  }
-}
-
-// As huffman_tree, as a fixed window (see huffman::HuffmanTable).
+// The tree with the given index in a Huffman tree group, as a fixed window
+// (see huffman::HuffmanTable); an all-zero window if there is none.
 #[inline(always)]
 fn huffman_window<AllocU32: alloc::Allocator<u32>, AllocHC: alloc::Allocator<HuffmanCode>,
                   T: huffman::TableWindow>(
@@ -3330,6 +3319,7 @@ fn huffman_window<AllocU32: alloc::Allocator<u32>, AllocHC: alloc::Allocator<Huf
 
 type LiteralTable = [HuffmanCode; LITERAL_TABLE_WINDOW];
 type InsertCopyTable = [HuffmanCode; INSERT_COPY_TABLE_WINDOW];
+static EMPTY_CONTEXT_TREES: [&'static LiteralTable; 64] = [&huffman::EMPTY_LITERAL_TABLE; 64];
 
 // Fills trees[context] with the literal tree of each of the 64 contexts of the
 // literal block type whose context map starts at context_map[slice_index].
@@ -3341,10 +3331,19 @@ fn fill_context_trees<'a, AllocU32: alloc::Allocator<u32>, AllocHC: alloc::Alloc
   slice_index: usize,
 ) {
   match context_map.get(slice_index..).and_then(|map| map.get(..64)) {
-    Some(map) => for (tree, index) in trees.iter_mut().zip(map.iter()) {
-      *tree = huffman_window(group, *index as usize);
-    },
-    None => *trees = [huffman::table_window(&[], None); 64],
+    Some(map) => {
+      let mut prev_index = usize::MAX;
+      let mut prev_tree: &'a LiteralTable = &huffman::EMPTY_LITERAL_TABLE;
+      for (tree, &index) in trees.iter_mut().zip(map.iter()) {
+        let idx = index as usize;
+        if idx != prev_index {
+          prev_index = idx;
+          prev_tree = huffman_window(group, idx);
+        }
+        *tree = prev_tree;
+      }
+    }
+    None => *trees = EMPTY_CONTEXT_TREES,
   }
 }
 
@@ -3530,11 +3529,11 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
     let distance_hgroup = &saved_distance_hgroup;
     let insert_copy_hgroup = &saved_insert_copy_hgroup;
     let mut insert_copy_tree: &InsertCopyTable = huffman_window(insert_copy_hgroup, s.htree_command_index as usize);
-    let mut context_trees: [&LiteralTable; 64] = [huffman::table_window(&[], None); 64];
+    let mut context_trees: [&LiteralTable; 64] = EMPTY_CONTEXT_TREES;
     // The tree for s.dist_htree_index, which most distances share with the
     // previous one.
     let mut distance_tree_index = s.dist_htree_index;
-    let mut distance_tree = huffman_tree(distance_hgroup, distance_tree_index as usize);
+    let mut distance_tree: &InsertCopyTable = huffman_window(distance_hgroup, distance_tree_index as usize);
     // The context_map_slice_index for which context_trees was filled.
     let mut context_trees_slice: Option<usize> = None;
 
@@ -3773,7 +3772,7 @@ fn ProcessCommandsInternal<AllocU8: alloc::Allocator<u8>,
             }
             if s.dist_htree_index != distance_tree_index {
               distance_tree_index = s.dist_htree_index;
-              distance_tree = huffman_tree(distance_hgroup, distance_tree_index as usize);
+              distance_tree = huffman_window(distance_hgroup, distance_tree_index as usize);
             }
             if (!ReadDistanceInternal(safe, s, &mut br, input, distance_tree)) && safe {
               result = BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;

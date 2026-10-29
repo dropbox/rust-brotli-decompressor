@@ -35,7 +35,9 @@ impl HuffmanTable for [HuffmanCode] {
 pub const LITERAL_TABLE_WINDOW: usize = 256 + 376;
 pub const INSERT_COPY_TABLE_WINDOW: usize = 704 + 376;
 
-static EMPTY_TABLE: [HuffmanCode; INSERT_COPY_TABLE_WINDOW] =
+pub static EMPTY_LITERAL_TABLE: [HuffmanCode; LITERAL_TABLE_WINDOW] =
+  [HuffmanCode { value: 0, bits: 0 }; LITERAL_TABLE_WINDOW];
+pub static EMPTY_TABLE: [HuffmanCode; INSERT_COPY_TABLE_WINDOW] =
   [HuffmanCode { value: 0, bits: 0 }; INSERT_COPY_TABLE_WINDOW];
 
 // A fixed window type, cut out of a table group's codes by table_window.
@@ -50,7 +52,9 @@ macro_rules! fixed_table_window {
     impl HuffmanTable for [HuffmanCode; $n] {
       #[inline(always)]
       fn entry(&self, index: usize) -> HuffmanCode {
-        self[core::cmp::min(index, $n - 1)]
+        #[cfg(not(feature="unsafe"))]
+        let index = core::cmp::min(index, $n - 1);
+        fast!((self)[index])
       }
     }
 
@@ -157,15 +161,17 @@ impl<AllocU32 : alloc::Allocator<u32>,
         BrotliHuffmanMaxTableSize(self.alphabet_size.max(self.max_symbol))
     }
 
-    // Room for one worst-case table and typical tables for the rest.  Real
-    // tables are rarely much over the 256-entry root table, and allocators
+    // Room for one full INSERT_COPY_TABLE_WINDOW window (so every active tree
+    // can be viewed through a fixed window) and typical tables for the rest.
+    // Real tables are rarely much over the 256-entry root table, and allocators
     // must initialize what they return, so sizing every tree for the worst
     // case cost more than decoding small streams did.  ensure_codes_room
     // grows the buffer when a stream needs more.
     fn initial_codes_len(&self) -> usize {
         let max = self.max_table_size();
         let typical = 256 + (max - 256) / 4;
-        max + (self.num_htrees as usize).saturating_sub(1) * typical
+        max.max(INSERT_COPY_TABLE_WINDOW)
+            + (self.num_htrees as usize).saturating_sub(1) * typical
     }
 }
 
