@@ -438,6 +438,11 @@ impl<'a> BitReaderSlice<'a> {
   }
 
   #[inline(always)]
+  pub fn avail_in(&self) -> u32 {
+    self.rem.len() as u32
+  }
+
+  #[inline(always)]
   pub fn fill16(&mut self) {
     if self.avail_bits <= 16 {
       if let &[b0, b1, b2, b3, b4, b5, b6, b7, ..] = self.rem {
@@ -447,6 +452,28 @@ impl<'a> BitReaderSlice<'a> {
         self.avail_bits += 48;
       }
     }
+  }
+
+  // Separating the `< 8` failure exit from the hot `avail_bits > 16`
+  // fallthrough prevents SimplifyCFG from fusing `rem.len() >= 8` into every
+  // non-refill literal iteration.
+  #[inline(always)]
+  pub fn fill16_checked(&mut self) -> bool {
+    #[cold]
+    #[inline(always)]
+    fn cold_underflow() {}
+
+    if self.avail_bits <= 16 {
+      let &[b0, b1, b2, b3, b4, b5, b6, b7, ..] = self.rem else {
+        cold_underflow();
+        return false;
+      };
+      let next = u64::from_le_bytes([b0, b1, b2, b3, b4, b5, b6, b7]);
+      self.rem = &self.rem[6..];
+      self.val |= next << (self.avail_bits & 63);
+      self.avail_bits += 48;
+    }
+    true
   }
 
   #[inline(always)]
