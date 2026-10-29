@@ -42,12 +42,17 @@ void simple_prealloc_test() {
     size_t decoded_size = sizeof(output) * 2;
     unsigned char scratch_u8[131072] = {0};
     uint32_t scratch_u32[16384] = {0};
-    HuffmanCode HuffmanCodeZero = {0,0};
-    HuffmanCode scratch_hc[65536] = {HuffmanCodeZero};
+    /* A 16-bit prefix must not leave an embedded HuffmanCode array only
+       2-byte aligned, even when the enclosing struct is 4-byte aligned. */
+    struct {
+        uint32_t alignment;
+        uint16_t prefix;
+        HuffmanCode codes[65536];
+    } scratch_hc = {0};
     BrotliDecoderReturnInfo ret = BrotliDecoderDecompressPrealloc(sizeof(brotli_file), brotli_file, decoded_size, output,
                                                                   sizeof(scratch_u8), scratch_u8,
                                                                   sizeof(scratch_u32) / sizeof(uint32_t), scratch_u32,
-                                                                  sizeof(scratch_hc) / sizeof(HuffmanCode), scratch_hc);
+                                                                  sizeof(scratch_hc.codes) / sizeof(HuffmanCode), scratch_hc.codes);
     assert(ret.decoded_size == sizeof(key));
     assert(memcmp(output, key, sizeof(key) - 1) == 0);
     assert(output[sizeof(key) - 1] == '\n');

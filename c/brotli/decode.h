@@ -28,10 +28,20 @@ extern "C" {
  */
 typedef struct BrotliDecoderStateStruct BrotliDecoderState;
 
-/* The Rust definition is 4-byte aligned; buffers of HuffmanCode passed in
-   must be too (any malloc result is), or the call fails with an invalid
-   argument error. */
+/* Match Rust's #[repr(C, align(4))] layout. Aligning the first member also
+   aligns arrays and embedded buffers without changing the field offsets. */
 typedef struct HuffmanCodeStruct {
+#if defined(__cplusplus) && __cplusplus >= 201103L
+    alignas(4)
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+    _Alignas(4)
+#elif defined(_MSC_VER)
+    __declspec(align(4))
+#elif defined(__GNUC__) || defined(__clang__)
+    __attribute__((aligned(4)))
+#else
+#error "HuffmanCode requires compiler support for 4-byte alignment"
+#endif
     uint16_t value;
     uint8_t bits;
 } HuffmanCode;
