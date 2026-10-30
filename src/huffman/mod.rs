@@ -31,9 +31,11 @@ impl HuffmanTable for [HuffmanCode] {
 
 // Window sizes for the literal and insert-and-copy trees, the ones decoded
 // several times per command: the largest tables of their 256- and 704-symbol
-// alphabets, which HuffmanTreeGroupDecode leaves room for anyway.
-pub const LITERAL_TABLE_WINDOW: usize = 256 + 376;
-pub const INSERT_COPY_TABLE_WINDOW: usize = 704 + 376;
+// alphabets.  HuffmanTreeGroupDecode reserves BrotliHuffmanMaxTableSize of
+// the group's alphabet past every tree, so deriving the windows from the same
+// function keeps that room and the windows equal.
+pub const LITERAL_TABLE_WINDOW: usize = BrotliHuffmanMaxTableSize(256);
+pub const INSERT_COPY_TABLE_WINDOW: usize = BrotliHuffmanMaxTableSize(704);
 
 static EMPTY_TABLE: [HuffmanCode; INSERT_COPY_TABLE_WINDOW] =
   [HuffmanCode { value: 0, bits: 0 }; INSERT_COPY_TABLE_WINDOW];
@@ -50,6 +52,9 @@ macro_rules! fixed_table_window {
     impl HuffmanTable for [HuffmanCode; $n] {
       #[inline(always)]
       fn entry(&self, index: usize) -> HuffmanCode {
+        // A valid table never reaches the clamp; it only keeps the lookup
+        // free of a bounds check.
+        debug_assert!(index < $n, "Huffman table index {} in a {}-entry window", index, $n);
         self[core::cmp::min(index, $n - 1)]
       }
     }
@@ -58,6 +63,8 @@ macro_rules! fixed_table_window {
       #[inline(always)]
       fn window(codes: &[HuffmanCode], offset: Option<usize>) -> &Self {
         let window = offset.and_then(|off| codes.get(off..off.checked_add($n)?));
+        debug_assert!(offset.is_none() || window.is_some(),
+                      "no {}-entry window at offset {:?} of {} codes", $n, offset, codes.len());
         match window {
           Some(w) => w.try_into().unwrap(),
           None => (&EMPTY_TABLE[..$n]).try_into().unwrap(),
@@ -74,7 +81,7 @@ fixed_table_window!(INSERT_COPY_TABLE_WINDOW);
 // 4 + 7 + 15 + 31 + 63 second-level entries, as the C decoder computes it.
 // For the largest alphabet (704 insert-and-copy codes) it equals
 // INSERT_COPY_TABLE_WINDOW.
-pub fn BrotliHuffmanMaxTableSize(alphabet_size_limit: u16) -> usize {
+pub const fn BrotliHuffmanMaxTableSize(alphabet_size_limit: u16) -> usize {
   alphabet_size_limit as usize + 376
 }
 pub const BROTLI_HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH: u32 = 5;
