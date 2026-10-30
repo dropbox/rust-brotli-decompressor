@@ -209,6 +209,7 @@ pub fn BrotliGet16BitsUnmasked(br: &mut BrotliBitReader, input: &[u8]) -> u32 {
 }
 
 // Returns the specified number of bits from br without advancing bit pos.
+#[allow(dead_code)]
 #[inline(always)]
 pub fn BrotliGetBits(br: &mut BrotliBitReader, n_bits: u32, input: &[u8]) -> u32 {
   BrotliFillBitWindow(br, n_bits, input);
@@ -382,6 +383,118 @@ pub fn BrotliWarmupBitReader(br: &mut BrotliBitReader, input: &[u8]) -> bool {
     return false;
   }
   true
+}
+
+
+
+// Register-friendly view over `(BrotliBitReader, &[u8])` for the non-streaming
+// command loop: holds the remaining input slice directly instead of separate
+// `(input, next_in, avail_in)` cursors, and keeps unread bits right-justified
+// at bit 0 while active in registers (converting from/to `BrotliBitReader` once
+// on entry and exit).
+#[derive(Copy, Clone)]
+pub(crate) struct BitReaderSlice<'a> {
+  pub val: u64,
+  pub avail_bits: u32,
+  pub rem: &'a [u8],
+}
+
+impl<'a> BitReaderSlice<'a> {
+  #[inline(always)]
+  pub fn new(br: &BrotliBitReader, input: &'a [u8]) -> Option<Self> {
+    let rem = input
+      .get(br.next_in as usize..)
+      .and_then(|s| s.get(..br.avail_in as usize))?;
+    Some(BitReaderSlice {
+      val: br.val_,
+      avail_bits: br.bit_pos_,
+      rem: rem,
+    })
+  }
+
+  #[inline(always)]
+  pub fn empty() -> Self {
+    BitReaderSlice {
+      val: 0,
+      avail_bits: 0,
+      rem: &[],
+    }
+  }
+
+  #[inline(always)]
+  pub fn sync_to(self, br: &mut BrotliBitReader) {
+    br.val_ = self.val;
+    br.bit_pos_ = self.avail_bits;
+    let avail_in = self.rem.len() as u32;
+    let consumed = br.avail_in - avail_in;
+    br.next_in += consumed;
+    br.avail_in = avail_in;
+  }
+
+  #[inline(always)]
+  pub fn has_input(&self) -> bool {
+    self.rem.len() >= 28
+  }
+
+  #[inline(always)]
+  pub fn avail_in(&self) -> u32 {
+    self.rem.len() as u32
+  }
+
+  #[inline(always)]
+  pub fn fill16(&mut self) {
+    if self.avail_bits <= 16 {
+      if let &[b0, b1, b2, b3, b4, b5, b6, b7, ..] = self.rem {
+        let next = u64::from_le_bytes([b0, b1, b2, b3, b4, b5, b6, b7]);
+        self.rem = &self.rem[6..];
+        self.val |= next << (self.avail_bits & 63);
+        self.avail_bits += 48;
+      }
+    }
+  }
+
+  // Separating the `< 8` failure exit from the hot `avail_bits > 16`
+  // fallthrough prevents SimplifyCFG from fusing `rem.len() >= 8` into every
+  // non-refill literal iteration.
+  #[inline(always)]
+  pub fn fill16_checked(&mut self) -> bool {
+    #[cold]
+    #[inline(always)]
+    fn cold_underflow() {}
+
+    if self.avail_bits <= 16 {
+      let &[b0, b1, b2, b3, b4, b5, b6, b7, ..] = self.rem else {
+        cold_underflow();
+        return false;
+      };
+      let next = u64::from_le_bytes([b0, b1, b2, b3, b4, b5, b6, b7]);
+      self.rem = &self.rem[6..];
+      self.val |= next << (self.avail_bits & 63);
+      self.avail_bits += 48;
+    }
+    true
+  }
+
+  #[inline(always)]
+  pub fn fill32(&mut self) {
+    if self.avail_bits <= 32 {
+      if let Some((&chunk, rest)) = self.rem.split_first_chunk::<4>() {
+        let next = u32::from_le_bytes(chunk) as u64;
+        self.rem = rest;
+        self.val |= next << (self.avail_bits & 63);
+        self.avail_bits += 32;
+      }
+    }
+  }
+
+  #[inline(always)]
+  pub fn read_bits(&mut self, n_bits: u32) -> u32 {
+    self.fill32();
+    let out = (self.val as u32) & BitMask(n_bits);
+    self.avail_bits = self.avail_bits.wrapping_sub(n_bits);
+    self.val >>= n_bits & 63;
+    out
+  }
 }
 
 
