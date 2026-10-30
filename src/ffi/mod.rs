@@ -266,7 +266,10 @@ unsafe fn brotli_decoder_decompress_with_return_info(
     None => return invalid_argument_return_info(),
   };
   // Without C allocator callbacks, as in BrotliDecoderCreateInstance, so that
-  // a failed allocation is a decoder error rather than an abort.
+  // a failed allocation is a decoder error rather than an abort.  That
+  // allocator zero-fills and then default-fills each buffer; the second pass
+  // folds away when the optimizer can see the allocator, as under LTO (see
+  // alloc_util::try_alloc_default_slice).
   #[cfg(feature="std")]
   {
     let allocator = || SubclassableAllocator::new(CAllocator {
