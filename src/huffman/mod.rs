@@ -13,15 +13,6 @@ pub const BROTLI_HUFFMAN_MAX_CODE_LENGTH: usize = 15;
 // For current format this constant equals to kNumInsertAndCopyCodes
 pub const BROTLI_HUFFMAN_MAX_CODE_LENGTHS_SIZE: usize = 704;
 
-// Maximum possible Huffman table size for an alphabet size of (index * 32),
-// max code length 15 and root table bits 8.
-// pub const kMaxHuffmanTableSize : [u16;23] = [
-// 256, 402, 436, 468, 500, 534, 566, 598, 630, 662, 694, 726, 758, 790, 822,
-// 854, 886, 920, 952, 984, 1016, 1048, 1080, 1112, 1144,1176,1208,1240,272,
-// 1304, 1336, 1368, 1400, 1432, 1464, 1496, 1528];
-//
-pub const BROTLI_HUFFMAN_MAX_TABLE_SIZE: u32 = 1080;
-
 // Huffman table lookup.  A slice is bounds checked.  A fixed window clamps the
 // index to its last entry instead, which the compiler can see is in bounds, so
 // the hot decode loops pay no check: root lookups are below 256 already, and
@@ -82,7 +73,7 @@ fixed_table_window!(INSERT_COPY_TABLE_WINDOW);
 // `alphabet_size_limit` symbols: a 256-entry root table plus at most
 // 4 + 7 + 15 + 31 + 63 second-level entries, as the C decoder computes it.
 // For the largest alphabet (704 insert-and-copy codes) it equals
-// BROTLI_HUFFMAN_MAX_TABLE_SIZE.
+// INSERT_COPY_TABLE_WINDOW.
 pub fn BrotliHuffmanMaxTableSize(alphabet_size_limit: u16) -> usize {
   alphabet_size_limit as usize + 376
 }
@@ -95,6 +86,14 @@ pub const BROTLI_HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH: u32 = 5;
 pub const BROTLI_HUFFMAN_MAX_SIZE_26: u32 = 396;
 pub const BROTLI_HUFFMAN_MAX_SIZE_258: u32 = 632;
 pub const BROTLI_HUFFMAN_MAX_SIZE_272: u32 = 646;
+
+// No fixed table size exceeds INSERT_COPY_TABLE_WINDOW, which the no_std
+// brotli_decode sizes its table storage by.  Each line fails to compile, as an
+// array length mismatch, if one does (assert! in a const needs Rust 1.57).
+const _: [(); 1] = [(); (LITERAL_TABLE_WINDOW <= INSERT_COPY_TABLE_WINDOW) as usize];
+const _: [(); 1] = [(); (BROTLI_HUFFMAN_MAX_SIZE_26 as usize <= INSERT_COPY_TABLE_WINDOW) as usize];
+const _: [(); 1] = [(); (BROTLI_HUFFMAN_MAX_SIZE_258 as usize <= INSERT_COPY_TABLE_WINDOW) as usize];
+const _: [(); 1] = [(); (BROTLI_HUFFMAN_MAX_SIZE_272 as usize <= INSERT_COPY_TABLE_WINDOW) as usize];
 
 // 4-byte aligned so that a copy, and the fill of a new table, is one 32-bit
 // access rather than separate 16- and 8-bit ones.
