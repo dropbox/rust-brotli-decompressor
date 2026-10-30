@@ -3180,10 +3180,33 @@ fn copy_overlapping_backreference(data: &mut [u8], dst: usize, distance: usize,
   true
 }
 
+#[cfg(not(feature="unsafe"))]
+// Head and tail blocks cover short non-overlapping copies without a memcpy
+// call. The slices have equal lengths; overlap within either slice is harmless.
+#[inline(always)]
+fn copy_medium(dst: &mut [u8], src: &[u8]) {
+  let size = src.len();
+  match size {
+    17..=32 => {
+      dst[..16].copy_from_slice(&src[..16]);
+      dst[size - 16..].copy_from_slice(&src[size - 16..]);
+    },
+    33..=64 => {
+      dst[..32].copy_from_slice(&src[..32]);
+      dst[size - 32..].copy_from_slice(&src[size - 32..]);
+    },
+    65..=128 => {
+      dst[..64].copy_from_slice(&src[..64]);
+      dst[size - 64..].copy_from_slice(&src[size - 64..]);
+    },
+    _ => dst.copy_from_slice(src),
+  }
+}
+
 #[inline(always)]
 fn memcpy_within_slice(data: &mut [u8], off_dst: usize, off_src: usize, size: usize) -> bool {
   // Both ranges must fit and must not overlap: the `unsafe` build lowers this to
-  // copy_nonoverlapping, and the safe build's split_at_mut would panic.
+  // copy_nonoverlapping, and the safe build keeps the same contract.
   // Subtraction, not `off + size`, so no caller offset can wrap past the checks.
   let len = data.len();
   let apart = if off_dst > off_src { off_dst - off_src } else { off_src - off_dst };
@@ -3196,11 +3219,11 @@ fn memcpy_within_slice(data: &mut [u8], off_dst: usize, off_src: usize, size: us
     if off_dst > off_src {
       let (src, dst) = data.split_at_mut(off_dst);
       let src_slice = fast!((src)[off_src ; off_src + size]);
-      fast_mut!((dst)[0;size]).clone_from_slice(src_slice);
+      copy_medium(fast_mut!((dst)[0;size]), src_slice);
     } else {
       let (dst, src) = data.split_at_mut(off_src);
       let src_slice = fast!((src)[0;size]);
-      fast_mut!((dst)[off_dst;off_dst + size]).clone_from_slice(src_slice);
+      copy_medium(fast_mut!((dst)[off_dst;off_dst + size]), src_slice);
     }
   }
 
@@ -4774,6 +4797,23 @@ mod safeguard_tests {
     assert!(!memcpy_within_slice(&mut data, usize::MAX, 0, 2));
     assert!(!memcpy_within_slice(&mut data, 0, usize::MAX, 2));
     assert_eq!(data, unchanged);
+  }
+
+  #[test]
+  fn medium_backreference_copies_match_a_snapshot() {
+    for size in 0..258 {
+      for &(dst, src) in &[(64, 384), (384, 64), (64, 64 + size), (64 + size, 64)] {
+        let mut data = [0u8; 768];
+        for (index, byte) in data.iter_mut().enumerate() {
+          *byte = (index.wrapping_mul(73) ^ (index >> 3)) as u8;
+        }
+        let original = data;
+        let mut expected = original;
+        expected[dst..dst + size].copy_from_slice(&original[src..src + size]);
+        assert!(memcpy_within_slice(&mut data, dst, src, size));
+        assert_eq!(&data[..], &expected[..]);
+      }
+    }
   }
 }
 
