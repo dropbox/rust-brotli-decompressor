@@ -146,9 +146,11 @@ fn BrotliLoad64LE(input: &[u8], next_in_u32: u32) -> u64 {
   u64::from_le_bytes(eight_byte)
 }
 
-// Makes at least n_bits + 1 bits valid, n_bits <= 32.  The narrower cases load
-// 64 bits and claim 7 or 6 bytes of them; the bits of the byte past those land
-// above bit_pos_, where the next refill writes the same bits again.
+// Makes at least n_bits + 1 bits valid for n_bits <= 16, and at least 32 for
+// n_bits <= 32 (exactly 32 when the accumulator was empty).  The narrower
+// cases load 64 bits and claim 7 or 6 bytes of them; the bits of the byte
+// past those land above bit_pos_, where the next refill writes the same bits
+// again.
 #[inline(always)]
 pub fn BrotliFillBitWindow(br: &mut BrotliBitReader, n_bits: u32, input: &[u8]) {
   if n_bits <= 8 {
