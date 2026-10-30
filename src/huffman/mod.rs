@@ -38,13 +38,6 @@ impl HuffmanTable for [HuffmanCode] {
   }
 }
 
-impl<const N: usize> HuffmanTable for [HuffmanCode; N] {
-  #[inline(always)]
-  fn entry(&self, index: usize) -> HuffmanCode {
-    self[core::cmp::min(index, N - 1)]
-  }
-}
-
 // Window sizes for the literal and insert-and-copy trees, the ones decoded
 // several times per command: the largest tables of their 256- and 704-symbol
 // alphabets, which HuffmanTreeGroupDecode leaves room for anyway.
@@ -53,6 +46,37 @@ pub const INSERT_COPY_TABLE_WINDOW: usize = 704 + 376;
 
 static EMPTY_TABLE: [HuffmanCode; INSERT_COPY_TABLE_WINDOW] =
   [HuffmanCode { value: 0, bits: 0 }; INSERT_COPY_TABLE_WINDOW];
+
+// A fixed window type, cut out of a table group's codes by table_window.
+pub trait TableWindow: HuffmanTable {
+  fn window(codes: &[HuffmanCode], offset: Option<usize>) -> &Self;
+}
+
+// One impl per window size rather than over [HuffmanCode; N]: const generics
+// need Rust 1.51, and these two sizes are the only ones.
+macro_rules! fixed_table_window {
+  ($n:expr) => {
+    impl HuffmanTable for [HuffmanCode; $n] {
+      #[inline(always)]
+      fn entry(&self, index: usize) -> HuffmanCode {
+        self[core::cmp::min(index, $n - 1)]
+      }
+    }
+
+    impl TableWindow for [HuffmanCode; $n] {
+      #[inline(always)]
+      fn window(codes: &[HuffmanCode], offset: Option<usize>) -> &Self {
+        let window = offset.and_then(|off| codes.get(off..off.checked_add($n)?));
+        match window {
+          Some(w) => w.try_into().unwrap(),
+          None => (&EMPTY_TABLE[..$n]).try_into().unwrap(),
+        }
+      }
+    }
+  };
+}
+fixed_table_window!(LITERAL_TABLE_WINDOW);
+fixed_table_window!(INSERT_COPY_TABLE_WINDOW);
 
 // Upper bound on the table BrotliBuildHuffmanTable produces for an alphabet of
 // `alphabet_size_limit` symbols: a 256-entry root table plus at most
@@ -146,16 +170,12 @@ impl<AllocU32 : alloc::Allocator<u32>,
     }
 }
 
-// The `N`-entry window of `codes` starting at `offset`; HuffmanTreeGroupDecode
-// makes room for it when it builds the tree there.  An all-zero table if there
-// is no such tree.
+// The window of `codes` starting at `offset`; HuffmanTreeGroupDecode makes
+// room for it when it builds the tree there.  An all-zero table if there is no
+// such tree.
 #[inline(always)]
-pub fn table_window<const N: usize>(codes: &[HuffmanCode], offset: Option<usize>) -> &[HuffmanCode; N] {
-  let window = offset.and_then(|off| codes.get(off..off.checked_add(N)?));
-  match window {
-    Some(w) => w.try_into().unwrap(),
-    None => (&EMPTY_TABLE[..N]).try_into().unwrap(),
-  }
+pub fn table_window<T: TableWindow>(codes: &[HuffmanCode], offset: Option<usize>) -> &T {
+  T::window(codes, offset)
 }
 
 // Makes room for one more worst-case table at `offset` in `codes`, keeping the

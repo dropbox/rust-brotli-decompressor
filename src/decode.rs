@@ -3305,15 +3305,15 @@ fn huffman_tree<AllocU32: alloc::Allocator<u32>, AllocHC: alloc::Allocator<Huffm
   }
 }
 
-// As huffman_tree, as a fixed window of N entries (see huffman::HuffmanTable).
+// As huffman_tree, as a fixed window (see huffman::HuffmanTable).
 #[inline(always)]
 fn huffman_window<AllocU32: alloc::Allocator<u32>, AllocHC: alloc::Allocator<HuffmanCode>,
-                  const N: usize>(
+                  T: huffman::TableWindow>(
   group: &HuffmanTreeGroup<AllocU32, AllocHC>,
   index: usize,
-) -> &[HuffmanCode; N] {
+) -> &T {
   let offset = group.htrees.slice().get(index).map(|o| *o as usize);
-  huffman::table_window::<N>(group.codes.slice(), offset)
+  huffman::table_window(group.codes.slice(), offset)
 }
 
 type LiteralTable = [HuffmanCode; LITERAL_TABLE_WINDOW];
