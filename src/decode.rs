@@ -2809,9 +2809,13 @@ mod tests {
     let mut state = BrotliState::new(::StandardAlloc::default(),
                                      ::StandardAlloc::default(),
                                      ::StandardAlloc::default());
-    state.BrotliHuffmanTreeGroupInit(state::WhichTreeGroup::LITERAL, 1, 0, 1);
-    state.BrotliHuffmanTreeGroupInit(state::WhichTreeGroup::INSERT_COPY, 1, 0, 2);
-    state.BrotliHuffmanTreeGroupInit(state::WhichTreeGroup::DISTANCE, 1, 0, 3);
+    // The alphabets the decoder uses, so the groups have the room the
+    // command loop's table windows expect.
+    state.BrotliHuffmanTreeGroupInit(state::WhichTreeGroup::LITERAL,
+                                     kNumLiteralCodes, kNumLiteralCodes, 1);
+    state.BrotliHuffmanTreeGroupInit(state::WhichTreeGroup::INSERT_COPY,
+                                     kNumInsertAndCopyCodes, kNumInsertAndCopyCodes, 2);
+    state.BrotliHuffmanTreeGroupInit(state::WhichTreeGroup::DISTANCE, 64, 64, 3);
     let expected_code_lengths = [
       state.literal_hgroup.codes.slice().len(),
       state.insert_copy_hgroup.codes.slice().len(),
