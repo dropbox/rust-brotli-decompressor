@@ -464,11 +464,13 @@ impl<'a> BitReaderSlice<'a> {
     fn cold_underflow() {}
 
     if self.avail_bits <= 16 {
-      let &[b0, b1, b2, b3, b4, b5, b6, b7, ..] = self.rem else {
-        cold_underflow();
-        return false;
+      let next = match *self.rem {
+        [b0, b1, b2, b3, b4, b5, b6, b7, ..] => u64::from_le_bytes([b0, b1, b2, b3, b4, b5, b6, b7]),
+        _ => {
+          cold_underflow();
+          return false;
+        }
       };
-      let next = u64::from_le_bytes([b0, b1, b2, b3, b4, b5, b6, b7]);
       self.rem = &self.rem[6..];
       self.val |= next << (self.avail_bits & 63);
       self.avail_bits += 48;
@@ -479,8 +481,8 @@ impl<'a> BitReaderSlice<'a> {
   #[inline(always)]
   pub fn fill32(&mut self) {
     if self.avail_bits <= 32 {
-      if let Some((&chunk, rest)) = self.rem.split_first_chunk::<4>() {
-        let next = u32::from_le_bytes(chunk) as u64;
+      if let &[b0, b1, b2, b3, ref rest @ ..] = self.rem {
+        let next = u32::from_le_bytes([b0, b1, b2, b3]) as u64;
         self.rem = rest;
         self.val |= next << (self.avail_bits & 63);
         self.avail_bits += 32;
