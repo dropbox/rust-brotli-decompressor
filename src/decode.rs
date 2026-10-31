@@ -2889,11 +2889,14 @@ pub fn SafeReadBits(br: &mut bit_reader::BrotliBitReader,
 // const generics: const generics need Rust 1.51.
 trait CommandLoopMode {
   const SAFE: bool;
+  const RESUME: bool;
 }
 struct FastCommandLoop;
 struct SafeCommandLoop;
-impl CommandLoopMode for FastCommandLoop { const SAFE: bool = false; }
-impl CommandLoopMode for SafeCommandLoop { const SAFE: bool = true; }
+struct FastResumeLoop;
+impl CommandLoopMode for FastCommandLoop { const SAFE: bool = false; const RESUME: bool = false; }
+impl CommandLoopMode for SafeCommandLoop { const SAFE: bool = true; const RESUME: bool = false; }
+impl CommandLoopMode for FastResumeLoop { const SAFE: bool = false; const RESUME: bool = true; }
 
 // Precondition: *distance_code < 0
 #[inline(always)]
@@ -3504,6 +3507,8 @@ fn save_mid_command_state<AllocU8: alloc::Allocator<u8>,
 }
 
 // Unified command loop parameterized over a `CommandLoopMode`:
+// - `FastResumeLoop`: finishes one command left mid-insert, on the fast reader,
+//   so the hot loop keeps a single entry point.
 // - `FastCommandLoop`: entered from `COMMAND_BEGIN` with `>= 28` input bytes,
 //   compiling to a single-entry loop over `BitReaderSlice` with in-place
 //   `HuffmanTreeGroup` borrows.
@@ -3609,23 +3614,23 @@ fn ProcessCommandsInternal<
     s.state = state;
     return BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_UNREACHABLE;
   }
-  let mut i: i32 = if M::SAFE { s.loop_counter } else { 0 };
-  let mut distance_code: i32 = if M::SAFE { s.distance_code } else { 0 };
-  let mut distance_context: i32 = if M::SAFE { s.distance_context } else { 0 };
-  let mut copy_length: i32 = if M::SAFE { s.copy_length } else { 0 };
+  let mut i: i32 = if M::SAFE || M::RESUME { s.loop_counter } else { 0 };
+  let mut distance_code: i32 = if M::SAFE || M::RESUME { s.distance_code } else { 0 };
+  let mut distance_context: i32 = if M::SAFE || M::RESUME { s.distance_context } else { 0 };
+  let mut copy_length: i32 = if M::SAFE || M::RESUME { s.copy_length } else { 0 };
 
   let mut exit_state = BrotliRunningState::BROTLI_STATE_COMMAND_BEGIN;
   let mut result = BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS;
   let mut mid_cmd: Option<(i32, i32, i32, i32)> = None;
 
   'cmd: loop {
-    if !M::SAFE {
+    if !M::SAFE && !M::RESUME {
       i = 0;
       distance_code = 0;
       distance_context = 0;
       copy_length = 0;
     }
-    if !M::SAFE || matches!(state, BrotliRunningState::BROTLI_STATE_COMMAND_BEGIN) {
+    if (!M::SAFE && !M::RESUME) || (M::SAFE && matches!(state, BrotliRunningState::BROTLI_STATE_COMMAND_BEGIN)) {
       if !M::SAFE && !fbr.has_input() {
         mark_unlikely();
         result = BrotliDecoderErrorCode::BROTLI_DECODER_NEEDS_MORE_INPUT;
@@ -3695,6 +3700,39 @@ fn ProcessCommandsInternal<
 
     if (!M::SAFE && i != 0) || (M::SAFE && matches!(state, BrotliRunningState::BROTLI_STATE_COMMAND_INNER)) {
       'inner: loop {
+        // The batch below needs the whole remaining insert to fit in the input and
+        // before the ring buffer wrap, which an insert spanning chunks rarely does.
+        // Decode as many literals as do fit. Only this instantiation has a clamp,
+        // because it costs the hot loop speed.
+        if M::RESUME {
+          let bl = s.block_type_length_state.block_length[0];
+          let count = core::cmp::min(
+            i as u32,
+            core::cmp::min(bl,
+              core::cmp::min((rb_size - pos - 1) as u32, fbr.avail_in().saturating_sub(34) / 2)));
+          if count > 0 {
+            let (next_fbr, status) = decode_literal_batch(
+              rb, pos as usize, count as usize, s.trivial_literal_context,
+              literal_htree, &context_trees, s.context_lookup, fbr);
+            fbr = next_fbr;
+            match status {
+              LiteralBatchStatus::Decoded => {
+                pos += count as i32;
+                s.block_type_length_state.block_length[0] = bl - count;
+                i -= count as i32;
+                if i == 0 {
+                  break 'inner;
+                }
+                continue 'inner;
+              }
+              LiteralBatchStatus::NotHandled => {}
+              LiteralBatchStatus::CorruptInput => {
+                result = BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_UNREACHABLE;
+                break 'cmd;
+              }
+            }
+          }
+        }
         if !M::SAFE {
           let i_u32 = i as u32;
           let block_len = s.block_type_length_state.block_length[0];
@@ -3862,6 +3900,9 @@ fn ProcessCommandsInternal<
           if i == 0 {
             break 'inner;
           }
+          if M::RESUME && pos == 2 {
+            continue 'inner;
+          }
         }
       }
       if s.meta_block_remaining_len <= 0 {
@@ -3982,6 +4023,9 @@ fn ProcessCommandsInternal<
                 break 'cmd;
               }
             }
+            if M::RESUME {
+              break 'cmd;
+            }
             continue 'cmd;
           }
           Err(err) => {
@@ -4074,6 +4118,9 @@ fn ProcessCommandsInternal<
         break 'cmd;
       }
     }
+    if M::RESUME {
+      break 'cmd;
+    }
   }
 
   if !M::SAFE {
@@ -4104,7 +4151,11 @@ fn ProcessCommands<AllocU8: alloc::Allocator<u8>,
   }
   if !matches!(s.state, BrotliRunningState::BROTLI_STATE_COMMAND_BEGIN) {
     mark_unlikely();
-    let status = SafeProcessCommandsEntry(true, s, input, dictionary);
+    let status = if matches!(s.state, BrotliRunningState::BROTLI_STATE_COMMAND_INNER) {
+      FastResumeInsert(s, input, dictionary)
+    } else {
+      SafeProcessCommandsEntry(true, s, input, dictionary)
+    };
     if !matches!(status, BrotliDecoderErrorCode::BROTLI_DECODER_SUCCESS)
       || !matches!(s.state, BrotliRunningState::BROTLI_STATE_COMMAND_BEGIN)
     {
@@ -4115,6 +4166,19 @@ fn ProcessCommands<AllocU8: alloc::Allocator<u8>,
     }
   }
   ProcessCommandsInternal::<FastCommandLoop, _, _, _>(false, s, input, dictionary)
+}
+
+// Finishes one command that was left mid-insert, on the fast bit reader, without
+// giving the hot loop a second entry point.
+#[inline(never)]
+fn FastResumeInsert<AllocU8: alloc::Allocator<u8>,
+                    AllocU32: alloc::Allocator<u32>,
+                    AllocHC: alloc::Allocator<HuffmanCode>>
+  (s: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+   input: &[u8],
+   dictionary: &[u8])
+   -> BrotliDecoderErrorCode {
+  ProcessCommandsInternal::<FastResumeLoop, _, _, _>(false, s, input, dictionary)
 }
 
 #[inline(never)]
