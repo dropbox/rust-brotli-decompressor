@@ -8,49 +8,65 @@ use std::vec::Vec;
 #[cfg(feature="std")]
 pub use std::boxed::Box;
 
+// The block is `ManuallyDrop`: blocks from a custom allocator must go back
+// through `free_cell` (dropping them would hand them to the wrong allocator),
+// so one that is dropped instead leaks, as before. Without a release-build
+// `Drop` impl the decoder state has no drop glue to run on every block.
 #[cfg(feature="std")]
-pub struct MemoryBlock<Ty:Sized+Default>(Box<[Ty]>);
+pub struct MemoryBlock<Ty:Sized+Default> {
+    inner: core::mem::ManuallyDrop<Box<[Ty]>>,
+}
+// Debug builds keep the upstream diagnostic for blocks leaked that way.
+#[cfg(all(feature="std", debug_assertions))]
+impl<Ty:Sized+Default> Drop for MemoryBlock<Ty> {
+    fn drop(&mut self) {
+        if self.inner.len() != 0 {
+            print!("leaking memory block of length {} element size: {}\n", self.inner.len(), core::mem::size_of::<Ty>());
+        }
+    }
+}
+#[cfg(feature="std")]
+#[allow(non_snake_case)]
+#[inline(always)]
+fn MemoryBlock<Ty:Sized+Default>(b: Box<[Ty]>) -> MemoryBlock<Ty> {
+    MemoryBlock {
+        inner: core::mem::ManuallyDrop::new(b),
+    }
+}
 #[cfg(feature="std")]
 impl<Ty:Sized+Default> Default for MemoryBlock<Ty> {
+    #[inline(always)]
     fn default() -> Self {
         MemoryBlock(Vec::<Ty>::new().into_boxed_slice())
     }
 }
 #[cfg(feature="std")]
 impl<Ty:Sized+Default> alloc::SliceWrapper<Ty> for MemoryBlock<Ty> {
+    #[inline(always)]
     fn slice(&self) -> &[Ty] {
-        &self.0[..]
+        &self.inner[..]
     }
 }
 #[cfg(feature="std")]
 impl<Ty:Sized+Default> alloc::SliceWrapperMut<Ty> for MemoryBlock<Ty> {
+    #[inline(always)]
     fn slice_mut(&mut self) -> &mut [Ty] {
-        &mut self.0[..]
+        &mut self.inner[..]
     }
 }
 #[cfg(feature="std")]
 impl<Ty:Sized+Default> core::ops::Index<usize> for MemoryBlock<Ty> {
     type Output = Ty;
+    #[inline(always)]
     fn index(&self, index:usize) -> &Ty {
-        &self.0[index]
+        &self.inner[index]
     }
 }
 #[cfg(feature="std")]
 impl<Ty:Sized+Default> core::ops::IndexMut<usize> for MemoryBlock<Ty> {
-
+    #[inline(always)]
     fn index_mut(&mut self, index:usize) -> &mut Ty {
-        &mut self.0[index]
-    }
-}
-#[cfg(feature="std")]
-impl<Ty:Sized+Default> Drop for MemoryBlock<Ty> {
-    fn drop (&mut self) {
-        if self.0.len() != 0 {
-            print!("leaking memory block of length {} element size: {}\n", self.0.len(), core::mem::size_of::<Ty>());
-
-            let to_forget = core::mem::replace(self, MemoryBlock::default());
-            core::mem::forget(to_forget);// leak it -- it's the only safe way with custom allocators
-        }
+        &mut self.inner[index]
     }
 }
 
@@ -62,6 +78,7 @@ impl<Ty:Sized+Default> Drop for MemoryBlock<Ty> {
 // None lets callers report BROTLI_DECODER_ERROR_ALLOC_* exactly as they do
 // when a C allocator returns null.
 #[cfg(feature = "std")]
+#[inline(never)]
 fn try_alloc_default_slice<Ty: Sized + Default + Clone>(size: usize) -> Option<Box<[Ty]>> {
     let mut elements = if size == 0 || core::mem::size_of::<Ty>() == 0 {
         // Nothing to allocate: this Vec never touches the allocator.
@@ -143,16 +160,17 @@ impl<Ty:Sized+Default+Clone> alloc::Allocator<Ty> for SubclassableAllocator {
             None => MemoryBlock::<Ty>::default(),
         }
     }
+    #[inline(always)]
     fn free_cell(&mut self, mut bv:MemoryBlock<Ty>) {
-        if (*bv.0).len() != 0 {
+        if (*bv.inner).len() != 0 {
             if let Some(_) = self.alloc.alloc_func {
-                let slice_ptr = (*bv.0).as_mut_ptr();
-                let _box_ptr = Box::into_raw(core::mem::replace(&mut bv.0, Vec::<Ty>::new().into_boxed_slice()));
+                let slice_ptr = (*bv.inner).as_mut_ptr();
+                let _box_ptr = Box::into_raw(core::mem::replace(&mut *bv.inner, Vec::<Ty>::new().into_boxed_slice()));
                 if let Some(free_fn) = self.alloc.free_func {
                     unsafe {free_fn(self.alloc.opaque, core::mem::transmute::<*mut Ty, *mut c_void>(slice_ptr))};
                 }
             } else {
-                let _to_free = core::mem::replace(&mut bv.0, Vec::<Ty>::new().into_boxed_slice());
+                let _to_free = core::mem::replace(&mut *bv.inner, Vec::<Ty>::new().into_boxed_slice());
             }
         }
     }

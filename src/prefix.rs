@@ -1,12 +1,13 @@
 #![allow(non_upper_case_globals)]
 // Represents the range of values belonging to a prefix code:
 // [offset, offset + 2^nbits)
+#[derive(Copy, Clone)]
 pub struct PrefixCodeRange {
   pub offset: u16,
   pub nbits: u8,
 }
 
-pub const kBlockLengthPrefixCode: [PrefixCodeRange; 26] = [PrefixCodeRange {
+const kBlockLengthPrefixCodeRaw: [PrefixCodeRange; 26] = [PrefixCodeRange {
                                                              offset: 1,
                                                              nbits: 2,
                                                            },
@@ -111,6 +112,19 @@ pub const kBlockLengthPrefixCode: [PrefixCodeRange; 26] = [PrefixCodeRange {
                                                              nbits: 24,
                                                            }];
 
+// Padded from 26 to 32 entries (next power of two) with entry 0 so callers can
+// index with `& 31` without a branch or panic path. Valid block-length Huffman
+// tables only produce symbols in `0..26`.
+pub const kBlockLengthPrefixCode: [PrefixCodeRange; 32] = {
+  let mut table = [kBlockLengthPrefixCodeRaw[0]; 32];
+  let mut i = 0;
+  while i < 26 {
+    table[i] = kBlockLengthPrefixCodeRaw[i];
+    i += 1;
+  }
+  table
+};
+
 
 #[derive(Debug, Copy, Clone)]
 pub struct CmdLutElement {
@@ -121,7 +135,7 @@ pub struct CmdLutElement {
   pub insert_len_offset: u16,
   pub copy_len_offset: u16,
 }
-pub const kCmdLut: [CmdLutElement; 704] = [CmdLutElement {
+const kCmdLutRaw: [CmdLutElement; 704] = [CmdLutElement {
                                              insert_len_extra_bits: 0x00,
                                              copy_len_extra_bits: 0x00,
                                              distance_code: 0,
@@ -5753,3 +5767,17 @@ pub const kCmdLut: [CmdLutElement; 704] = [CmdLutElement {
                                              insert_len_offset: 0x5842,
                                              copy_len_offset: 0x0846,
                                            }];
+
+// Padded from 704 to 1024 entries (next power of two) with entry 0 so
+// `load_cmd_lut` can index with `& 1023` (`ubfx`) instead of a 3-instruction
+// compare-and-clamp (`cmp #704; it cs; movcs #0`) on every command. Valid
+// insert-and-copy Huffman tables only produce symbols in `0..704`.
+pub const kCmdLut: [CmdLutElement; 1024] = {
+  let mut table = [kCmdLutRaw[0]; 1024];
+  let mut i = 0;
+  while i < 704 {
+    table[i] = kCmdLutRaw[i];
+    i += 1;
+  }
+  table
+};

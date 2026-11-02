@@ -811,20 +811,11 @@ impl <'brotli_state,
         self.block_type_length_state.block_type_rb[3] = 0;
         self.block_type_length_state.block_type_rb[4] = 1;
         self.block_type_length_state.block_type_rb[5] = 0;
-        self.alloc_u8.free_cell(core::mem::replace(&mut self.context_map,
-                                             AllocU8::AllocatedMemory::default()));
-        self.alloc_u8.free_cell(core::mem::replace(&mut self.context_modes,
-                                             AllocU8::AllocatedMemory::default()));
-        self.alloc_u8.free_cell(core::mem::replace(&mut self.dist_context_map,
-                                             AllocU8::AllocatedMemory::default()));
         self.context_map_slice_index = 0;
         self.literal_htree_index = 0;
         self.dist_context_map_slice_index = 0;
         self.dist_htree_index = 0;
         self.context_lookup = &kContextLookup[0];
-        self.literal_hgroup.reset(&mut self.alloc_u32, &mut self.alloc_hc);
-        self.insert_copy_hgroup.reset(&mut self.alloc_u32, &mut self.alloc_hc);
-        self.distance_hgroup.reset(&mut self.alloc_u32, &mut self.alloc_hc);
     }
     pub fn BrotliStateCleanupAfterMetablock(self : &mut Self) {
         self.alloc_u8.free_cell(core::mem::replace(&mut self.context_map,
@@ -852,13 +843,15 @@ impl <'brotli_state,
                               AllocHC::AllocatedMemory::default()));
       self.alloc_u8.free_cell(core::mem::replace(&mut self.custom_dict,
                               AllocU8::AllocatedMemory::default()));
-      for chunk in self.compound_dictionary.chunks.iter_mut() {
+      let num_chunks = self.compound_dictionary.num_chunks.min(self.compound_dictionary.chunks.len());
+      for chunk in self.compound_dictionary.chunks[..num_chunks].iter_mut() {
         if let MaybeOwnedSlice::Owned(mem) =
             core::mem::replace(chunk, MaybeOwnedSlice::default()) {
           self.alloc_u8.free_cell(mem);
         }
       }
-      self.compound_dictionary = BrotliDecoderCompoundDictionary::default();
+      self.compound_dictionary.num_chunks = 0;
+      self.compound_dictionary.total_size = 0;
       if let MaybeOwnedSlice::Owned(mem) =
           core::mem::replace(&mut self.dictionary.blob, MaybeOwnedSlice::default()) {
         self.alloc_u8.free_cell(mem);

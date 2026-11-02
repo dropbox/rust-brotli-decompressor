@@ -733,6 +733,10 @@ pub(crate) fn copy_bytes(dst: &mut [u8], src: &[u8]) {
       dst[..8].copy_from_slice(&src[..8]);
       dst[n - 8..].copy_from_slice(&src[n - 8..]);
     }
+    17..=32 => {
+      dst[..16].copy_from_slice(&src[..16]);
+      dst[n - 16..].copy_from_slice(&src[n - 16..]);
+    }
     _ => dst.copy_from_slice(src),
   }
 }
@@ -818,8 +822,8 @@ mod tests {
   use super::{copy_bytes, kNumTransforms, kPrefixSuffix, kTransforms, kOmitFirst1, kOmitLast9,
               kUppercaseAll, kUppercaseFirst, ToUpperCase, TransformDictionaryWord};
 
-  // TransformDictionaryWord as it was written before it copied whole slices:
-  // byte by byte, scanning the prefix and the suffix for their terminators.
+  // `TransformDictionaryWord` as it was written before it copied the word
+  // slice with `copy_bytes`: copying the word byte by byte.
   fn reference(dst: &mut [u8], mut word: &[u8], mut len: i32, transform: i32) -> i32 {
     let mut idx: i32 = 0;
     let prefix = &kPrefixSuffix[kTransforms[transform as usize].prefix_id as usize..];
@@ -886,7 +890,10 @@ mod tests {
 
   #[test]
   fn copy_bytes_copies_every_length() {
-    let source: [u8; 40] = core::array::from_fn(|i| (i * 7 + 1) as u8);
+    let mut source = [0u8; 40];
+    for (i, b) in source.iter_mut().enumerate() {
+      *b = (i * 7 + 1) as u8;
+    }
     for len in 0..=source.len() {
       let mut dst = [0u8; 48];
       copy_bytes(&mut dst[3..3 + len], &source[..len]);

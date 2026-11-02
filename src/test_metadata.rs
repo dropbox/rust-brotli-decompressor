@@ -342,7 +342,11 @@ fn whole_input_delivers_metadata_in_at_most_two_chunks() {
   let stream = builder.literals(b'q', 3).metadata(&data).literals(b'r', 1).finish();
   let outcome = decode(&stream, &[], 1 << 16, true);
   assert!(outcome.succeeded());
-  assert_eq!(chunk_lengths(&outcome.events), vec![4, 96]);
+  // A 32-bit target's 4-byte accumulator holds none of the block's bytes by
+  // then, so the whole block is one direct slice.
+  let expected: Vec<usize> =
+    if ::core::mem::size_of::<::bit_reader::reg_t>() == 8 { vec![4, 96] } else { vec![100] };
+  assert_eq!(chunk_lengths(&outcome.events), expected);
   assert_eq!(complete_blocks(&outcome.events), vec![data]);
 }
 
@@ -368,9 +372,12 @@ fn metadata_after_compressed_block_drains_the_accumulator() {
       }
     }
   }
-  // Make sure the cases this test is about were reached at all.
-  assert!(split_deliveries > 0);
-  assert!(inside_accumulator > 0);
+  // Make sure the cases this test is about were reached at all. They need
+  // bytes left in the accumulator, which only the 64-bit one has here.
+  if ::core::mem::size_of::<::bit_reader::reg_t>() == 8 {
+    assert!(split_deliveries > 0);
+    assert!(inside_accumulator > 0);
+  }
 }
 
 #[test]
