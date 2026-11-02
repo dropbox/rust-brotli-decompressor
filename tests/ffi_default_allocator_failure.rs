@@ -9,7 +9,7 @@
 extern crate brotli_decompressor;
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::Cell;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::ptr;
 
 use brotli_decompressor::ffi::interface::BrotliDecoderResult;
@@ -21,33 +21,51 @@ use brotli_decompressor::ffi::{
 };
 use brotli_decompressor::BrotliResult;
 
-// Every allocation of at least this many bytes on the current thread fails by
-// returning null, the way an allocator under memory pressure does. The limit
-// is per thread so that the test harness, which runs tests in parallel on its
-// own threads, is never subject to it. A thread-local with a const initializer
-// and no destructor does not allocate, so reading it from the allocator is
-// fine.
-thread_local! {
-  static ALLOCATION_LIMIT: Cell<usize> = const { Cell::new(usize::MAX) };
-}
+// While a Limit is held, every allocation of at least FAIL_AT_LEAST bytes, or
+// of exactly FAIL_EXACTLY bytes, fails by returning null, the way an allocator
+// under memory pressure does. The limits are process-wide, so the tests run
+// one at a time (SERIAL), and each one picks a size that the test harness's
+// own threads are unlikely to request: the exact size of the decoder state, or
+// a size only a ring buffer reaches.
+static FAIL_AT_LEAST: AtomicUsize = AtomicUsize::new(usize::MAX);
+static FAIL_EXACTLY: AtomicUsize = AtomicUsize::new(usize::MAX);
+static SERIAL: AtomicBool = AtomicBool::new(false);
 
 fn failing(size: usize) -> bool {
-  ALLOCATION_LIMIT.with(|limit| size >= limit.get())
+  size >= FAIL_AT_LEAST.load(Ordering::Relaxed) || size == FAIL_EXACTLY.load(Ordering::Relaxed)
 }
 
-// Sets the limit for the current thread until dropped.
+// Holds the process-wide limits for one test; released on drop. A test takes
+// it before allocating anything, sets a limit once its own buffers exist, and
+// keeps it until its last decoder call, so no other test's limit can apply.
 struct Limit;
 
 impl Limit {
-  fn set(size: usize) -> Limit {
-    ALLOCATION_LIMIT.with(|limit| limit.set(size));
+  fn acquire() -> Limit {
+    while SERIAL.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+      std::thread::yield_now();
+    }
     Limit
+  }
+
+  fn at_least(&self, size: usize) {
+    FAIL_AT_LEAST.store(size, Ordering::Relaxed);
+  }
+
+  fn exactly(&self, size: usize) {
+    FAIL_EXACTLY.store(size, Ordering::Relaxed);
+  }
+
+  fn clear(&self) {
+    FAIL_AT_LEAST.store(usize::MAX, Ordering::Relaxed);
+    FAIL_EXACTLY.store(usize::MAX, Ordering::Relaxed);
   }
 }
 
 impl Drop for Limit {
   fn drop(&mut self) {
-    ALLOCATION_LIMIT.with(|limit| limit.set(usize::MAX));
+    self.clear();
+    SERIAL.store(false, Ordering::Release);
   }
 }
 
@@ -218,7 +236,8 @@ unsafe fn decompress(
 
 #[test]
 fn default_allocator_decodes_when_the_ring_buffer_fits() {
-  let _limit = Limit::set(LARGE);
+  let limit = Limit::acquire();
+  limit.at_least(LARGE);
   // A 16 MiB window used to cost a 16 MiB ring buffer, over the limit, even
   // for 20 bytes of data.
   for &window_bits in &[22, 24] {
@@ -241,7 +260,8 @@ fn default_allocator_decodes_when_the_ring_buffer_fits() {
 // for the same streams.
 #[test]
 fn default_allocator_ring_buffer_failure_is_an_error_not_an_abort() {
-  let _limit = Limit::set(LARGE);
+  let limit = Limit::acquire();
+  limit.at_least(LARGE);
   let cases = [
     (long_compressed_block_stream(),
      BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2),
@@ -272,7 +292,8 @@ fn default_allocator_ring_buffer_failure_is_an_error_not_an_abort() {
 
 #[test]
 fn default_allocator_malloc_returns_null_on_failure() {
-  let _limit = Limit::set(LARGE);
+  let limit = Limit::acquire();
+  limit.at_least(LARGE);
   let state = unsafe { BrotliDecoderCreateInstance(None, None, ptr::null_mut()) };
   assert!(!state.is_null());
   unsafe {
@@ -291,6 +312,7 @@ const ALICE_SIZE: usize = 152089;
 
 #[test]
 fn one_shot_decodes_without_a_limit() {
+  let _limit = Limit::acquire();
   let mut output = vec![0u8; ALICE_SIZE];
   let mut size = output.len();
   let result = unsafe {
@@ -300,12 +322,13 @@ fn one_shot_decodes_without_a_limit() {
   assert_eq!(size, ALICE_SIZE);
 }
 
-// The decoder's tables and ring buffer for this stream are all above 4 KiB,
-// so each fails. Allocation failure used to abort inside vec!.
+// Only the ring buffer for this 150 KB stream is above 64 KiB, so that is the
+// allocation that fails. Allocation failure used to abort inside vec!.
 #[test]
 fn one_shot_allocation_failure_is_an_error_not_an_abort() {
+  let limit = Limit::acquire();
   let mut output = vec![0u8; ALICE_SIZE];
-  let _limit = Limit::set(4096);
+  limit.at_least(64 << 10);
   let mut size = output.len();
   let result = unsafe {
     BrotliDecoderDecompress(ALICE.len(), ALICE.as_ptr(), &mut size, output.as_mut_ptr())
@@ -316,8 +339,9 @@ fn one_shot_allocation_failure_is_an_error_not_an_abort() {
 
 #[test]
 fn one_shot_allocation_failure_reports_the_alloc_error_code() {
+  let limit = Limit::acquire();
   let mut output = vec![0u8; ALICE_SIZE];
-  let _limit = Limit::set(4096);
+  limit.at_least(64 << 10);
   let info = unsafe {
     BrotliDecoderDecompressWithReturnInfo(ALICE.len(), ALICE.as_ptr(), output.len(),
                                           output.as_mut_ptr())
@@ -340,11 +364,11 @@ fn one_shot_allocation_failure_reports_the_alloc_error_code() {
 #[test]
 fn create_instance_state_allocation_failure_returns_null() {
   let state_size = std::mem::size_of::<BrotliDecoderState>();
-  {
-    let _limit = Limit::set(state_size);
-    let state = unsafe { BrotliDecoderCreateInstance(None, None, ptr::null_mut()) };
-    assert!(state.is_null());
-  }
+  let limit = Limit::acquire();
+  limit.exactly(state_size);
+  let state = unsafe { BrotliDecoderCreateInstance(None, None, ptr::null_mut()) };
+  assert!(state.is_null());
+  limit.clear();
   let state = unsafe { BrotliDecoderCreateInstance(None, None, ptr::null_mut()) };
   assert!(!state.is_null());
   unsafe { BrotliDecoderDestroyInstance(state) };
