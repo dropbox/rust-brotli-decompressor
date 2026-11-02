@@ -831,3 +831,191 @@ fn test_dict_medium() {
   assert_eq!(output_offset, expected.len());
   assert_eq!(&output[..output_offset], expected);
 }
+
+#[cfg(feature="std")]
+fn decode_stream_chunked_std(
+  compressed: &[u8],
+  in_chunks: &[usize],
+  out_chunk: usize,
+) -> Result<Vec<u8>, (BrotliResult, Vec<u8>)> {
+  let mut state = BrotliState::new(
+    super::StandardAlloc::default(),
+    super::StandardAlloc::default(),
+    super::StandardAlloc::default(),
+  );
+  let mut out = Vec::new();
+  let mut out_buf = vec![0u8; out_chunk.max(1)];
+  let mut in_pos = 0usize;
+  let mut step = 0usize;
+  let mut avail_in = 0usize;
+  let mut in_off = 0usize;
+  let mut slice_end = 0usize;
+
+  loop {
+    if avail_in == 0 && in_pos < compressed.len() {
+      let c = in_chunks[step % in_chunks.len()].max(1);
+      step += 1;
+      slice_end = in_pos.saturating_add(c).min(compressed.len());
+      avail_in = slice_end - in_pos;
+      in_off = 0;
+    }
+    let in_slice = &compressed[in_pos..slice_end];
+    let mut avail_out = out_buf.len();
+    let mut out_off = 0usize;
+    let mut total_out = 0usize;
+    let res = BrotliDecompressStream(
+      &mut avail_in,
+      &mut in_off,
+      in_slice,
+      &mut avail_out,
+      &mut out_off,
+      &mut out_buf,
+      &mut total_out,
+      &mut state,
+    );
+    out.extend_from_slice(&out_buf[..out_off]);
+    if avail_in == 0 {
+      in_pos = slice_end;
+      in_off = 0;
+    }
+    match res {
+      BrotliResult::ResultSuccess => return Ok(out),
+      BrotliResult::NeedsMoreInput => {
+        if in_pos >= compressed.len() && avail_in == 0 {
+          return Err((res, out));
+        }
+      }
+      BrotliResult::NeedsMoreOutput => {
+        if out_off == 0 {
+          return Err((res, out));
+        }
+      }
+      BrotliResult::ResultFailure => return Err((res, out)),
+    }
+  }
+}
+
+// Exercises the fast-to-safe bit-reader handoff at chunk boundaries
+// (`27`/`28`/`29` bytes for `ProcessCommands`, `17`/`18`/`19` bytes for
+// `ReadSymbolCodeLengths`, `1`-byte in/out, and prime steps), plus
+// deterministic truncations and single-bit corruptions.
+#[test]
+#[cfg(feature="std")]
+fn test_streaming_chunk_boundaries_and_corruptions() {
+  let cases: &[(&str, &[u8], &[u8])] = &[
+    (
+      "alice29",
+      include_bytes!("../testdata/alice29.txt.compressed"),
+      include_bytes!("../testdata/alice29.txt"),
+    ),
+    (
+      "asyoulik",
+      include_bytes!("../testdata/asyoulik.txt.compressed"),
+      include_bytes!("../testdata/asyoulik.txt"),
+    ),
+    (
+      "lcet10",
+      include_bytes!("../testdata/lcet10.txt.compressed"),
+      include_bytes!("../testdata/lcet10.txt"),
+    ),
+    (
+      "plrabn12",
+      include_bytes!("../testdata/plrabn12.txt.compressed"),
+      include_bytes!("../testdata/plrabn12.txt"),
+    ),
+    (
+      "mapsdatazrh",
+      include_bytes!("../testdata/mapsdatazrh.compressed"),
+      include_bytes!("../testdata/mapsdatazrh"),
+    ),
+    (
+      "flushed_then_block_switches",
+      include_bytes!("../testdata/flushed_then_block_switches.compressed"),
+      &include_bytes!("../testdata/alice29.txt")[..8300],
+    ),
+    (
+      "monkey",
+      include_bytes!("../testdata/monkey.compressed"),
+      include_bytes!("../testdata/monkey"),
+    ),
+    (
+      "ukkonooa",
+      include_bytes!("../testdata/ukkonooa.compressed"),
+      include_bytes!("../testdata/ukkonooa"),
+    ),
+    (
+      "quickfox_repeated",
+      include_bytes!("../testdata/quickfox_repeated.compressed"),
+      include_bytes!("../testdata/quickfox_repeated"),
+    ),
+    (
+      "empty",
+      include_bytes!("../testdata/empty.compressed"),
+      include_bytes!("../testdata/empty"),
+    ),
+  ];
+
+  let patterns: &[(&[usize], usize)] = &[
+    (&[usize::MAX], 65536),
+    (&[27, 28, 29], 64),
+    (&[17, 18, 19], 257),
+    (&[7, 13, 1], 3),
+    (&[1, 2, 3, 5, 8, 13, 21, 34], 128),
+  ];
+
+  for &(name, compressed, expected) in cases {
+    for &(in_chunks, out_chunk) in patterns {
+      let got = decode_stream_chunked_std(compressed, in_chunks, out_chunk)
+        .unwrap_or_else(|(e, _)| panic!("{} failed with {:?} on {:?}", name, e, in_chunks));
+      assert_eq!(got.as_slice(), expected, "{} mismatch on {:?}", name, in_chunks);
+    }
+    // 1-byte in / 1-byte out on the smaller streams to keep debug test time fast.
+    if expected.len() <= 32768 {
+      let got = decode_stream_chunked_std(compressed, &[1], 1)
+        .unwrap_or_else(|(e, _)| panic!("{} failed on 1/1: {:?}", name, e));
+      assert_eq!(got.as_slice(), expected, "{} mismatch on 1/1", name);
+    }
+
+    // Deterministic truncations must never succeed, panic, or trip a
+    // `debug_assert!`, and any partial output emitted before `NeedsMoreInput`
+    // must be an exact prefix of `expected`.
+    let mut rng: u64 = 0x9e37_79b9_7f4a_7c15 ^ (compressed.len() as u64);
+    let mut next_u64 = || {
+      rng ^= rng << 13;
+      rng ^= rng >> 7;
+      rng ^= rng << 17;
+      rng
+    };
+    for _ in 0..32 {
+      let cut = (next_u64() as usize) % compressed.len();
+      match decode_stream_chunked_std(&compressed[..cut], &[19, 28, 1], 64) {
+        Ok(_) => panic!("{} truncated to {} bytes unexpectedly succeeded", name, cut),
+        Err((res, out)) => {
+          assert!(
+            !matches!(res, BrotliResult::ResultSuccess),
+            "{} truncated to {} bytes returned {:?}",
+            name,
+            cut,
+            res
+          );
+          assert!(
+            out.len() <= expected.len() && &out[..] == &expected[..out.len()],
+            "{} truncated to {} bytes emitted non-prefix output ({} bytes)",
+            name,
+            cut,
+            out.len()
+          );
+        }
+      }
+    }
+    // Single-bit corruptions must never panic or trip a `debug_assert!`.
+    let mut mutated = compressed.to_vec();
+    for _ in 0..32 {
+      let idx = (next_u64() as usize) % mutated.len();
+      let bit = 1u8 << ((next_u64() as usize) & 7);
+      mutated[idx] ^= bit;
+      let _ = decode_stream_chunked_std(&mutated, &[17, 28, 5], 128);
+      mutated[idx] ^= bit;
+    }
+  }
+}

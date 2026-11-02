@@ -452,7 +452,9 @@ fn test_no_vanishing_bytes() {
     // Make sure that read_to_string returns the data.
     let cursor = std::io::Cursor::new(compressed_with_extra);
     let mut reader = super::Decompressor::new(cursor, 8000);
-    assert_eq!(std::io::read_to_string(&mut reader).unwrap(), "hello\n");
+    let mut out = std::string::String::new();
+    std::io::Read::read_to_string(&mut reader, &mut out).unwrap();
+    assert_eq!(out, "hello\n");
 
     // However you can call read extra times to make sure there's no data.
     let cursor = std::io::Cursor::new(compressed_with_extra);
@@ -490,7 +492,9 @@ fn test_repeated_read_returns_zero() {
     // Make sure that read_to_string returns the data.
     let cursor = std::io::Cursor::new(compressed_without_extra);
     let mut reader = super::Decompressor::new(cursor, 8000);
-    assert_eq!(std::io::read_to_string(&mut reader).unwrap(), "hello\n");
+    let mut out = std::string::String::new();
+    std::io::Read::read_to_string(&mut reader, &mut out).unwrap();
+    assert_eq!(out, "hello\n");
 
     // However you can call read extra times to make sure there's no data.
     let cursor = std::io::Cursor::new(compressed_without_extra);

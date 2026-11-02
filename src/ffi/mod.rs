@@ -101,6 +101,7 @@ fn brotli_new_decompressor_without_custom_alloc(_to_box: BrotliDecoderState) -> 
 }
 
 #[cfg(feature="std")]
+#[inline(always)]
 fn brotli_new_decompressor_without_custom_alloc(to_box: BrotliDecoderState) -> *mut BrotliDecoderState{
     // Box::new would abort if this fails.  Returning null drops to_box, which
     // releases the tables it already holds.  A Vec of exactly one element has
@@ -133,29 +134,32 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
         free_func:free_func,
         opaque:opaque,
       };
-      let custom_dictionary = <SubclassableAllocator as Allocator<u8>>::AllocatedMemory::default();
-      let mut decompressor = ::BrotliState::new_with_custom_dictionary(
-        SubclassableAllocator::new(allocators.clone()),
-        SubclassableAllocator::new(allocators.clone()),
-        SubclassableAllocator::new(allocators.clone()),
-        custom_dictionary,
-      );
-      decompressor.large_window = false;
-      let to_box = BrotliDecoderState {
-        custom_allocator: allocators.clone(),
-        decompressor: decompressor,
-        metadata_cb: None,
-      };
       if let Some(alloc) = alloc_func {
         let ptr = alloc(allocators.opaque, core::mem::size_of::<BrotliDecoderState>());
         if ptr.is_null() {
             return core::ptr::null_mut();
         }
         let brotli_decoder_state_ptr = core::mem::transmute::<*mut c_void, *mut BrotliDecoderState>(ptr);
-        core::ptr::write(brotli_decoder_state_ptr, to_box);
+        core::ptr::write(brotli_decoder_state_ptr, BrotliDecoderState {
+          custom_allocator: allocators.clone(),
+          decompressor: ::BrotliState::new_strict(
+            SubclassableAllocator::new(allocators.clone()),
+            SubclassableAllocator::new(allocators.clone()),
+            SubclassableAllocator::new(allocators),
+          ),
+          metadata_cb: None,
+        });
         brotli_decoder_state_ptr
       } else {
-        brotli_new_decompressor_without_custom_alloc(to_box)
+        brotli_new_decompressor_without_custom_alloc(BrotliDecoderState {
+          custom_allocator: allocators.clone(),
+          decompressor: ::BrotliState::new_strict(
+            SubclassableAllocator::new(allocators.clone()),
+            SubclassableAllocator::new(allocators.clone()),
+            SubclassableAllocator::new(allocators),
+          ),
+          metadata_cb: None,
+        })
       }
     }) {
         Ok(ret) => ret,
@@ -579,14 +583,13 @@ pub unsafe extern fn BrotliDecoderDestroyInstance(state_ptr: *mut BrotliDecoderS
         return;
     }
     if (*state_ptr).custom_allocator.alloc_func.is_some() {
-        // Capture the deallocator before ptr::read moves the state out: reading
-        // it back through state_ptr afterwards would touch logically
-        // uninitialized memory. Drop the moved state first so the child
-        // allocations are released before the block holding the state itself.
+        // Capture the deallocator before `drop_in_place` runs: reading it back
+        // through `state_ptr` afterwards would touch logically dropped memory.
+        // Drop the state in place first so the child allocations are released
+        // before the block holding the state itself.
         let free_fn = (*state_ptr).custom_allocator.free_func;
         let opaque = (*state_ptr).custom_allocator.opaque;
-        let to_free = core::ptr::read(state_ptr);
-        core::mem::drop(to_free);
+        core::ptr::drop_in_place(state_ptr);
         if let Some(free_fn) = free_fn {
             free_fn(opaque, state_ptr as *mut c_void);
         }
