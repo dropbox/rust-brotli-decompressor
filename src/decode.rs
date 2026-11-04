@@ -2964,12 +2964,15 @@ fn read_distance<M: CommandLoopMode>(
   distance_postfix_bits: u32,
   distance_postfix_mask: i32,
   num_direct_distance_codes: u32,
+  can_switch_blocks: bool,
 ) -> bool {
   if (code & !0xfusize) == 0 {
     *distance_code = code as i32;
     *distance_context = 0;
     TakeDistanceFromRingBuffer(distance_code, dist_rb_idx, dist_rb, distance_context);
-    *block_len_2 -= 1;
+    if can_switch_blocks {
+      *block_len_2 -= 1;
+    }
     return true;
   }
   if !M::SAFE {
@@ -3016,14 +3019,18 @@ fn read_distance<M: CommandLoopMode>(
         .wrapping_sub(NUM_DISTANCE_SHORT_CODES as u32 - 1) as i32;
     }
     *distance_context = 0;
-    *block_len_2 -= 1;
+    if can_switch_blocks {
+      *block_len_2 -= 1;
+    }
     return true;
   }
   let num_direct = num_direct_distance_codes as usize;
   if code < num_direct {
     *distance_code = (code - (NUM_DISTANCE_SHORT_CODES as usize - 1)) as i32;
     *distance_context = 0;
-    *block_len_2 -= 1;
+    if can_switch_blocks {
+      *block_len_2 -= 1;
+    }
     return true;
   }
   let distval = (code - num_direct) as u32;
@@ -3034,7 +3041,9 @@ fn read_distance<M: CommandLoopMode>(
   if nbits > 29 {
     *distance_code = 0x7fffffff;
     *distance_context = 0;
-    *block_len_2 -= 1;
+    if can_switch_blocks {
+      *block_len_2 -= 1;
+    }
     return true;
   }
   let mut bits: u32 = 0;
@@ -3063,7 +3072,9 @@ fn read_distance<M: CommandLoopMode>(
       .wrapping_add(1);
   }
   *distance_context = 0;
-  *block_len_2 -= 1;
+  if can_switch_blocks {
+    *block_len_2 -= 1;
+  }
   true
 }
 
@@ -3078,6 +3089,7 @@ fn read_command<M: CommandLoopMode>(
   block_len_1: &mut u32,
   insert_length: &mut i32,
   insert_copy_tree: &InsertCopyTable,
+  can_switch_blocks: bool,
 ) -> bool {
   let memento = if M::SAFE {
     bit_reader::BrotliBitReaderSaveState(br)
@@ -3085,7 +3097,9 @@ fn read_command<M: CommandLoopMode>(
     bit_reader::BrotliBitReaderState::default()
   };
   let cmd_code = if !M::SAFE {
-    *block_len_1 -= 1;
+    if can_switch_blocks {
+      *block_len_1 -= 1;
+    }
     read_symbol_slice(fbr, insert_copy_tree) as usize
   } else {
     let mut sym: u32 = 0;
@@ -3129,7 +3143,9 @@ fn read_command<M: CommandLoopMode>(
     }
     *insert_length = insert_len;
     *copy_len_out = v.copy_len_offset as i32 + copy_bits as i32;
-    *block_len_1 -= 1;
+    if can_switch_blocks {
+      *block_len_1 -= 1;
+    }
   }
   true
 }
@@ -3986,6 +4002,7 @@ fn ProcessCommandsInternal<
         &mut s.block_type_length_state.block_length[1],
         &mut i,
         insert_copy_tree,
+        s.block_type_length_state.num_block_types[1] > 1,
       ) {
         mark_unlikely();
         result = if M::SAFE {
@@ -4029,7 +4046,9 @@ fn ProcessCommandsInternal<
             match status {
               LiteralBatchStatus::Decoded => {
                 pos += i;
-                s.block_type_length_state.block_length[0] -= i_u32;
+                if s.block_type_length_state.num_block_types[0] > 1 {
+                  s.block_type_length_state.block_length[0] -= i_u32;
+                }
                 handled = true;
               }
               LiteralBatchStatus::NotHandled => {}
@@ -4169,7 +4188,9 @@ fn ProcessCommandsInternal<
           } else {
             fast_mut!((rb)[pos as usize]) = lit;
           }
-          s.block_type_length_state.block_length[0] -= 1;
+          if s.block_type_length_state.num_block_types[0] > 1 {
+            s.block_type_length_state.block_length[0] -= 1;
+          }
           pos += 1;
           if pos == rb_size {
             exit_state = BrotliRunningState::BROTLI_STATE_COMMAND_INNER_WRITE;
@@ -4291,6 +4312,7 @@ fn ProcessCommandsInternal<
           s.distance_postfix_bits,
           s.distance_postfix_mask,
           s.num_direct_distance_codes,
+          s.block_type_length_state.num_block_types[2] > 1,
         ) {
           exit_state = BrotliRunningState::BROTLI_STATE_COMMAND_POST_DECODE_LITERALS;
           mid_cmd = Some((0, distance_code, distance_context, copy_length));
@@ -5689,6 +5711,10 @@ mod state_guard_tests {
   // CVE-2026-111497: the C decoder reported a block switch in a category with
   // a single block type as needing more input, and the streaming loop then
   // overran its 8-byte input buffer waiting for input that could not help.
+  // Test the single-block-type error directly as defense in depth.
+  // Normal decoding no longer reaches this path because it does not
+  // decrement the counter when there is only one block type, so the counter
+  // never reaches zero to trigger a block switch.
   #[test]
   fn block_switch_with_one_block_type_is_a_format_error() {
     let mut s = state();
