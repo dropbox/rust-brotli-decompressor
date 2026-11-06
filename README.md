@@ -3,6 +3,15 @@
 [![crates.io](https://img.shields.io/crates/v/brotli-decompressor.svg)](https://crates.io/crates/brotli-decompressor)
 [![Build Status](https://travis-ci.org/dropbox/rust-brotli-decompressor.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli-decompressor)
 
+## What's new in version 6.3.0
+
+* Faster decoding and setup, reduced table allocations, and 32-bit optimizations.
+* C one-shot decoding and decoder creation now report allocation failures.
+* C preallocated decoding ABI change: callers using BrotliDecoderDecompressPrealloc
+  should rebuild with the updated header
+  (`HuffmanCode` alignment is now 4 bytes; field order changes on 32-bit targets).
+  Standard streaming and one-shot C APIs retain their ABI.
+
 ## What's new in version 6.2.0
 
 * Configurable metadata metablock callback
