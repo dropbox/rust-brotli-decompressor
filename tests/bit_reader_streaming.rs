@@ -299,3 +299,79 @@ fn truncated_fast_path_tails_resume_with_one_byte_chunks() {
     }
   }
 }
+
+fn empty_dictionary_commands() -> Vec<u8> {
+  // Build the compressed input shared by the two tests below: 16,777,217
+  // commands that produce nothing, followed by one literal A. The details
+  // below describe how that input is encoded.
+  //
+  // WBITS=16; a final compressed metablock with MLEN=1. Each category has
+  // one block type, with no block lengths or switching tables in the stream.
+  // NPOSTFIX=NDIRECT=0, LSB literal contexts, one literal and distance tree.
+  // Simple Huffman trees: literal {65}, command {130, 138}, distance {42}.
+  // Command 130 inserts nothing and copies a dictionary word of length 4.
+  // Command 138 inserts one literal; that completes the metablock.
+  let header = [0x02, 0x00, 0x00, 0x00, 0x44, 0x50, 0x09, 0xa2, 0x48, 0xa8];
+
+  // Distance symbol 42 has 14 extra bits. Value 2052 gives distance 34817,
+  // selecting dictionary word 0 with transform 34 (omit first 4), so the
+  // command produces no output. Its command code is one zero bit and its
+  // distance Huffman code takes zero bits: 15 bits per empty command.
+  let command = 2052u16 << 1;
+  let mut eight_commands = 0u128;
+  for i in 0..8 {
+    eight_commands |= (command as u128) << (15 * i);
+  }
+  let bytes = eight_commands.to_le_bytes();
+  let mut input = Vec::with_capacity(header.len() + 15 * (1 << 21) + 2);
+  input.extend_from_slice(&header);
+  // More than 2^24 commands and distances, followed by command 138 (one bit).
+  // Repeat in groups of eight to avoid storing a large unpacked bit array.
+  for _ in 0..(1 << 21) {
+    input.extend_from_slice(&bytes[..15]);
+  }
+  input.extend_from_slice(&(command | (1 << 15)).to_le_bytes());
+  input
+}
+
+#[test]
+fn empty_dictionary_commands_do_not_require_block_switches() {
+  // Decode 16,777,217 commands that produce nothing, followed by one literal A.
+  // There is only one block type, so no block switch is needed. The decoder
+  // must reach the A instead of exhausting its 2^24 countdown and failing.
+  let input = empty_dictionary_commands();
+  let mut decoder = Decoder::new(1);
+  let (result, used) = decoder.feed(&input, 1, false);
+  assert!(matches!(result, BrotliResult::ResultSuccess));
+  assert_eq!(used, input.len());
+  assert_eq!(decoder.output, b"A");
+  assert!(BrotliDecoderIsFinished(&decoder.state));
+}
+
+#[test]
+fn stream_empty_dictionary_commands() {
+  // The same check, with input arriving in pieces.
+  let input = empty_dictionary_commands();
+  for &chunk_size in &[4093, 65536] {
+    let mut decoder = Decoder::new(1);
+    // Parse the header and the first distance with one-byte input pieces.
+    for byte in input[..12].chunks(1) {
+      let (result, used) = decoder.feed(byte, 1, false);
+      assert!(matches!(result, BrotliResult::NeedsMoreInput));
+      assert_eq!(used, byte.len());
+    }
+    let mut consumed = 12;
+    for chunk in input[12..].chunks(chunk_size) {
+      let (result, used) = decoder.feed(chunk, 1, false);
+      assert_eq!(used, chunk.len());
+      consumed += used;
+      if consumed == input.len() {
+        assert!(matches!(result, BrotliResult::ResultSuccess));
+      } else {
+        assert!(matches!(result, BrotliResult::NeedsMoreInput));
+      }
+    }
+    assert_eq!(decoder.output, b"A");
+    assert!(BrotliDecoderIsFinished(&decoder.state));
+  }
+}
