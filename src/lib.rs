@@ -481,6 +481,12 @@ pub(crate) fn brotli_decode_with_allocators<AllocU8: Allocator<u8>,
   let mut output_offset: usize = 0;
   let mut written: usize = 0;
   let mut brotli_state = BrotliState::new(alloc_u8, alloc_u32, alloc_hc);
+  // The output buffer bounds the decoded size, so the ring buffer can be
+  // sized for it at once (capped at the window) instead of being regrown
+  // metablock by metablock, which copies and refaults up to twice the window
+  // for a stream of many metablocks, as the fast encoder qualities emit.
+  brotli_state.set_initial_ring_buffer_size(
+    core::cmp::min(available_out, u32::MAX as usize) as u32);
   let result = ::BrotliDecompressStream(&mut available_in,
                                       &mut input_offset,
                                       &input[..],
