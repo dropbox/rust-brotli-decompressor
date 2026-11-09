@@ -376,13 +376,45 @@ impl BrotliDecoderReturnInfo {
 
 declare_stack_allocator_struct!(MemPool, 512, stack);
 
+// Sets each parameter in turn on a fresh one-shot decoder, as
+// BrotliState::set_parameter does, so a later value replaces an earlier one.
+fn set_one_shot_parameters<AllocU8: Allocator<u8>,
+                           AllocU32: Allocator<u32>,
+                           AllocHC: Allocator<HuffmanCode>,
+                           Params: IntoIterator<Item=(BrotliDecoderParameter, u32)>>(
+    state: &mut BrotliState<AllocU8, AllocU32, AllocHC>,
+    params: Params,
+) {
+  for (param, value) in params {
+    // Only a decoder that has started decoding refuses a parameter.
+    let accepted = state.set_parameter(param, value);
+    debug_assert!(accepted);
+  }
+}
+
 pub fn brotli_decode_prealloc(
+  input: &[u8],
+  output: &mut[u8],
+  scratch_u8: &mut [u8],
+  scratch_u32: &mut [u32],
+  scratch_hc: &mut [HuffmanCode],
+) -> BrotliDecoderReturnInfo {
+  brotli_decode_prealloc_with_parameters(input, output, scratch_u8, scratch_u32, scratch_hc,
+                                         core::iter::empty())
+}
+
+// brotli_decode_prealloc with decoder parameters, set in turn as
+// BrotliState::set_parameter does.
+pub(crate) fn brotli_decode_prealloc_with_parameters<Params>(
   input: &[u8],
   mut output: &mut[u8],
   scratch_u8: &mut [u8],
   scratch_u32: &mut [u32],
   scratch_hc: &mut [HuffmanCode],
-) -> BrotliDecoderReturnInfo {
+  params: Params,
+) -> BrotliDecoderReturnInfo
+  where Params: IntoIterator<Item=(BrotliDecoderParameter, u32)>
+{
   let u8_pool_size = scratch_u8.len();
   let stack_u8_allocator = MemPool::<u8>::new_allocator(scratch_u8, bzero);
   let stack_u32_allocator = MemPool::<u32>::new_allocator(scratch_u32, bzero);
@@ -396,6 +428,7 @@ pub fn brotli_decode_prealloc(
     BrotliState::new(stack_u8_allocator, stack_u32_allocator, stack_hc_allocator);
   // MemPool never merges freed blocks, which the ring buffer sizing must know.
   brotli_state.u8_pool_size = u8_pool_size;
+  set_one_shot_parameters(&mut brotli_state, params);
   let result = ::BrotliDecompressStream(&mut available_in,
                                       &mut input_offset,
                                       &input[..],
@@ -413,6 +446,19 @@ pub fn brotli_decode(
     input: &[u8],
     output_and_scratch: &mut[u8],
 ) -> BrotliDecoderReturnInfo {
+  brotli_decode_with_parameters(input, output_and_scratch, core::iter::empty())
+}
+
+// brotli_decode with decoder parameters, set in turn as
+// BrotliState::set_parameter does.
+#[cfg(not(feature="std"))]
+pub(crate) fn brotli_decode_with_parameters<Params>(
+    input: &[u8],
+    output_and_scratch: &mut[u8],
+    params: Params,
+) -> BrotliDecoderReturnInfo
+  where Params: IntoIterator<Item=(BrotliDecoderParameter, u32)>
+{
   let mut stack_u32_buffer = [0u32; 12 * 1024 * 6];
   let mut stack_hc_buffer = [HuffmanCode::default(); 128 * (decode::kNumInsertAndCopyCodes as usize + decode::kNumLiteralCodes as usize) + 6 * decode::kNumBlockLengthCodes as usize * huffman::INSERT_COPY_TABLE_WINDOW];
   let mut guessed_output_size = core::cmp::min(
@@ -422,9 +468,12 @@ pub fn brotli_decode(
   if input.len() > 2 {
       let scratch_len = output_and_scratch.len() - guessed_output_size;
       if let Ok(lgwin) = decode::lg_window_size(input[0], input[1]) {
-          let extra_window_size = 65536 + (decode::kNumLiteralCodes + decode::kNumInsertAndCopyCodes) as usize * 256 + (1usize << lgwin.0) * 5 / 4;
+          // In u64: on 32-bit targets, a 2^30-byte large window times 5
+          // overflows usize, and so can over 4/3 GiB of scratch times 3.
+          let scratch_len = scratch_len as u64;
+          let extra_window_size = 65536 + (decode::kNumLiteralCodes + decode::kNumInsertAndCopyCodes) as u64 * 256 + (1u64 << lgwin.0) * 5 / 4;
           if extra_window_size < scratch_len {
-              guessed_output_size += (scratch_len - extra_window_size) * 3/4;
+              guessed_output_size += ((scratch_len - extra_window_size) * 3/4) as usize;
           }
       }
   }
@@ -442,6 +491,7 @@ pub fn brotli_decode(
     BrotliState::new(stack_u8_allocator, stack_u32_allocator, stack_hc_allocator);
   // MemPool never merges freed blocks, which the ring buffer sizing must know.
   brotli_state.u8_pool_size = u8_pool_size;
+  set_one_shot_parameters(&mut brotli_state, params);
   let result = ::BrotliDecompressStream(&mut available_in,
                                       &mut input_offset,
                                       &input[..],
@@ -462,18 +512,23 @@ pub fn brotli_decode(
   brotli_decode_with_allocators(input, output,
                                 StandardAlloc::default(),
                                 StandardAlloc::default(),
-                                StandardAlloc::default())
+                                StandardAlloc::default(),
+                                core::iter::empty())
 }
 
+// brotli_decode with the given allocators and decoder parameters, set in turn
+// as BrotliState::set_parameter does.
 #[cfg(feature="std")]
 pub(crate) fn brotli_decode_with_allocators<AllocU8: Allocator<u8>,
                                             AllocU32: Allocator<u32>,
-                                            AllocHC: Allocator<HuffmanCode>>(
+                                            AllocHC: Allocator<HuffmanCode>,
+                                            Params: IntoIterator<Item=(BrotliDecoderParameter, u32)>>(
     input: &[u8],
     mut output: &mut[u8],
     alloc_u8: AllocU8,
     alloc_u32: AllocU32,
     alloc_hc: AllocHC,
+    params: Params,
 ) -> BrotliDecoderReturnInfo {
   let mut available_out = output.len();
   let mut available_in: usize = input.len();
@@ -486,6 +541,7 @@ pub(crate) fn brotli_decode_with_allocators<AllocU8: Allocator<u8>,
   // the first ring buffer from the full output capacity.
   brotli_state.one_shot_output_size =
     core::cmp::min(available_out, u32::MAX as usize) as u32;
+  set_one_shot_parameters(&mut brotli_state, params);
   let result = ::BrotliDecompressStream(&mut available_in,
                                       &mut input_offset,
                                       &input[..],
