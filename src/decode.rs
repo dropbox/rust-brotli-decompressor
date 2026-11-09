@@ -1855,6 +1855,9 @@ const kRingBufferAllocationSlack: usize =
 // reallocations while the ring buffer grows. Any window is at least this large
 // (1 << kBrotliLargeMinWbits).
 const kRingBufferMinSize: i64 = 1024;
+// Once a regrown ring buffer would reach this fraction of the window, it is
+// grown to the window at once (see BrotliCalculateRingBufferSize).
+const RING_GROWTH_JUMP_DIV: i64 = 2;
 // Smallest ring buffer allocated for a last metablock, after which the ring
 // buffer never grows, so the C decoder's larger minimum would buy nothing: the
 // 32 bytes this decoder used for a stream of one short metablock before growth
@@ -1966,6 +1969,14 @@ fn BrotliCalculateRingBufferSize<AllocU8: alloc::Allocator<u8>,
     let min_size = core::cmp::max(min_size, 1);
     while (new_ringbuffer_size >> 1) >= min_size {
       new_ringbuffer_size >>= 1;
+    }
+    // Each regrowth allocates a fresh buffer and copies everything decoded so
+    // far, and the allocator may fault in all of it again. A stream that has
+    // outgrown a quarter of the window and keeps going is large: grow to the
+    // window now rather than to half of it and then again.
+    if s.ringbuffer_size != 0 && s.initial_ringbuffer_size == 0 && !is_last &&
+       new_ringbuffer_size * RING_GROWTH_JUMP_DIV >= window_size {
+      new_ringbuffer_size = window_size;
     }
   }
 
