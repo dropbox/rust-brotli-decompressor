@@ -1858,6 +1858,9 @@ const kRingBufferMinSize: i64 = 1024;
 // A one-shot caller's output buffer may be far larger than the stream. Use it
 // to grow at most four times the ring size needed by the decoded data alone.
 const kOneShotRingBufferGrowthFactor: i64 = 4;
+// Once a regrown ring buffer would reach this fraction of the window, it is
+// grown to the window at once (see BrotliCalculateRingBufferSize).
+const kRingBufferGrowthJumpDivisor: i64 = 2;
 // Smallest ring buffer allocated for a last metablock, after which the ring
 // buffer never grows, so the C decoder's larger minimum would buy nothing: the
 // 32 bytes this decoder used for a stream of one short metablock before growth
@@ -1974,6 +1977,16 @@ fn BrotliCalculateRingBufferSize<AllocU8: alloc::Allocator<u8>,
     let min_size = core::cmp::max(min_size, 1);
     while (new_ringbuffer_size >> 1) >= min_size {
       new_ringbuffer_size >>= 1;
+    }
+    // Each regrowth allocates a fresh buffer and copies everything decoded so
+    // far, and the allocator may fault in all of it again. A stream that has
+    // outgrown a quarter of the window and keeps going is large: grow to the
+    // window now rather than to half of it and then again. A caller's size
+    // hint, initial or one-shot, already bounds the growth and is kept to.
+    if s.ringbuffer_size != 0 && s.initial_ringbuffer_size == 0 &&
+       s.one_shot_output_size == 0 && !is_last &&
+       new_ringbuffer_size * kRingBufferGrowthJumpDivisor >= window_size {
+      new_ringbuffer_size = window_size;
     }
   }
 
@@ -2283,6 +2296,42 @@ mod tests {
     // Each growth handed the previous ring buffer back.
     assert_eq!(s.alloc_u8.allocated, 4);
     assert_eq!(s.alloc_u8.freed, 3);
+  }
+
+  #[test]
+  fn ring_buffer_growth_jumps_to_the_window_from_a_quarter_of_it() {
+    // With a 4 MiB window, a regrowth that would reach 2 MiB allocates the
+    // window instead, so the ring buffer is allocated twice rather than three
+    // times for a stream of more than 1 MiB.
+    let mut s = counting_state(22);
+    assert_success(start_metablock(&mut s, 1 << 20));
+    assert_ring_buffer(&s, 1 << 20);
+    finish_metablock(&mut s);
+    assert_success(start_metablock(&mut s, 1));
+    assert_ring_buffer(&s, 1 << 22);
+    assert_holds_decoded_bytes(&s);
+    let slack = kRingBufferAllocationSlack;
+    assert_eq!(s.alloc_u8.requests, [(1 << 20) + slack, (1 << 22) + slack]);
+
+    // Below a quarter of the window it grows one power of two at a time.
+    let mut s = counting_state(22);
+    assert_success(start_metablock(&mut s, 1 << 19));
+    finish_metablock(&mut s);
+    assert_success(start_metablock(&mut s, 1));
+    assert_ring_buffer(&s, 1 << 20);
+
+    // The first allocation is sized for its metablock, however large.
+    let mut s = counting_state(22);
+    assert_success(start_metablock(&mut s, 1 << 21));
+    assert_ring_buffer(&s, 1 << 21);
+
+    // A last metablock gets just what it needs: nothing follows it.
+    let mut s = counting_state(22);
+    assert_success(start_metablock(&mut s, 1 << 20));
+    finish_metablock(&mut s);
+    s.is_last_metablock = 1;
+    assert_success(start_metablock(&mut s, 1));
+    assert_ring_buffer(&s, 1 << 21);
   }
 
   #[test]
