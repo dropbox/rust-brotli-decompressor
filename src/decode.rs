@@ -1855,6 +1855,9 @@ const kRingBufferAllocationSlack: usize =
 // reallocations while the ring buffer grows. Any window is at least this large
 // (1 << kBrotliLargeMinWbits).
 const kRingBufferMinSize: i64 = 1024;
+// A one-shot caller's output buffer may be far larger than the stream. Use it
+// to grow at most four times the ring size needed by the decoded data alone.
+const kOneShotRingBufferGrowthFactor: i64 = 4;
 // Smallest ring buffer allocated for a last metablock, after which the ring
 // buffer never grows, so the C decoder's larger minimum would buy nothing: the
 // 32 bytes this decoder used for a stream of one short metablock before growth
@@ -1952,6 +1955,11 @@ fn BrotliCalculateRingBufferSize<AllocU8: alloc::Allocator<u8>,
   output_size += s.meta_block_remaining_len as i64;
   if min_size < output_size {
     min_size = output_size;
+  }
+  if !is_last && s.one_shot_output_size != 0 {
+    let hinted_size = core::cmp::min(s.one_shot_output_size as i64,
+                                     output_size.saturating_mul(kOneShotRingBufferGrowthFactor));
+    min_size = core::cmp::max(min_size, hinted_size);
   }
 
   // Whether this is a fixed pool that can hold the whole window. The sum is
@@ -2565,6 +2573,50 @@ mod tests {
     s.canny_ringbuffer_allocation = false;
     assert_success(start_metablock(&mut s, 10));
     assert_eq!(s.ringbuffer_size, 1 << 22);
+  }
+
+  #[test]
+  fn one_shot_output_hint_grows_in_bounded_steps() {
+    let mut tiny = counting_state(22);
+    tiny.one_shot_output_size = 1 << 20;
+    assert_success(start_metablock(&mut tiny, 16));
+    assert_ring_buffer(&tiny, 1024);
+
+    let mut small = counting_state(22);
+    small.one_shot_output_size = 1 << 20;
+    assert_success(start_metablock(&mut small, 300));
+    assert_ring_buffer(&small, 2048);
+
+    let mut s = counting_state(22);
+    s.one_shot_output_size = 1 << 20;
+    let slack = kRingBufferAllocationSlack;
+
+    assert_success(start_metablock(&mut s, 10));
+    assert_ring_buffer(&s, 1024);
+    finish_metablock(&mut s);
+
+    // At 64 KiB of decoded output, jump fourfold instead of taking every
+    // intermediate power of two on the way to the caller's output capacity.
+    assert_success(start_metablock(&mut s, (64 << 10) - 10));
+    assert_ring_buffer(&s, 256 << 10);
+    assert_holds_decoded_bytes(&s);
+    finish_metablock(&mut s);
+
+    assert_success(start_metablock(&mut s, 192 << 10));
+    assert_ring_buffer(&s, 1 << 20);
+    assert_holds_decoded_bytes(&s);
+    assert_eq!(s.alloc_u8.requests, [1024 + slack, (256 << 10) + slack,
+                                     (1 << 20) + slack]);
+
+    // Even with a much larger output buffer and a large window, a short
+    // stream cannot force the full output capacity into the first ring.
+    let mut oversized = counting_state(30);
+    oversized.one_shot_output_size = 1 << 30;
+    assert_success(start_metablock(&mut oversized, 10));
+    assert_ring_buffer(&oversized, 1024);
+    finish_metablock(&mut oversized);
+    assert_success(start_metablock(&mut oversized, (64 << 10) - 10));
+    assert_ring_buffer(&oversized, 256 << 10);
   }
 
   #[test]

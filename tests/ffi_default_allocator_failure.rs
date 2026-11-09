@@ -322,6 +322,23 @@ fn one_shot_decodes_without_a_limit() {
   assert_eq!(size, ALICE_SIZE);
 }
 
+// A reusable output buffer can be much larger than a stream. The two short
+// nonfinal metablocks need a 1 KiB ring buffer despite the 16 MiB capacity.
+#[test]
+fn one_shot_oversized_output_does_not_force_a_window_sized_ring() {
+  let limit = Limit::acquire();
+  let input = two_block_stream(24);
+  let mut output = vec![0u8; 16 << 20];
+  limit.at_least(1 << 20);
+  let mut size = output.len();
+  let result = unsafe {
+    BrotliDecoderDecompress(input.len(), input.as_ptr(), &mut size, output.as_mut_ptr())
+  };
+  assert_eq!(result as i32, BrotliDecoderResult::BROTLI_DECODER_RESULT_SUCCESS as i32);
+  assert_eq!(size, EXPECTED.len());
+  assert_eq!(&output[..size], EXPECTED);
+}
+
 // Only the ring buffer for this 150 KB stream is above 64 KiB, so that is the
 // allocation that fails. Allocation failure used to abort inside vec!.
 #[test]

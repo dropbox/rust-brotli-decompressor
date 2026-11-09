@@ -3,6 +3,12 @@
 [![crates.io](https://img.shields.io/crates/v/brotli-decompressor.svg)](https://crates.io/crates/brotli-decompressor)
 [![Build Status](https://travis-ci.org/dropbox/rust-brotli-decompressor.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli-decompressor)
 
+## What's new in version 6.3.1
+
+* One-shot decoding uses output capacity as a bounded ring-buffer growth hint,
+  avoiding a full-window allocation for tiny streams with oversized output
+  buffers.
+
 ## What's new in version 6.3.0
 
 * Faster decoding and setup, reduced table allocations, and 32-bit optimizations.

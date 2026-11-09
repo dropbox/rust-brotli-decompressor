@@ -303,6 +303,9 @@ pub struct BrotliState<AllocU8: alloc::Allocator<u8>,
   // Smallest size the ring buffer starts from, as set by
   // set_initial_ring_buffer_size; 0 for the default.
   pub(crate) initial_ringbuffer_size: u32,
+  // Output capacity of a one-shot decode. This is only a speculative sizing
+  // hint: a caller may provide much more space than the stream needs.
+  pub(crate) one_shot_output_size: u32,
   pub dist_rb_idx: i32,
   pub dist_rb: [i32; 4],
   pub ringbuffer: AllocU8::AllocatedMemory,
@@ -427,6 +430,7 @@ macro_rules! make_brotli_state {
             new_ringbuffer_size : 0,
             u8_pool_size : 0,
             initial_ringbuffer_size : 0,
+            one_shot_output_size : 0,
             dist_rb_idx : 0,
             dist_rb : [16, 15, 11, 4],
             ringbuffer : AllocU8::AllocatedMemory::default(),
