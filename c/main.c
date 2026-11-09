@@ -57,6 +57,41 @@ void simple_prealloc_test() {
     assert(memcmp(output, key, sizeof(key) - 1) == 0);
     assert(output[sizeof(key) - 1] == '\n');
 }
+void large_window_parameter_test() {
+    /* key, compressed with brotli --large_window=30 -q 11 */
+    const unsigned char brotli_file[] = {0x11, 0x5e, 0xf8, 0x00, 0xe0, 0x77, 0x26, 0xd8, 0xb1, 0x90, 0xc9, 0x29,
+                                   0xc1, 0x4e, 0x78, 0x2d, 0xc4, 0xf4, 0x26, 0xa7, 0x14, 0x40, 0x2a, 0x84,
+                                   0xae, 0xd2, 0xd8, 0x7a, 0x10, 0x42, 0x14, 0xf1, 0x47, 0x92, 0x40, 0x1e,
+                                   0x00, 0x21, 0xbd, 0xff, 0x5f, 0xb8, 0xa9, 0x00};
+    const unsigned char key[] = "Large Window Brotli! Large Window Brotli! Large Window Brotli!\n";
+    const BrotliDecoderParameter keys[] = {BROTLI_DECODER_PARAM_LARGE_WINDOW};
+    const uint32_t values[] = {0};
+    unsigned char output[sizeof(key) * 2];
+    static unsigned char scratch_u8[131072];
+    static uint32_t scratch_u32[16384];
+    static HuffmanCode scratch_hc[65536];
+    BrotliDecoderReturnInfo ret;
+    /* The one-shot decoders accept large-window streams by default... */
+    ret = BrotliDecoderDecompressWithParameters(0, NULL, NULL, sizeof(brotli_file), brotli_file,
+                                                sizeof(output), output);
+    assert(ret.result == BROTLI_DECODER_RESULT_SUCCESS);
+    assert(ret.decoded_size == sizeof(key) - 1);
+    assert(memcmp(output, key, sizeof(key) - 1) == 0);
+    /* ...unless BROTLI_DECODER_PARAM_LARGE_WINDOW is 0. */
+    ret = BrotliDecoderDecompressWithParameters(1, keys, values, sizeof(brotli_file), brotli_file,
+                                                sizeof(output), output);
+    assert(ret.result == BROTLI_DECODER_RESULT_ERROR);
+    assert(ret.code == BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS);
+    assert(ret.decoded_size == 0);
+    ret = BrotliDecoderDecompressPreallocWithParameters(1, keys, values, sizeof(brotli_file), brotli_file,
+                                                        sizeof(output), output,
+                                                        sizeof(scratch_u8), scratch_u8,
+                                                        sizeof(scratch_u32) / sizeof(uint32_t), scratch_u32,
+                                                        sizeof(scratch_hc) / sizeof(HuffmanCode), scratch_hc);
+    assert(ret.result == BROTLI_DECODER_RESULT_ERROR);
+    assert(ret.code == BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS);
+    assert(ret.decoded_size == 0);
+}
 void negative_test() {
     BrotliDecoderState * state = BrotliDecoderCreateInstance(custom_alloc, custom_free, &custom_alloc_data);
     const unsigned char brotli_file[] = {0x1b, 0x30, 0x00, 0xe0, 0x8d, 0xd4, 0x59, 0x2d, 0x39, 0xff, 0xb5, 0x02,
@@ -85,6 +120,7 @@ void negative_test() {
 int main() {
     simple_test();
     simple_prealloc_test();
+    large_window_parameter_test();
     negative_test();
     BrotliDecoderState * state = BrotliDecoderCreateInstance(custom_alloc, custom_free, &custom_alloc_data);
     unsigned char ibuffer[4096];

@@ -12,8 +12,6 @@ use alloc::{Allocator, SliceWrapper, SliceWrapperMut, StackAllocator, AllocatedS
 use self::interface::{CAllocator, c_void, BrotliDecoderParameter, BrotliDecoderResult, brotli_alloc_func, brotli_free_func, CBrotliMetadataCallback, brotli_decoder_metadata_start_func, brotli_decoder_metadata_chunk_func};
 use ::BrotliResult;
 use ::BrotliDecoderReturnInfo;
-#[cfg(not(feature="std"))]
-use ::brotli_decode;
 pub use ::HuffmanCode;
 pub use super::state::{BrotliDecoderErrorCode, BrotliState};
 
@@ -179,14 +177,61 @@ pub unsafe extern "C" fn BrotliDecoderSetParameter(state_ptr: *mut BrotliDecoder
   }
   // Unknown C enum values must return false, not create an invalid Rust enum
   // discriminant at the ABI boundary. Rust callers can cast the enum to i32.
-  let param = match selector {
-    x if x == BrotliDecoderParameter::BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION as i32 =>
-      BrotliDecoderParameter::BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION,
-    x if x == BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW as i32 =>
-      BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW,
-    _ => return 0,
+  let param = match decoder_parameter(selector as i64) {
+    Some(param) => param,
+    None => return 0,
   };
   if (*state_ptr).decompressor.set_parameter(param, value) {1} else {0}
+}
+
+// The parameter with this C BrotliDecoderParameter value, if any.
+fn decoder_parameter(value: i64) -> Option<BrotliDecoderParameter> {
+  match value {
+    x if x == BrotliDecoderParameter::BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION as i64 =>
+      Some(BrotliDecoderParameter::BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION),
+    x if x == BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW as i64 =>
+      Some(BrotliDecoderParameter::BROTLI_DECODER_PARAM_LARGE_WINDOW),
+    _ => None,
+  }
+}
+
+// An element of a C BrotliDecoderParameter array, as bytes, since a C caller
+// may store a value no Rust enum can hold. A C enum is not always as wide as
+// an int (bare-metal ARM uses short enums), but repr(C) gives
+// BrotliDecoderParameter the C enum's size on every target.
+type CDecoderParameter = [u8; core::mem::size_of::<BrotliDecoderParameter>()];
+
+fn c_decoder_parameter(c_param: &CDecoderParameter) -> Option<BrotliDecoderParameter> {
+  // The bytes hold a native-endian integer.
+  let value = if cfg!(target_endian = "little") {
+    c_param.iter().rev().fold(0u64, |value, &byte| value << 8 | byte as u64)
+  } else {
+    c_param.iter().fold(0u64, |value, &byte| value << 8 | byte as u64)
+  };
+  decoder_parameter(value as i64)
+}
+
+// The parameters for a one-shot decode to set in turn, or None if the arrays
+// are invalid or hold a parameter BrotliDecoderSetParameter would reject: a
+// one-shot decode cannot report that it ignored one, so it must fail instead.
+unsafe fn checked_decoder_parameters<'a>(
+  num_params: usize,
+  param_keys: *const BrotliDecoderParameter,
+  param_values: *const u32,
+) -> Option<impl Iterator<Item=(BrotliDecoderParameter, u32)> + 'a> {
+  // Checked as the C enum, as the byte arrays it is read as have no alignment.
+  if !is_valid_slice_ptr(param_keys, num_params) {
+    return None;
+  }
+  let keys: &'a [CDecoderParameter] =
+    slice_from_raw_parts_or_nil(param_keys as *const CDecoderParameter, num_params);
+  let values: &'a [u32] = checked_slice_from_raw_parts_or_nil(param_values, num_params)?;
+  if keys.iter().any(|key| c_decoder_parameter(key).is_none()) {
+    return None;
+  }
+  Some(keys.iter().zip(values).filter_map(|(key, &value)| {
+    c_decoder_parameter(key).map(|param| (param, value))
+  }))
 }
 
 #[no_mangle]
@@ -219,45 +264,118 @@ pub unsafe extern fn BrotliDecoderDecompressPrealloc(
   scratch_hc_buffer: *mut HuffmanCode,
 ) -> BrotliDecoderReturnInfo {
   catch_panic_return_info(move || {
-    let input = match checked_slice_from_raw_parts_or_nil(encoded_buffer, encoded_size) {
-      Some(input) => input,
-      None => return invalid_argument_return_info(),
-    };
-    let output = match checked_slice_from_raw_parts_or_nil_mut(decoded_buffer, decoded_size) {
-      Some(output) => output,
-      None => return invalid_argument_return_info(),
-    };
-    let scratch_u8 = match checked_slice_from_raw_parts_or_nil_mut(
-      scratch_u8_buffer,
+    brotli_decoder_decompress_prealloc(
+      encoded_size,
+      encoded_buffer,
+      decoded_size,
+      decoded_buffer,
       scratch_u8_size,
-    ) {
-      Some(scratch_u8) => scratch_u8,
-      None => return invalid_argument_return_info(),
-    };
-    let scratch_u32 = match checked_slice_from_raw_parts_or_nil_mut(
-      scratch_u32_buffer,
+      scratch_u8_buffer,
       scratch_u32_size,
-    ) {
-      Some(scratch_u32) => scratch_u32,
-      None => return invalid_argument_return_info(),
-    };
-    let scratch_hc = match checked_slice_from_raw_parts_or_nil_mut(
-      scratch_hc_buffer,
+      scratch_u32_buffer,
       scratch_hc_size,
-    ) {
-      Some(scratch_hc) => scratch_hc,
-      None => return invalid_argument_return_info(),
-    };
-    ::brotli_decode_prealloc(input, output, scratch_u8, scratch_u32, scratch_hc)
+      scratch_hc_buffer,
+      core::iter::empty(),
+    )
   })
 }
 
-unsafe fn brotli_decoder_decompress_with_return_info(
+// BrotliDecoderDecompressPrealloc after setting each parameter in turn, as
+// BrotliDecoderSetParameter would.
+#[no_mangle]
+pub unsafe extern "C" fn BrotliDecoderDecompressPreallocWithParameters(
+  num_params: usize,
+  param_keys: *const BrotliDecoderParameter,
+  param_values: *const u32,
   encoded_size: usize,
   encoded_buffer: *const u8,
   decoded_size: usize,
   decoded_buffer: *mut u8,
+  scratch_u8_size: usize,
+  scratch_u8_buffer: *mut u8,
+  scratch_u32_size: usize,
+  scratch_u32_buffer: *mut u32,
+  scratch_hc_size: usize,
+  scratch_hc_buffer: *mut HuffmanCode,
 ) -> BrotliDecoderReturnInfo {
+  catch_panic_return_info(move || {
+    let params = match checked_decoder_parameters(num_params, param_keys, param_values) {
+      Some(params) => params,
+      None => return invalid_argument_return_info(),
+    };
+    brotli_decoder_decompress_prealloc(
+      encoded_size,
+      encoded_buffer,
+      decoded_size,
+      decoded_buffer,
+      scratch_u8_size,
+      scratch_u8_buffer,
+      scratch_u32_size,
+      scratch_u32_buffer,
+      scratch_hc_size,
+      scratch_hc_buffer,
+      params,
+    )
+  })
+}
+
+unsafe fn brotli_decoder_decompress_prealloc<Params>(
+  encoded_size: usize,
+  encoded_buffer: *const u8,
+  decoded_size: usize,
+  decoded_buffer: *mut u8,
+  scratch_u8_size: usize,
+  scratch_u8_buffer: *mut u8,
+  scratch_u32_size: usize,
+  scratch_u32_buffer: *mut u32,
+  scratch_hc_size: usize,
+  scratch_hc_buffer: *mut HuffmanCode,
+  params: Params,
+) -> BrotliDecoderReturnInfo
+  where Params: IntoIterator<Item=(BrotliDecoderParameter, u32)>
+{
+  let input = match checked_slice_from_raw_parts_or_nil(encoded_buffer, encoded_size) {
+    Some(input) => input,
+    None => return invalid_argument_return_info(),
+  };
+  let output = match checked_slice_from_raw_parts_or_nil_mut(decoded_buffer, decoded_size) {
+    Some(output) => output,
+    None => return invalid_argument_return_info(),
+  };
+  let scratch_u8 = match checked_slice_from_raw_parts_or_nil_mut(
+    scratch_u8_buffer,
+    scratch_u8_size,
+  ) {
+    Some(scratch_u8) => scratch_u8,
+    None => return invalid_argument_return_info(),
+  };
+  let scratch_u32 = match checked_slice_from_raw_parts_or_nil_mut(
+    scratch_u32_buffer,
+    scratch_u32_size,
+  ) {
+    Some(scratch_u32) => scratch_u32,
+    None => return invalid_argument_return_info(),
+  };
+  let scratch_hc = match checked_slice_from_raw_parts_or_nil_mut(
+    scratch_hc_buffer,
+    scratch_hc_size,
+  ) {
+    Some(scratch_hc) => scratch_hc,
+    None => return invalid_argument_return_info(),
+  };
+  ::brotli_decode_prealloc_with_parameters(input, output, scratch_u8, scratch_u32, scratch_hc,
+                                           params)
+}
+
+unsafe fn brotli_decoder_decompress_with_return_info<Params>(
+  encoded_size: usize,
+  encoded_buffer: *const u8,
+  decoded_size: usize,
+  decoded_buffer: *mut u8,
+  params: Params,
+) -> BrotliDecoderReturnInfo
+  where Params: IntoIterator<Item=(BrotliDecoderParameter, u32)>
+{
   let input = match checked_slice_from_raw_parts_or_nil(encoded_buffer, encoded_size) {
     Some(input) => input,
     None => return invalid_argument_return_info(),
@@ -281,10 +399,11 @@ unsafe fn brotli_decoder_decompress_with_return_info(
       free_func: None,
       opaque: core::ptr::null_mut(),
     });
-    ::brotli_decode_with_allocators(input, output_scratch, allocator(), allocator(), allocator())
+    ::brotli_decode_with_allocators(input, output_scratch, allocator(), allocator(), allocator(),
+                                    params)
   }
   #[cfg(not(feature="std"))]
-  ::brotli_decode(input, output_scratch)
+  ::brotli_decode_with_parameters(input, output_scratch, params)
 }
 
 #[no_mangle]
@@ -300,6 +419,34 @@ pub unsafe extern fn BrotliDecoderDecompressWithReturnInfo(
       encoded_buffer,
       decoded_size,
       decoded_buffer,
+      core::iter::empty(),
+    )
+  })
+}
+
+// BrotliDecoderDecompressWithReturnInfo after setting each parameter in turn,
+// as BrotliDecoderSetParameter would.
+#[no_mangle]
+pub unsafe extern "C" fn BrotliDecoderDecompressWithParameters(
+  num_params: usize,
+  param_keys: *const BrotliDecoderParameter,
+  param_values: *const u32,
+  encoded_size: usize,
+  encoded_buffer: *const u8,
+  decoded_size: usize,
+  decoded_buffer: *mut u8,
+) -> BrotliDecoderReturnInfo {
+  catch_panic_return_info(move || {
+    let params = match checked_decoder_parameters(num_params, param_keys, param_values) {
+      Some(params) => params,
+      None => return invalid_argument_return_info(),
+    };
+    brotli_decoder_decompress_with_return_info(
+      encoded_size,
+      encoded_buffer,
+      decoded_size,
+      decoded_buffer,
+      params,
     )
   })
 }
@@ -320,6 +467,7 @@ pub unsafe extern fn BrotliDecoderDecompress(
       encoded_buffer,
       *decoded_size,
       decoded_buffer,
+      core::iter::empty(),
     );
     *decoded_size = res.decoded_size;
     match res.result {
