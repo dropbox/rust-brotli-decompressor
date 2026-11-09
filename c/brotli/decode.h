@@ -162,7 +162,11 @@ typedef struct BrotliDecoderReturnInfoStruct {
  */
 #define BROTLI_LAST_ERROR_CODE BROTLI_DECODER_ERROR_UNREACHABLE
 
-/** Options to be used with ::BrotliDecoderSetParameter. */
+/**
+ * Options to be used with ::BrotliDecoderSetParameter,
+ * ::BrotliDecoderDecompressWithParameters and
+ * ::BrotliDecoderDecompressPreallocWithParameters.
+ */
 typedef enum BrotliDecoderParameter {
   /**
    * Disable "canny" ring buffer allocation strategy.
@@ -245,6 +249,13 @@ BROTLI_DEC_API void BrotliDecoderDestroyInstance(BrotliDecoderState* state);
  * Decompresses the data in @p encoded_buffer into @p decoded_buffer, and sets
  * @p *decoded_size to the decompressed length.
  *
+ * Unlike the reference C library's version of this function, and unlike an
+ * instance created by ::BrotliDecoderCreateInstance, this and the other
+ * one-shot decoders also accept "Large Window Brotli" streams. To accept only
+ * RFC 7932 streams, set ::BROTLI_DECODER_PARAM_LARGE_WINDOW to @c 0 with
+ * ::BrotliDecoderDecompressWithParameters or
+ * ::BrotliDecoderDecompressPreallocWithParameters.
+ *
  * @param encoded_size size of @p encoded_buffer
  * @param encoded_buffer compressed data buffer with at least @p encoded_size
  *        addressable bytes
@@ -280,6 +291,85 @@ BROTLI_DEC_API BrotliDecoderReturnInfo BrotliDecoderDecompressPrealloc(
     size_t scratch_hc_size,
     HuffmanCode scratch_hc_buffer[BROTLI_ARRAY_PARAM(scratch_hc_size)]
     );
+
+/**
+ * Performs one-shot memory-to-memory decompression with decoder parameters.
+ *
+ * Decompresses the data in @p encoded_buffer into @p decoded_buffer, after
+ * setting each of the @p num_params parameters in turn, as
+ * ::BrotliDecoderSetParameter would set @p param_values[i] for
+ * @p param_keys[i] on a new decoder instance; a later value for a parameter
+ * replaces an earlier one. Parameters that are not set keep the values of
+ * ::BrotliDecoderDecompress, which accepts "Large Window Brotli" streams. To
+ * accept only RFC 7932 streams, as the reference C library's
+ * ::BrotliDecoderDecompress does:
+ *
+ * @code{.c}
+ * const BrotliDecoderParameter keys[] = {BROTLI_DECODER_PARAM_LARGE_WINDOW};
+ * const uint32_t values[] = {0};
+ * BrotliDecoderReturnInfo info = BrotliDecoderDecompressWithParameters(
+ *     1, keys, values, encoded_size, encoded_buffer,
+ *     decoded_size, decoded_buffer);
+ * @endcode
+ *
+ * A large-window stream then fails with
+ * ::BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS.
+ *
+ * With ::BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION, the ring
+ * buffer is the stream's whole window, whatever @p decoded_size is: up to
+ * 1 GiB for a large-window stream, unless ::BROTLI_DECODER_PARAM_LARGE_WINDOW
+ * is set to @c 0 too.
+ *
+ * @param num_params number of elements in @p param_keys and @p param_values
+ * @param param_keys parameters to set;
+ *        can be @c NULL if @p num_params is @c 0
+ * @param param_values values to set them to;
+ *        can be @c NULL if @p num_params is @c 0
+ * @param encoded_size size of @p encoded_buffer
+ * @param encoded_buffer compressed data buffer with at least @p encoded_size
+ *        addressable bytes
+ * @param decoded_size size of @p decoded_buffer
+ * @param decoded_buffer decompressed data destination buffer
+ * @returns a ::BrotliDecoderReturnInfo. Its @c result is
+ *          ::BROTLI_DECODER_RESULT_SUCCESS once the whole stream is decoded,
+ *          with the decompressed length in @c decoded_size. Any other
+ *          @c result is a failure, with the length of the data decompressed
+ *          so far in @c decoded_size and the reason in @c code and @c error:
+ *          ::BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT if the stream is
+ *          truncated, ::BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT if
+ *          @p decoded_buffer is too small, and ::BROTLI_DECODER_RESULT_ERROR
+ *          otherwise. @c code is ::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS,
+ *          and nothing is decoded, if @p param_keys or @p param_values is
+ *          @c NULL or misaligned while @p num_params is not @c 0, or if a key
+ *          is not a parameter that ::BrotliDecoderSetParameter recognizes.
+ */
+BROTLI_DEC_API BrotliDecoderReturnInfo BrotliDecoderDecompressWithParameters(
+    size_t num_params,
+    const BrotliDecoderParameter param_keys[BROTLI_ARRAY_PARAM(num_params)],
+    const uint32_t param_values[BROTLI_ARRAY_PARAM(num_params)],
+    size_t encoded_size,
+    const uint8_t encoded_buffer[BROTLI_ARRAY_PARAM(encoded_size)],
+    size_t decoded_size,
+    uint8_t decoded_buffer[BROTLI_ARRAY_PARAM(decoded_size)]);
+
+/**
+ * Same as ::BrotliDecoderDecompressPrealloc, but first sets decoder
+ * parameters, as ::BrotliDecoderDecompressWithParameters does.
+ */
+BROTLI_DEC_API BrotliDecoderReturnInfo BrotliDecoderDecompressPreallocWithParameters(
+    size_t num_params,
+    const BrotliDecoderParameter param_keys[BROTLI_ARRAY_PARAM(num_params)],
+    const uint32_t param_values[BROTLI_ARRAY_PARAM(num_params)],
+    size_t encoded_size,
+    const uint8_t encoded_buffer[BROTLI_ARRAY_PARAM(encoded_size)],
+    size_t decoded_size,
+    uint8_t decoded_buffer[BROTLI_ARRAY_PARAM(decoded_size)],
+    size_t scratch_u8_size,
+    uint8_t scratch_u8_buffer[BROTLI_ARRAY_PARAM(scratch_u8_size)],
+    size_t scratch_u32_size,
+    uint32_t scratch_u32_buffer[BROTLI_ARRAY_PARAM(scratch_u32_size)],
+    size_t scratch_hc_size,
+    HuffmanCode scratch_hc_buffer[BROTLI_ARRAY_PARAM(scratch_hc_size)]);
 
 /**
  * Decompresses the input stream to the output stream.

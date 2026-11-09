@@ -21,7 +21,8 @@ pub enum WhichTreeGroup {
   DISTANCE,
 }
 // Options for BrotliState::set_parameter and the C API's
-// BrotliDecoderSetParameter, with the C header's values.
+// BrotliDecoderSetParameter and one-shot decoders with parameters, with the
+// C header's values.
 #[repr(C)]
 #[derive(Clone,Copy, Debug)]
 pub enum BrotliDecoderParameter {

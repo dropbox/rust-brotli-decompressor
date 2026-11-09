@@ -184,6 +184,25 @@ That will build a small example program and the cdylib with the appropriate ffi 
 
 the example, called c/main.c shows how to decompress a program using the streaming interface and the nonstreaming interface.
 
+The one-shot decoders (`BrotliDecoderDecompress`, `BrotliDecoderDecompressWithReturnInfo`
+and `BrotliDecoderDecompressPrealloc`) accept Large Window Brotli streams, unlike the
+reference C library's `BrotliDecoderDecompress` and unlike a decoder from
+`BrotliDecoderCreateInstance`. `BrotliDecoderDecompressWithParameters` and
+`BrotliDecoderDecompressPreallocWithParameters` take arrays of `BrotliDecoderParameter`
+keys and values that they set in turn, as `BrotliDecoderSetParameter` would, before
+decoding. So a one-shot decode can accept only RFC 7932 streams:
+
+```c
+const BrotliDecoderParameter keys[] = {BROTLI_DECODER_PARAM_LARGE_WINDOW};
+const uint32_t values[] = {0};
+BrotliDecoderReturnInfo info = BrotliDecoderDecompressWithParameters(
+    1, keys, values, encoded_size, encoded_buffer, decoded_size, decoded_buffer);
+/* A large-window stream fails with BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS. */
+```
+
+A parameter that `BrotliDecoderSetParameter` does not recognize fails the call with
+`BROTLI_DECODER_ERROR_INVALID_ARGUMENTS` before anything is decoded.
+
 If a nostdlib version is desired, then an unstable rust must be used (to enable the custom panic handler)
 and then the BrotliDecoderDecompress function is deactivated since that has no facilities for specifying a custom malloc
 
