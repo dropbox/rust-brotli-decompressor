@@ -37,6 +37,7 @@ mod brotli_alloc;
 mod bit_reader;
 mod huffman;
 mod state;
+mod version;
 mod prefix;
 mod context;
 mod shared_dictionary;

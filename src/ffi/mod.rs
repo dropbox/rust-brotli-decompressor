@@ -709,7 +709,7 @@ pub extern fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) -> *const u8 {
 
 #[no_mangle]
 pub extern fn BrotliDecoderVersion() -> u32 {
-  0x1000f00
+  ::version::BROTLI_DECODER_VERSION
 }
 
 #[cfg(test)]
