@@ -3,6 +3,12 @@
 [![crates.io](https://img.shields.io/crates/v/brotli-decompressor.svg)](https://crates.io/crates/brotli-decompressor)
 [![Build Status](https://travis-ci.org/dropbox/rust-brotli-decompressor.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli-decompressor)
 
+## What's new in version 6.3.2
+
+* Update the BrotliDecoderVersion to match the crate version
+* Add a compile-time check that the BrotliDecoderVersion matches the crate version.
+* Update the edition to explicitly mention 2015.
+
 ## What's new in version 6.3.1
 
 * One-shot decoding uses output capacity as a bounded ring-buffer growth hint,

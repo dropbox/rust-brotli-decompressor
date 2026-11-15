@@ -5,6 +5,7 @@
 [package]
 name = "brotli-decompressor-c-harness"
 version = "0.0.0"
+edition = "2015"
 authors = ["Daniel Reiter Horn <danielrh@dropbox.com>", "The Brotli Authors"]
 license = "BSD-3-Clause/MIT"
 publish = false
