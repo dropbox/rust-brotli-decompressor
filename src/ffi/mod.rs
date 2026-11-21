@@ -585,18 +585,21 @@ pub unsafe extern fn BrotliDecoderDecompressStream(
     available_in: *mut usize,
     input_buf_ptr: *mut*const u8,
     available_out: *mut usize,
-    output_buf_ptr: *mut*mut u8,
+    mut output_buf_ptr: *mut*mut u8,
     mut total_out: *mut usize) -> BrotliDecoderResult {
     if state_ptr.is_null() ||
        available_in.is_null() ||
        input_buf_ptr.is_null() ||
        available_out.is_null() ||
-       output_buf_ptr.is_null() {
+       (*available_out != 0 && output_buf_ptr.is_null()) {
         if !state_ptr.is_null() {
             (*state_ptr).decompressor.error_code =
                 BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS;
         }
         return BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR;
+    }
+    if *available_out == 0 {
+        output_buf_ptr = core::ptr::null_mut();
     }
     match catch_panic(move || {
     let mut input_offset = 0usize;
@@ -607,7 +610,11 @@ pub unsafe extern fn BrotliDecoderDecompressStream(
     }
     let result: BrotliDecoderResult;
     let input_ptr = *input_buf_ptr;
-    let output_ptr = *output_buf_ptr;
+    let output_ptr = if output_buf_ptr.is_null() {
+        core::ptr::null_mut()
+    } else {
+        *output_buf_ptr
+    };
     {
         let input_buf = match checked_slice_from_raw_parts_or_nil(
             input_ptr,
@@ -649,7 +656,9 @@ pub unsafe extern fn BrotliDecoderDecompressStream(
             ).into();
     }
     *input_buf_ptr = input_ptr.offset(input_offset as isize);
-    *output_buf_ptr = output_ptr.offset(output_offset as isize);
+    if !output_buf_ptr.is_null() {
+        *output_buf_ptr = output_ptr.offset(output_offset as isize);
+    }
                                            result
     }) {
         Ok(ret) => ret,
@@ -1074,10 +1083,9 @@ mod tests {
       let mut available_in = input.len();
       let mut next_in = input.as_ptr();
       let mut available_out = 0usize;
-      let mut next_out = core::ptr::null_mut();
       let mut total_out = 0usize;
       let result = BrotliDecoderDecompressStream(state, &mut available_in, &mut next_in,
-                                                 &mut available_out, &mut next_out, &mut total_out);
+                                                 &mut available_out, core::ptr::null_mut(), &mut total_out);
       assert_eq!(result as i32, BrotliDecoderResult::BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT as i32);
       assert_eq!(total_out, 0);
 
@@ -1100,6 +1108,28 @@ mod tests {
         assert!(BrotliDecoderTakeOutput(state, &mut size).is_null());
         assert_eq!(size, 0);
       }
+      BrotliDecoderDestroyInstance(state);
+    }
+  }
+
+  #[cfg(feature="std")]
+  #[test]
+  fn decompress_stream_does_not_use_output_ptr_for_zero_size_output() {
+    unsafe {
+      let state = BrotliDecoderCreateInstance(None, None, core::ptr::null_mut());
+      assert!(!state.is_null());
+
+      let mut available_in = 0usize;
+      let mut next_in = core::ptr::null();
+      let mut available_out = 0usize;
+      assert_eq!(
+        BrotliDecoderDecompressStream(
+          state, &mut available_in, &mut next_in, &mut available_out,
+          core::ptr::NonNull::<*mut u8>::dangling().as_ptr(), core::ptr::null_mut(),
+        ) as i32,
+        BrotliDecoderResult::BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT as i32,
+      );
+
       BrotliDecoderDestroyInstance(state);
     }
   }
