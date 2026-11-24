@@ -59,6 +59,19 @@ fn is_valid_slice_ptr<T>(data: *const T, len: usize) -> bool {
     (data as usize).checked_add(len * core::mem::size_of::<T>()).is_some()
 }
 
+fn byte_ranges_overlap(a: *const u8, a_len: usize, b: *const u8, b_len: usize) -> bool {
+    if a_len == 0 || b_len == 0 {
+        return false;
+    }
+    let a_start = a as usize;
+    let b_start = b as usize;
+    if a_start <= b_start {
+        b_start - a_start < a_len
+    } else {
+        a_start - b_start < b_len
+    }
+}
+
 unsafe fn checked_slice_from_raw_parts_or_nil<'a, T>(
     data: *const T,
     len: usize,
@@ -615,6 +628,12 @@ pub unsafe extern fn BrotliDecoderDecompressStream(
     } else {
         *output_buf_ptr
     };
+    // The input and output must not become overlapping shared and mutable slices.
+    if byte_ranges_overlap(input_ptr, *available_in, output_ptr, *available_out) {
+        (*state_ptr).decompressor.error_code =
+            BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS;
+        return BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR;
+    }
     {
         let input_buf = match checked_slice_from_raw_parts_or_nil(
             input_ptr,
@@ -1132,5 +1151,56 @@ mod tests {
 
       BrotliDecoderDestroyInstance(state);
     }
+  }
+
+  #[cfg(feature="std")]
+  #[test]
+  fn decompress_stream_rejects_overlapping_buffers() {
+    let input = b"\x1f\x07\x00\xf8\x27\xfe\x43\x84\x00\x00";
+    for &output_start in &[0usize, input.len() - 1] {
+      let mut buffer = [0u8; 18];
+      buffer[..input.len()].copy_from_slice(input);
+      let state = unsafe { BrotliDecoderCreateInstance(None, None, core::ptr::null_mut()) };
+      assert!(!state.is_null());
+      let mut available_in = input.len();
+      let mut next_in = buffer.as_ptr();
+      let mut available_out = 8usize;
+      let mut next_out = unsafe { buffer.as_mut_ptr().add(output_start) };
+
+      let result = unsafe {
+        BrotliDecoderDecompressStream(state, &mut available_in, &mut next_in,
+                                      &mut available_out, &mut next_out,
+                                      core::ptr::null_mut())
+      };
+      assert_eq!(result as i32, BrotliDecoderResult::BROTLI_DECODER_RESULT_ERROR as i32);
+      assert_eq!(unsafe { BrotliDecoderGetErrorCode(state) } as i32,
+                 BrotliDecoderErrorCode::BROTLI_DECODER_ERROR_INVALID_ARGUMENTS as i32);
+      assert_eq!(available_in, input.len());
+      assert_eq!(available_out, 8);
+      unsafe { BrotliDecoderDestroyInstance(state) };
+    }
+  }
+
+  #[cfg(feature="std")]
+  #[test]
+  fn decompress_stream_accepts_adjacent_buffers() {
+    let input = b"\x1f\x07\x00\xf8\x27\xfe\x43\x84\x00\x00";
+    let mut buffer = [0u8; 18];
+    buffer[..input.len()].copy_from_slice(input);
+    let state = unsafe { BrotliDecoderCreateInstance(None, None, core::ptr::null_mut()) };
+    assert!(!state.is_null());
+    let mut available_in = input.len();
+    let mut next_in = buffer.as_ptr();
+    let mut available_out = 8usize;
+    let mut next_out = unsafe { buffer.as_mut_ptr().add(input.len()) };
+
+    let result = unsafe {
+      BrotliDecoderDecompressStream(state, &mut available_in, &mut next_in,
+                                    &mut available_out, &mut next_out,
+                                    core::ptr::null_mut())
+    };
+    assert_eq!(result as i32, BrotliDecoderResult::BROTLI_DECODER_RESULT_SUCCESS as i32);
+    assert_eq!(&buffer[input.len()..], &[0xff; 8]);
+    unsafe { BrotliDecoderDestroyInstance(state) };
   }
 }

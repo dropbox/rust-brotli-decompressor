@@ -376,6 +376,8 @@ BROTLI_DEC_API BrotliDecoderReturnInfo BrotliDecoderDecompressPreallocWithParame
  *
  * The values @p *available_in and @p *available_out must specify the number of
  * bytes addressable at @p *next_in and @p *next_out respectively.
+ * Nonempty input and output byte ranges must not overlap; overlapping ranges
+ * return ::BROTLI_DECODER_RESULT_ERROR with invalid-arguments error code.
  * When @p *available_out is @c 0, @p next_out is allowed to be @c NULL.
  *
  * After each call, @p *available_in will be decremented by the amount of input
