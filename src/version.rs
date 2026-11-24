@@ -1,4 +1,4 @@
-pub(crate) const BROTLI_DECODER_VERSION: u32 = 0x0600_3002;
+pub(crate) const BROTLI_DECODER_VERSION: u32 = 0x0600_4000;
 
 const fn parse_version_component(component: &str) -> u32 {
     let bytes = component.as_bytes();

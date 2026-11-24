@@ -1,6 +1,6 @@
 [package]
 name = "brotli-decompressor"
-version = "6.3.2"
+version = "6.4.0"
 edition = "2015"
 
 authors = ["Daniel Reiter Horn <danielrh@dropbox.com>", "The Brotli Authors"]

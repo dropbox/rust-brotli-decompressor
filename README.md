@@ -3,6 +3,13 @@
 [![crates.io](https://img.shields.io/crates/v/brotli-decompressor.svg)](https://crates.io/crates/brotli-decompressor)
 [![Build Status](https://travis-ci.org/dropbox/rust-brotli-decompressor.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli-decompressor)
 
+## What's new in version 6.4.0
+
+* C Brotli allows BrotliDecoderDecompressStream to be called with next_out set to null if available_out is 0. Callers use this together with BrotliDecoderTakeOutput. Rust Brotli rejects these uses, making migrations a bit trickier.
+* Add C one-shot decoders with parameters, to reject large-window streams
+* Reject overlapping memory buffers to avoid UB from 2 overlapping mut references.
+
+
 ## What's new in version 6.3.2
 
 * Update the BrotliDecoderVersion to match the crate version
