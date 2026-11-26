@@ -877,9 +877,57 @@ pub unsafe extern fn BrotliDecoderGetErrorString(state_ptr: *const BrotliDecoder
   }
   BrotliDecoderErrorString(super::decode::BrotliDecoderGetErrorCode(&(*state_ptr).decompressor))
 }
-#[no_mangle]
 pub extern fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) -> *const u8 {
     ::state::BrotliDecoderErrorStr(c).as_ptr()
+}
+
+#[export_name = "BrotliDecoderErrorString"]
+extern "C" fn BrotliDecoderErrorStringFromC(c: i32) -> *const u8 {
+  match decoder_error_code(c) {
+    Some(code) => BrotliDecoderErrorString(code),
+    None => "INVALID\0".as_ptr(),
+  }
+}
+
+// The error code with this C BrotliDecoderErrorCode value, if any.
+fn decoder_error_code(value: i32) -> Option<BrotliDecoderErrorCode> {
+  use state::BrotliDecoderErrorCode::*;
+  [
+    BROTLI_DECODER_NO_ERROR,
+    BROTLI_DECODER_SUCCESS,
+    BROTLI_DECODER_NEEDS_MORE_INPUT,
+    BROTLI_DECODER_NEEDS_MORE_OUTPUT,
+    BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE,
+    BROTLI_DECODER_ERROR_FORMAT_RESERVED,
+    BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE,
+    BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET,
+    BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME,
+    BROTLI_DECODER_ERROR_FORMAT_CL_SPACE,
+    BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE,
+    BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT,
+    BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1,
+    BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2,
+    BROTLI_DECODER_ERROR_FORMAT_TRANSFORM,
+    BROTLI_DECODER_ERROR_FORMAT_DICTIONARY,
+    BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS,
+    BROTLI_DECODER_ERROR_FORMAT_PADDING_1,
+    BROTLI_DECODER_ERROR_FORMAT_PADDING_2,
+    BROTLI_DECODER_ERROR_FORMAT_DISTANCE,
+    BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH,
+    BROTLI_DECODER_ERROR_COMPOUND_DICTIONARY,
+    BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET,
+    BROTLI_DECODER_ERROR_INVALID_ARGUMENTS,
+    BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES,
+    BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS,
+    BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP,
+    BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1,
+    BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2,
+    BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES,
+    BROTLI_DECODER_ERROR_UNREACHABLE,
+  ]
+  .iter()
+  .cloned()
+  .find(|&code| code as i32 == value)
 }
 
 
@@ -1202,5 +1250,19 @@ mod tests {
     assert_eq!(result as i32, BrotliDecoderResult::BROTLI_DECODER_RESULT_SUCCESS as i32);
     assert_eq!(&buffer[input.len()..], &[0xff; 8]);
     unsafe { BrotliDecoderDestroyInstance(state) };
+  }
+
+  #[test]
+  fn error_string_of_an_unknown_code_is_invalid() {
+    extern "C" {
+      #[link_name = "BrotliDecoderErrorString"]
+      fn c_error_string(c: i32) -> *const u8;
+    }
+    for &code in &[4, 100, -23] {
+      let s = unsafe { core::slice::from_raw_parts(c_error_string(code), 8) };
+      assert_eq!(s, &b"INVALID\0"[..]);
+    }
+    let s = unsafe { core::slice::from_raw_parts(c_error_string(-13), 25) };
+    assert_eq!(s, &b"ERROR_FORMAT_WINDOW_BITS\0"[..]);
   }
 }
